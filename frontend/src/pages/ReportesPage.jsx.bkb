@@ -1,0 +1,850 @@
+import React, { useState, useEffect, useContext, useMemo } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  ArrowLeft, Download, FileText, Lock, Building2, Plus, X, Save, Edit, Trash2,
+  Bell, AlertTriangle, Clock, Check, Globe, Calendar, Printer, Table, Eye
+} from "lucide-react";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { AuthContext } from "../App";
+import { toast } from "sonner";
+
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+// ─── Helpers para el reporte (PDF + Excel) ───────────────────────────────────
+const COLORS = {
+  inv:   { bg: "#1e3a5f", border: "#152b47", rowAlt: "#f0f4f8", title: "#1e3a5f" },
+  cred:  { bg: "#7c3aed", border: "#5b21b6", rowAlt: "#faf5ff", title: "#047857" },
+  ctas:  { bg: "#0f766e", border: "#0d5e57", rowAlt: "#f0fdfa", title: "#0f766e" },
+  det:   { bg: "#ea580c", border: "#c2410c", rowAlt: "#fff7ed", title: "#ea580c" },
+};
+
+// Estilo <th> con color sólido (inline, sin Tailwind)
+const thStyle = (c) => ({
+  backgroundColor: c.bg,
+  color: "#ffffff",
+  border: `1px solid ${c.border}`,
+  padding: "5px 7px",
+  textAlign: "left",
+  fontWeight: "bold",
+  fontSize: "9px",
+  whiteSpace: "nowrap",
+});
+
+// Estilo <td> con filas alternadas
+const tdStyle = (even, c, extra = {}) => ({
+  backgroundColor: even ? "#ffffff" : c.rowAlt,
+  border: "1px solid #d1d5db",
+  padding: "3px 6px",
+  fontSize: "9px",
+  verticalAlign: "top",
+  wordBreak: "break-word",
+  ...extra,
+});
+
+// Título de sección
+const SecTitle = ({ color, children }) => (
+  <div style={{
+    color,
+    fontWeight: "bold",
+    fontSize: "13px",
+    marginTop: "22px",
+    marginBottom: "5px",
+    borderBottom: `2px solid ${color}`,
+    paddingBottom: "2px",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+  }}>
+    {children}
+  </div>
+);
+
+// ─── Cargador de xlsx-js-style (con soporte de colores en celdas) ─────────────
+const loadXLSX = () =>
+  new Promise((resolve, reject) => {
+    // Si ya cargamos la versión con estilos, reusar
+    if (window._XLSX_STYLED && window.XLSX) { resolve(window.XLSX); return; }
+    // Borrar versión base anterior (misma variable global) para forzar recarga
+    delete window.XLSX;
+    const tryLoad = (urls, i) => {
+      if (i >= urls.length) { reject(new Error("No se pudo cargar la librería Excel")); return; }
+      const s = document.createElement("script");
+      s.src = urls[i];
+      s.onload  = () => {
+        if (window.XLSX) { window._XLSX_STYLED = true; resolve(window.XLSX); }
+        else tryLoad(urls, i + 1);
+      };
+      s.onerror = () => tryLoad(urls, i + 1);
+      document.head.appendChild(s);
+    };
+    tryLoad([
+      "https://unpkg.com/xlsx-js-style@1.2.0/dist/xlsx.bundle.js",
+      "https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js",
+    ], 0);
+  });
+
+// ─── Componente principal ─────────────────────────────────────────────────────
+const ReportesPage = () => {
+  const { token, user } = useContext(AuthContext);
+  const isAdmin = user?.role === "admin";
+  const [searchParams] = useSearchParams();
+  const empresaFromUrl = searchParams.get("empresa") || "";
+
+  const [empresas, setEmpresas] = useState([]);
+  const [alertas, setAlertas] = useState([]);
+  const [alertasProximas, setAlertasProximas] = useState([]);
+  const [activos, setActivos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState("reportes");
+
+  const [selectedEmpresas, setSelectedEmpresas] = useState(empresaFromUrl ? [empresaFromUrl] : []);
+  const [sortBy, setSortBy] = useState("nombre");
+
+  const [showAlertForm, setShowAlertForm] = useState(false);
+  const [editingAlert, setEditingAlert] = useState(null);
+  const [alertForm, setAlertForm] = useState({
+    empresa_id: empresaFromUrl || "", tipo: "dominio", nombre: "", descripcion: "",
+    fecha_vencimiento: "", activo_id: "", notificar_dias: 30
+  });
+  const [filterEmpresa, setFilterEmpresa] = useState(empresaFromUrl);
+
+  // Estado del preview
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewData, setPreviewData] = useState(null);       // lista de activos
+  const [previewWithCreds, setPreviewWithCreds] = useState(false);
+  const [cuentasAsociadas, setCuentasAsociadas] = useState([]); // sección 3
+  const [detalleCuentas, setDetalleCuentas] = useState([]);     // sección 4
+
+  // Inyectar CSS de impresión una sola vez
+  useEffect(() => {
+    const id = "arandu-print-css";
+    if (!document.getElementById(id)) {
+      const s = document.createElement("style");
+      s.id = id;
+      s.textContent = `
+        @media print {
+          @page { size: A4 landscape; margin: 1.2cm 1cm; }
+          body {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            background: white !important;
+          }
+          .no-print { display: none !important; }
+          #inventario-print {
+            display: block !important;
+            padding: 0 !important; margin: 0 !important;
+            max-width: 100% !important; box-shadow: none !important;
+          }
+          #inventario-print table { page-break-inside: auto; width: 100%; }
+          #inventario-print tr    { page-break-inside: avoid; page-break-after: auto; }
+          #inventario-print thead { display: table-header-group; }
+        }
+      `;
+      document.head.appendChild(s);
+    }
+    return () => { /* no removemos: puede usarse en otra sesión */ };
+  }, []);
+
+  useEffect(() => { fetchAll(); }, []);
+
+  // ── Imprimir en ventana nueva — evita el problema del modal/overflow ──────────
+  const handlePrint = () => {
+    const content = document.getElementById("inventario-print");
+    if (!content) return;
+
+    const printWin = window.open("", "_blank");
+    if (!printWin) {
+      toast.error("El navegador bloqueó la ventana emergente. Habilitala e intentá de nuevo.");
+      return;
+    }
+
+    // Clonar el nodo para no afectar el DOM visible, y limpiar estilos inline
+    // que impedirían que el contenido use el ancho completo del papel
+    const clone = content.cloneNode(true);
+    clone.style.maxWidth  = "none";
+    clone.style.width     = "100%";
+    clone.style.padding   = "0";
+    clone.style.margin    = "0";
+    clone.style.boxShadow = "none";
+
+    printWin.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Inventario Técnico — Arandu&JAR</title>
+  <style>
+    @page { size: A4 landscape; margin: 1.2cm 1cm; }
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 9px; line-height: 1.3;
+      margin: 0; padding: 0;
+      background: white; color: #000;
+    }
+    table { page-break-inside: auto; border-collapse: collapse; width: 100%; }
+    /* thead como grupo — repite la cabecera en cada página nueva */
+    thead { display: table-header-group !important; }
+    /* Solo tbody tr evita el corte: NO aplicar a thead tr para no bloquear la repetición */
+    tbody tr { page-break-inside: avoid !important; break-inside: avoid !important; }
+    td     { page-break-inside: avoid !important; break-inside: avoid !important; }
+    /* Cada sección arranca en página nueva */
+    .section-page-break { page-break-before: always; break-before: page; }
+    @media screen { body { padding: 16px; } }
+  </style>
+</head>
+<body>
+  ${clone.outerHTML}
+  <script>
+    window.addEventListener('load', function() {
+      setTimeout(function() { window.print(); window.close(); }, 400);
+    });
+  <\/script>
+</body>
+</html>`);
+    printWin.document.close();
+    printWin.focus();
+  };
+
+  const fetchAll = async () => {
+    try {
+      const [empRes, alertRes, proxRes, actRes] = await Promise.all([
+        fetch(`${API}/admin/empresas`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/admin/alertas${empresaFromUrl ? `?empresa_id=${empresaFromUrl}` : ""}`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/admin/alertas/proximas`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/admin/activos`, { headers: { Authorization: `Bearer ${token}` } })
+      ]);
+      if (empRes.ok) setEmpresas(await empRes.json());
+      if (alertRes.ok) setAlertas(await alertRes.json());
+      if (proxRes.ok) setAlertasProximas(await proxRes.json());
+      if (actRes.ok) setActivos(await actRes.json());
+    } catch (err) { console.error(err); }
+    finally { setLoading(false); }
+  };
+
+  const toggleEmpresa = (id) => {
+    setSelectedEmpresas(prev => prev.includes(id) ? prev.filter(e => e !== id) : [...prev, id]);
+  };
+
+  const fetchReportData = async (withCreds) => {
+    if (withCreds && !isAdmin) { toast.error("Solo administradores pueden ver credenciales"); return; }
+    try {
+      const params = new URLSearchParams();
+      if (selectedEmpresas.length > 0) params.set("empresa_ids", selectedEmpresas.join(","));
+      if (withCreds) params.set("incluir_credenciales", "true");
+      params.set("ordenar_por", sortBy);
+      const res = await fetch(`${API}/admin/reportes/inventario?${params.toString()}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const data = await res.json();
+        // El backend siempre devuelve { activos, cuentas_asociadas, detalle_cuentas }
+        // Las contraseñas están vacías cuando incluir_credenciales=false
+        if (Array.isArray(data)) {
+          // compatibilidad con versiones viejas que devuelvan lista
+          setPreviewData(data);
+          setCuentasAsociadas([]);
+          setDetalleCuentas([]);
+        } else {
+          setPreviewData(data.activos || []);
+          setCuentasAsociadas(data.cuentas_asociadas || []);
+          setDetalleCuentas(data.detalle_cuentas || []);
+        }
+        setPreviewWithCreds(withCreds);
+        setShowPreview(true);
+      } else { const e = await res.json(); toast.error(e.detail || "Error"); }
+    } catch { toast.error("Error"); }
+  };
+
+  // ── CSV ──────────────────────────────────────────────────────────────────────
+  const exportCSV = () => {
+    if (!previewData) return;
+    let csv = "Empresa,Categoria,Subtipo,Nombre,Descripcion,Ubicacion,IP Local,IPs Locales,IP Publica,IPs Publicas,Dominio,Puerto Local,Puerto Externo,Version,Estado,Observaciones";
+    if (previewWithCreds) csv += ",Tipo Acceso,Usuario,Password,URL Acceso,Obs.";
+    csv += "\n";
+    previewData.forEach(row => {
+      const base = `"${row.empresa}","${row.categoria}","${row.subtipo}","${row.nombre}","${row.descripcion}","${row.ubicacion}","${row.ip_local}","${(row.ips_locales||[]).join('; ')}","${row.ip_publica}","${(row.ips_publicas||[]).join('; ')}","${row.dominio}","${row.puerto_local}","${row.puerto_externo}","${row.version}","${row.estado}","${row.observaciones}"`;
+      if (previewWithCreds && row.credenciales?.length > 0) {
+        row.credenciales.forEach(c => { csv += `${base},"${c.tipo_acceso}","${c.usuario}","${c.password}","${c.url_acceso}","${c.observaciones}"\n`; });
+      } else { csv += base + (previewWithCreds ? `,"","","","",""` : "") + "\n"; }
+    });
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `inventario_reporte.csv`; a.click();
+    toast.success("CSV exportado");
+  };
+
+  // ── Excel — 4 hojas reales .xlsx con celdas estiladas (xlsx-js-style) ────────
+  const exportExcel = async () => {
+    if (!previewData) return;
+    toast.info("Preparando Excel...", { id: "excel-loading" });
+    let XLSX;
+    try {
+      XLSX = await loadXLSX();
+      if (!XLSX?.utils) throw new Error("API inválida");
+    } catch (err) {
+      toast.dismiss("excel-loading");
+      toast.error("No se pudo cargar la librería. Verificá tu conexión a internet.");
+      console.error("SheetJS load error:", err);
+      return;
+    }
+    toast.dismiss("excel-loading");
+
+    // ── Helpers de estilo para xlsx-js-style ──────────────────────────────────
+    const rgb = (hex) => hex.replace("#", "").toUpperCase();
+
+    // Celda de cabecera: fondo sólido con el color de sección, texto blanco negrita
+    const hCell = (v, bgHex) => ({
+      v, t: "s",
+      s: {
+        fill: { patternType: "solid", fgColor: { rgb: rgb(bgHex) } },
+        font: { bold: true, color: { rgb: "FFFFFF" }, sz: 9, name: "Arial" },
+        border: {
+          top:    { style: "thin", color: { rgb: "CCCCCC" } },
+          bottom: { style: "thin", color: { rgb: "CCCCCC" } },
+          left:   { style: "thin", color: { rgb: "CCCCCC" } },
+          right:  { style: "thin", color: { rgb: "CCCCCC" } },
+        },
+        alignment: { horizontal: "left", vertical: "top", wrapText: false },
+      }
+    });
+
+    // Celda de datos: filas alternadas (blanco / color suave de sección)
+    const dCell = (v, even, altHex) => ({
+      v: v ?? "", t: typeof (v ?? "") === "number" ? "n" : "s",
+      s: {
+        fill: even
+          ? { patternType: "solid", fgColor: { rgb: "FFFFFF" } }
+          : { patternType: "solid", fgColor: { rgb: rgb(altHex) } },
+        font: { sz: 9, name: "Arial" },
+        border: {
+          top:    { style: "thin", color: { rgb: "D1D5DB" } },
+          bottom: { style: "thin", color: { rgb: "D1D5DB" } },
+          left:   { style: "thin", color: { rgb: "D1D5DB" } },
+          right:  { style: "thin", color: { rgb: "D1D5DB" } },
+        },
+        alignment: { horizontal: "left", vertical: "top", wrapText: true },
+      }
+    });
+
+    // Construye la hoja a partir de cabeceras + filas de datos ya estiladas
+    const makeSheet = (headers, bgHex, dataRows, colWidths, altHex) => {
+      const aoa = [
+        headers.map(h => hCell(h, bgHex)),
+        ...dataRows.map((row, ri) => row.map(v => dCell(v, ri % 2 === 0, altHex)))
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws["!cols"] = colWidths.map(w => ({ wch: w }));
+      ws["!tabColor"] = { rgb: rgb(bgHex) };
+      ws["!views"] = [{ state: "frozen", ySplit: 1 }];
+      return ws;
+    };
+
+    const wb = XLSX.utils.book_new();
+    const fecha = new Date().toLocaleDateString("es-PY");
+
+    // ── Hoja 1 · Inventario (sin Cuentas de Acceso — evita duplicados) ──────────
+    XLSX.utils.book_append_sheet(wb,
+      makeSheet(
+        ["Nombre","Empresa","Categoría","Subtipo","Estado","IP Privada","IP Pública","Dominio","Ubicación","Marca/Modelo","Responsable","Observaciones"],
+        COLORS.inv.bg,
+        inventarioActivos.map(r => [
+          r.nombre, r.empresa, r.categoria, r.subtipo, r.estado,
+          [r.ip_local, ...(r.ips_locales||[])].filter(Boolean).join(", "),
+          [r.ip_publica, ...(r.ips_publicas||[])].filter(Boolean).join(", "),
+          r.dominio, r.ubicacion, r.version, r.responsable||"", r.observaciones||""
+        ]),
+        [24,18,14,14,10,20,20,20,14,14,14,26],
+        COLORS.inv.rowAlt
+      ),
+      "Inventario"
+    );
+
+    // ── Hoja 2 · Credenciales (solo si se exportó con credenciales) ─────────────
+    if (previewWithCreds) {
+      const credRows = [];
+      previewData.forEach(r => {
+        (r.credenciales || []).forEach(c => {
+          credRows.push([r.nombre, c.servicio||c.tipo_acceso||"", c.usuario||"", c.password||"", c.sensibilidad||"normal", c.observaciones||""]);
+        });
+      });
+      if (credRows.length > 0) {
+        XLSX.utils.book_append_sheet(wb,
+          makeSheet(
+            ["Activo","Servicio","Usuario","Contraseña","Sensibilidad","Notas"],
+            COLORS.cred.bg,
+            credRows,
+            [26,18,18,18,12,30],
+            COLORS.cred.rowAlt
+          ),
+          "Credenciales"
+        );
+      }
+    }
+
+    // ── Hoja 3 · Cuentas Asociadas a Dispositivos ────────────────────────────────
+    if (cuentasAsociadas.length > 0) {
+      XLSX.utils.book_append_sheet(wb,
+        makeSheet(
+          ["Dispositivo","Tipo Cuenta","Nombre","ID / Usuario","Contraseña","Detalles"],
+          COLORS.ctas.bg,
+          cuentasAsociadas.map(r => [r.dispositivo, r.tipo_cuenta, r.nombre, r.usuario||"", r.password||"", r.detalles||""]),
+          [24,16,24,18,18,30],
+          COLORS.ctas.rowAlt
+        ),
+        "Cuentas Asociadas"
+      );
+    }
+
+    // ── Hoja 4 · Detalle de Cuentas de Acceso ────────────────────────────────────
+    if (detalleCuentas.length > 0) {
+      XLSX.utils.book_append_sheet(wb,
+        makeSheet(
+          ["Nombre","Subtipo","ID / Usuario","Correo / Servidor","Contraseña","Detalles","Dispositivos"],
+          COLORS.det.bg,
+          detalleCuentas.map(r => [r.nombre, r.subtipo, r.usuario||"", r.correo_servidor||"", r.password||"", r.detalles||"", `${r.dispositivos_count} disp.`]),
+          [26,16,18,24,18,28,13],
+          COLORS.det.rowAlt
+        ),
+        "Detalle Cuentas"
+      );
+    }
+
+    try {
+      XLSX.writeFile(wb, `inventario_${fecha.replace(/\//g,"-")}.xlsx`);
+      toast.success("Excel exportado correctamente");
+    } catch (e) {
+      console.error("writeFile error:", e);
+      toast.error("Error al generar el archivo Excel.");
+    }
+  };
+
+  // ── Alert CRUD ───────────────────────────────────────────────────────────────
+  const openNewAlert = () => {
+    setEditingAlert(null);
+    setAlertForm({ empresa_id: filterEmpresa || empresaFromUrl || "", tipo: "dominio", nombre: "", descripcion: "", fecha_vencimiento: "", activo_id: "", notificar_dias: 30 });
+    setShowAlertForm(true);
+  };
+  const openEditAlert = (alerta) => {
+    setEditingAlert(alerta);
+    setAlertForm({ empresa_id: alerta.empresa_id, tipo: alerta.tipo, nombre: alerta.nombre, descripcion: alerta.descripcion || "", fecha_vencimiento: alerta.fecha_vencimiento?.split("T")[0] || "", activo_id: alerta.activo_id || "", notificar_dias: alerta.notificar_dias || 30 });
+    setShowAlertForm(true);
+  };
+  const saveAlert = async () => {
+    if (!alertForm.empresa_id || !alertForm.nombre || !alertForm.fecha_vencimiento) { toast.error("Campos requeridos"); return; }
+    try {
+      const url = editingAlert ? `${API}/admin/alertas/${editingAlert.id}` : `${API}/admin/alertas`;
+      const res = await fetch(url, { method: editingAlert ? "PUT" : "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(alertForm) });
+      if (res.ok) { toast.success(editingAlert ? "Actualizada" : "Creada"); setShowAlertForm(false); fetchAll(); }
+    } catch { toast.error("Error"); }
+  };
+  const toggleAlertEstado = async (alerta) => {
+    try { await fetch(`${API}/admin/alertas/${alerta.id}/estado`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ estado: alerta.estado === "activa" ? "resuelta" : "activa" }) }); fetchAll(); } catch {}
+  };
+  const deleteAlert = async (id) => {
+    if (!window.confirm("¿Eliminar?")) return;
+    try { await fetch(`${API}/admin/alertas/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }); fetchAll(); } catch {}
+  };
+
+  const filteredAlertas = useMemo(() => alertas.filter(a => !filterEmpresa || a.empresa_id === filterEmpresa), [alertas, filterEmpresa]);
+
+  const getDaysColor = (dias) => {
+    if (dias < 0) return "text-red-400 bg-red-500/10 border-red-500/20";
+    if (dias <= 7) return "text-orange-400 bg-orange-500/10 border-orange-500/20";
+    if (dias <= 30) return "text-amber-400 bg-amber-500/10 border-amber-500/20";
+    return "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+  };
+
+  const empresaName = empresaFromUrl ? empresas.find(e => e.id === empresaFromUrl)?.nombre : null;
+  const now = new Date().toLocaleDateString("es-PY", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const nowFull = new Date().toLocaleString("es-PY");
+
+  if (loading) return <div className="flex items-center justify-center h-screen"><div className="text-arandu-blue animate-pulse">Cargando...</div></div>;
+
+  const selectedEmpresasNombres = selectedEmpresas.map(id => empresas.find(e => e.id === id)?.nombre).filter(Boolean).join(", ");
+  // Excluimos "Cuentas de Acceso" de la sección INVENTARIO para evitar duplicados
+  // (esas cuentas ya aparecen en las secciones 3 y 4)
+  const inventarioActivos = previewData ? previewData.filter(r => r.categoria !== "Cuentas de Acceso") : [];
+  const activosConCreds = inventarioActivos.filter(r => r.credenciales?.length > 0);
+
+  return (
+    <div className="p-4 md:p-8">
+
+      {/* ══════════════════ PRINT PREVIEW ══════════════════ */}
+      {showPreview && previewData && (
+        <div id="report-modal-overlay" className="fixed inset-0 bg-black/90 z-50 overflow-y-auto">
+
+          {/* Barra de acciones — se oculta al imprimir */}
+          <div className="no-print sticky top-0 z-10 bg-arandu-dark/95 backdrop-blur-sm border-b border-white/10 px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <h3 className="text-white font-heading font-bold">Vista Previa del Reporte</h3>
+              <span className="text-slate-400 text-sm">{previewData.length} activos</span>
+              {previewWithCreds && <span className="text-amber-400 text-xs bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">Con Credenciales</span>}
+            </div>
+            <div className="flex gap-2 flex-wrap justify-end">
+              <Button onClick={handlePrint} className="bg-blue-600 hover:bg-blue-700 text-white" data-testid="print-report-btn">
+                <Printer className="w-4 h-4 mr-2" /> Imprimir / Guardar PDF
+              </Button>
+              <Button onClick={exportCSV} className="bg-cyan-600 hover:bg-cyan-700 text-white">
+                <Download className="w-4 h-4 mr-2" /> CSV
+              </Button>
+              <Button onClick={exportExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                <Table className="w-4 h-4 mr-2" /> Excel
+              </Button>
+              <Button onClick={() => setShowPreview(false)} className="bg-red-600 hover:bg-red-700 text-white">
+                <X className="w-4 h-4 mr-2" /> Cerrar
+              </Button>
+            </div>
+          </div>
+
+          {/* ── Contenido del reporte (todo inline styles para que imprima bien) ── */}
+          <div
+            id="inventario-print"
+            style={{
+              maxWidth: "1200px", margin: "16px auto",
+              backgroundColor: "#fff", color: "#000",
+              padding: "24px",
+              fontFamily: "Arial, Helvetica, sans-serif",
+              fontSize: "10px", lineHeight: "1.4",
+            }}
+          >
+
+            {/* ─ Encabezado ─ */}
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", borderBottom: "2px solid #1e3a5f", paddingBottom: "10px", marginBottom: "14px" }}>
+              <div>
+                <span style={{ fontSize: "15px", fontWeight: "900", color: "#1e3a5f", letterSpacing: "-0.5px" }}>ARANDU</span>
+                <span style={{ fontSize: "15px", fontWeight: "900", color: "#ef4444" }}>&</span>
+                <span style={{ fontSize: "15px", fontWeight: "900", color: "#1e3a5f" }}>JAR </span>
+                <span style={{ fontSize: "10px", color: "#6b7280", fontWeight: "normal" }}>INFORMATICA</span>
+              </div>
+              <div style={{ textAlign: "center", flex: 1 }}>
+                <div style={{ fontSize: "17px", fontWeight: "bold", color: "#111" }}>Informe de Inventario Tecnico</div>
+              </div>
+              <div style={{ textAlign: "right", fontSize: "9px", color: "#555", minWidth: "200px" }}>
+                <div>Fecha de emisión: {now} | Total: {inventarioActivos.length} activos</div>
+                {selectedEmpresasNombres && <div style={{ marginTop: "2px" }}>Filtros — <b>Empresa:</b> {selectedEmpresasNombres}</div>}
+              </div>
+            </div>
+
+            {/* ─ 1. INVENTARIO ─ */}
+            <SecTitle color={COLORS.inv.title}>Inventario de Activos</SecTitle>
+            <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "4px", tableLayout: "fixed" }}>
+              <colgroup>
+                {/* Nombre  Empresa  Categoría  Subtipo  Estado  IP Privada  IP Pública  Dominio  Ubicación  Marca/Modelo  Resp. */}
+                <col style={{ width: "16%" }} /><col style={{ width: "9%" }} />
+                <col style={{ width: "10%" }} /><col style={{ width: "11%" }} />
+                <col style={{ width: "6%" }} /><col style={{ width: "12%" }} />
+                <col style={{ width: "9%" }} /><col style={{ width: "7%" }} />
+                <col style={{ width: "7%" }} /><col style={{ width: "9%" }} />
+                <col style={{ width: "4%" }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  {["Nombre","Empresa","Categoría","Subtipo","Estado","IP Privada","IP Pública","Dominio","Ubicación","Marca/Modelo","Resp."].map(h => (
+                    <th key={h} style={thStyle(COLORS.inv)}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {inventarioActivos.map((row, idx) => {
+                  const e = idx % 2 === 0;
+                  return (
+                    <tr key={idx}>
+                      <td style={tdStyle(e, COLORS.inv, { fontWeight: "500" })}>{row.nombre}</td>
+                      <td style={tdStyle(e, COLORS.inv)}>{row.empresa}</td>
+                      <td style={tdStyle(e, COLORS.inv)}>{row.categoria}</td>
+                      <td style={tdStyle(e, COLORS.inv)}>{row.subtipo}</td>
+                      <td style={tdStyle(e, COLORS.inv)}>{row.estado}</td>
+                      <td style={tdStyle(e, COLORS.inv, { fontFamily: "monospace" })}>{[row.ip_local, ...(row.ips_locales||[])].filter(Boolean).join(", ")}</td>
+                      <td style={tdStyle(e, COLORS.inv, { fontFamily: "monospace" })}>{[row.ip_publica, ...(row.ips_publicas||[])].filter(Boolean).join(", ")}</td>
+                      <td style={tdStyle(e, COLORS.inv)}>{row.dominio}</td>
+                      <td style={tdStyle(e, COLORS.inv)}>{row.ubicacion}</td>
+                      <td style={tdStyle(e, COLORS.inv)}>{row.version}</td>
+                      <td style={tdStyle(e, COLORS.inv)}>{row.responsable || ""}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {/* ─ 2. CREDENCIALES ─ */}
+            {previewWithCreds && activosConCreds.length > 0 && (
+              <div className="section-page-break">
+                <SecTitle color={COLORS.cred.title}>Credenciales</SecTitle>
+                <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "4px", tableLayout: "fixed" }}>
+                  <colgroup>
+                    <col style={{ width: "18%" }} /><col style={{ width: "15%" }} />
+                    <col style={{ width: "16%" }} /><col style={{ width: "16%" }} />
+                    <col style={{ width: "10%" }} /><col style={{ width: "25%" }} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      {["Activo","Servicio","Usuario","Contraseña","Sensibilidad","Notas"].map(h => (
+                        <th key={h} style={thStyle(COLORS.cred)}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activosConCreds.map(row =>
+                      (row.credenciales || []).map((c, ci) => {
+                        const e = ci % 2 === 0;
+                        return (
+                          <tr key={`${row.nombre}-${ci}`}>
+                            <td style={tdStyle(e, COLORS.cred, { fontWeight: "500" })}>{row.nombre}</td>
+                            <td style={tdStyle(e, COLORS.cred)}>{c.servicio || c.tipo_acceso || ""}</td>
+                            <td style={tdStyle(e, COLORS.cred, { fontFamily: "monospace" })}>{c.usuario}</td>
+                            <td style={tdStyle(e, COLORS.cred, { fontFamily: "monospace" })}>{c.password}</td>
+                            <td style={tdStyle(e, COLORS.cred)}>{c.sensibilidad || "normal"}</td>
+                            <td style={tdStyle(e, COLORS.cred)}>{c.observaciones}</td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* ─ 3. CUENTAS ASOCIADAS A DISPOSITIVOS ─ */}
+            {cuentasAsociadas.length > 0 && (
+              <div className="section-page-break">
+                <SecTitle color={COLORS.ctas.title}>Cuentas Asociadas a Dispositivos</SecTitle>
+                <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "4px", tableLayout: "fixed" }}>
+                  <colgroup>
+                    <col style={{ width: "18%" }} /><col style={{ width: "12%" }} />
+                    <col style={{ width: "20%" }} /><col style={{ width: "14%" }} />
+                    <col style={{ width: "14%" }} /><col style={{ width: "22%" }} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      {["Dispositivo","Tipo Cuenta","Nombre","ID / Usuario","Contraseña","Detalles"].map(h => (
+                        <th key={h} style={thStyle(COLORS.ctas)}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cuentasAsociadas.map((row, idx) => {
+                      const e = idx % 2 === 0;
+                      return (
+                        <tr key={idx}>
+                          <td style={tdStyle(e, COLORS.ctas, { fontWeight: "500" })}>{row.dispositivo}</td>
+                          <td style={tdStyle(e, COLORS.ctas)}>{row.tipo_cuenta}</td>
+                          <td style={tdStyle(e, COLORS.ctas)}>{row.nombre}</td>
+                          <td style={tdStyle(e, COLORS.ctas, { fontFamily: "monospace" })}>{row.usuario}</td>
+                          <td style={tdStyle(e, COLORS.ctas, { fontFamily: "monospace" })}>{row.password}</td>
+                          <td style={tdStyle(e, COLORS.ctas)}>{row.detalles}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* ─ 4. DETALLE DE CUENTAS DE ACCESO ─ */}
+            {detalleCuentas.length > 0 && (
+              <div className="section-page-break">
+                <SecTitle color={COLORS.det.title}>Detalle de Cuentas de Acceso</SecTitle>
+                <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "4px", tableLayout: "fixed" }}>
+                  <colgroup>
+                    <col style={{ width: "22%" }} /><col style={{ width: "12%" }} />
+                    <col style={{ width: "14%" }} /><col style={{ width: "22%" }} />
+                    <col style={{ width: "14%" }} /><col style={{ width: "16%" }} />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      {["Nombre","Subtipo","ID / Usuario","Correo / Servidor","Contraseña","Detalles"].map(h => (
+                        <th key={h} style={thStyle(COLORS.det)}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detalleCuentas.map((row, idx) => {
+                      const e = idx % 2 === 0;
+                      return (
+                        <tr key={idx}>
+                          <td style={tdStyle(e, COLORS.det, { fontWeight: "500" })}>{row.nombre}</td>
+                          <td style={tdStyle(e, COLORS.det)}>{row.subtipo}</td>
+                          <td style={tdStyle(e, COLORS.det, { fontFamily: "monospace" })}>{row.usuario}</td>
+                          <td style={tdStyle(e, COLORS.det)}>{row.correo_servidor}</td>
+                          <td style={tdStyle(e, COLORS.det, { fontFamily: "monospace" })}>{row.password}</td>
+                          <td style={{ ...tdStyle(e, COLORS.det), fontWeight: "bold" }}>{row.dispositivos_count} disp.</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* ─ Pie de página ─ */}
+            <div style={{ borderTop: "2px solid #1e3a5f", marginTop: "20px", paddingTop: "8px", display: "flex", justifyContent: "space-between", fontSize: "8px", color: "#6b7280" }}>
+              <span>Arandu&JAR Informatica - Inventario Tecnico{previewWithCreds ? " - CONFIDENCIAL" : ""}</span>
+              <span>Generado: {nowFull}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════ ENCABEZADO DE PÁGINA ══════════════════ */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+        <div>
+          <Link to={empresaFromUrl ? "/admin/empresas" : "/admin"} className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2">
+            <ArrowLeft className="w-4 h-4" /> {empresaFromUrl ? "Volver a Empresas" : "Volver al Dashboard"}
+          </Link>
+          <h1 className="font-heading text-2xl md:text-3xl font-bold text-white flex items-center gap-3" data-testid="reportes-title">
+            <FileText className="w-8 h-8 text-amber-400" /> Reportes & Alertas
+            {empresaName && <span className="text-arandu-blue text-lg font-normal">- {empresaName}</span>}
+          </h1>
+        </div>
+      </div>
+
+      {/* ══════════════════ BANNER ALERTAS PRÓXIMAS ══════════════════ */}
+      {alertasProximas.length > 0 && (
+        <div className="mb-6 bg-red-500/5 border border-red-500/20 rounded-xl p-4">
+          <h3 className="text-red-400 font-semibold text-sm flex items-center gap-2 mb-3"><AlertTriangle className="w-4 h-4" /> Alertas Proximas ({alertasProximas.length})</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            {alertasProximas.map(a => (
+              <div key={a.id} className={`flex items-center justify-between p-2 rounded-lg border ${getDaysColor(a.dias_restantes)}`}>
+                <div><p className="text-white text-sm font-medium">{a.nombre}</p><p className="text-slate-400 text-xs">{a.empresa_nombre}</p></div>
+                <span className="text-xs font-bold">{a.dias_restantes < 0 ? `Vencido ${Math.abs(a.dias_restantes)}d` : `${a.dias_restantes}d`}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════ TABS ══════════════════ */}
+      <div className="flex gap-2 mb-6">
+        <button onClick={() => setTab("reportes")} className={`px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 transition-all ${tab === "reportes" ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" : "bg-arandu-dark-lighter text-slate-400 border border-white/5"}`} data-testid="tab-reportes"><Download className="w-4 h-4" /> Reportes</button>
+        <button onClick={() => setTab("alertas")} className={`px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 transition-all ${tab === "alertas" ? "bg-red-500/20 text-red-400 border border-red-500/30" : "bg-arandu-dark-lighter text-slate-400 border border-white/5"}`} data-testid="tab-alertas">
+          <Bell className="w-4 h-4" /> Alertas {alertasProximas.length > 0 && <span className="bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center">{alertasProximas.length}</span>}
+        </button>
+      </div>
+
+      {/* ══════════════════ TAB: Reportes ══════════════════ */}
+      {tab === "reportes" && (
+        <div className="space-y-6">
+          <div className="bg-arandu-dark-light border border-white/5 rounded-xl p-5">
+            <h3 className="text-white font-heading font-semibold mb-4">Seleccionar Empresas</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 mb-4 max-h-64 overflow-y-auto">
+              {empresas.map(emp => (
+                <button key={emp.id} onClick={() => toggleEmpresa(emp.id)}
+                  className={`flex items-center gap-2 p-3 rounded-lg text-left text-sm transition-all ${selectedEmpresas.includes(emp.id) ? "bg-amber-500/10 border border-amber-500/30 text-amber-400" : "bg-arandu-dark border border-white/5 text-slate-400 hover:border-white/20"}`}>
+                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${selectedEmpresas.includes(emp.id) ? "bg-amber-500 border-amber-500" : "border-slate-600"}`}>
+                    {selectedEmpresas.includes(emp.id) && <Check className="w-3 h-3 text-white" />}
+                  </div>
+                  <span className="truncate">{emp.nombre}</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-end gap-3 pt-4 border-t border-white/10">
+              <div>
+                <label className="text-slate-500 text-xs mb-1 block">Ordenar por</label>
+                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm">
+                  <option value="nombre">Nombre</option><option value="fecha">Fecha</option><option value="ip">IP</option><option value="categoria">Categoria</option><option value="empresa">Empresa</option>
+                </select>
+              </div>
+              <div className="flex gap-2 ml-auto flex-wrap">
+                <Button onClick={() => fetchReportData(false)} className="bg-cyan-600 hover:bg-cyan-700 text-white" data-testid="preview-no-cred">
+                  <Eye className="w-4 h-4 mr-2" /> Vista Previa
+                </Button>
+                {isAdmin && (
+                  <Button onClick={() => fetchReportData(true)} className="bg-amber-600 hover:bg-amber-700 text-white" data-testid="preview-with-cred">
+                    <Lock className="w-4 h-4 mr-2" /> Vista con Credenciales
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════ TAB: Alertas ══════════════════ */}
+      {tab === "alertas" && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-3 mb-4">
+            <select value={filterEmpresa} onChange={(e) => setFilterEmpresa(e.target.value)} className="bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm">
+              <option value="">Todas las empresas</option>
+              {empresas.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+            </select>
+            <Button onClick={openNewAlert} className="bg-red-600 hover:bg-red-700 text-white ml-auto" data-testid="new-alert-btn"><Plus className="w-4 h-4 mr-2" /> Nueva Alerta</Button>
+          </div>
+          {filteredAlertas.length === 0 ? (
+            <div className="text-center py-12 bg-arandu-dark-light rounded-xl border border-white/5">
+              <Bell className="w-12 h-12 text-slate-600 mx-auto mb-3" /><p className="text-slate-400">No hay alertas</p>
+            </div>
+          ) : filteredAlertas.map((alerta, idx) => {
+            const isR = alerta.estado === "resuelta";
+            const venc = alerta.fecha_vencimiento?.split("T")[0];
+            const dias = alerta.dias_restantes ?? Math.floor((new Date(venc) - new Date()) / 86400000);
+            return (
+              <motion.div key={alerta.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                className={`bg-arandu-dark-light border rounded-xl p-4 ${isR ? "border-white/5 opacity-60" : dias < 0 ? "border-red-500/30" : dias <= 30 ? "border-amber-500/20" : "border-white/5"}`} data-testid={`alert-item-${idx}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 flex-1">
+                    <button onClick={() => toggleAlertEstado(alerta)} className={`w-6 h-6 rounded-md border-2 flex items-center justify-center shrink-0 ${isR ? "bg-emerald-500 border-emerald-500" : "border-slate-500 hover:border-amber-400"}`}>
+                      {isR && <Check className="w-4 h-4 text-white" />}
+                    </button>
+                    <div className="flex-1">
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
+                        <h3 className={`font-semibold text-sm ${isR ? "text-slate-500 line-through" : "text-white"}`}>{alerta.nombre}</h3>
+                        <span className={`text-xs px-2 py-0.5 rounded border ${alerta.tipo === "dominio" ? "text-blue-400 bg-blue-500/10 border-blue-500/20" : alerta.tipo === "nic" ? "text-purple-400 bg-purple-500/10 border-purple-500/20" : "text-slate-400 bg-slate-500/10 border-slate-500/20"}`}>{alerta.tipo}</span>
+                        <span className="text-slate-500 text-xs">{alerta.empresa_nombre}</span>
+                      </div>
+                      {alerta.descripcion && <p className="text-slate-400 text-xs">{alerta.descripcion}</p>}
+                      <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-500">
+                        <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> {venc}</span>
+                        <span className="flex items-center gap-1"><Bell className="w-3 h-3" /> {alerta.notificar_dias}d antes</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {!isR && <span className={`text-xs font-bold px-2 py-1 rounded border ${getDaysColor(dias)}`}>{dias < 0 ? "Vencido" : `${dias}d`}</span>}
+                    <button onClick={() => openEditAlert(alerta)} className="p-1 text-slate-400 hover:text-amber-400"><Edit className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => deleteAlert(alerta.id)} className="p-1 text-slate-400 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ══════════════════ MODAL: Alerta ══════════════════ */}
+      <AnimatePresence>
+        {showAlertForm && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={(e) => e.target === e.currentTarget && setShowAlertForm(false)}>
+            <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-lg">
+              <div className="border-b border-white/10 p-4 flex justify-between items-center">
+                <h2 className="font-heading text-lg font-bold text-white">{editingAlert ? "Editar" : "Nueva"} Alerta</h2>
+                <Button onClick={() => setShowAlertForm(false)} variant="ghost" className="text-slate-400"><X className="w-4 h-4" /></Button>
+              </div>
+              <div className="p-4 space-y-3">
+                <div><label className="text-slate-400 text-xs mb-1 block">Empresa *</label>
+                  <select value={alertForm.empresa_id} onChange={(e) => setAlertForm({...alertForm, empresa_id: e.target.value})} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm" data-testid="alert-empresa"><option value="">Seleccionar...</option>{empresas.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}</select></div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><label className="text-slate-400 text-xs mb-1 block">Tipo</label>
+                    <select value={alertForm.tipo} onChange={(e) => setAlertForm({...alertForm, tipo: e.target.value})} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm" data-testid="alert-tipo"><option value="dominio">Dominio</option><option value="nic">NIC</option><option value="licencia">Licencia</option><option value="personalizado">Personalizado</option></select></div>
+                  <div><label className="text-slate-400 text-xs mb-1 block">Notificar dias antes</label><Input type="number" value={alertForm.notificar_dias} onChange={(e) => setAlertForm({...alertForm, notificar_dias: parseInt(e.target.value) || 30})} className="bg-arandu-dark border-white/10 text-white" /></div>
+                </div>
+                <div><label className="text-slate-400 text-xs mb-1 block">Nombre *</label><Input value={alertForm.nombre} onChange={(e) => setAlertForm({...alertForm, nombre: e.target.value})} className="bg-arandu-dark border-white/10 text-white" placeholder="Dominio empresa.com.py" data-testid="alert-nombre" /></div>
+                <div><label className="text-slate-400 text-xs mb-1 block">Vencimiento *</label><Input type="date" value={alertForm.fecha_vencimiento} onChange={(e) => setAlertForm({...alertForm, fecha_vencimiento: e.target.value})} className="bg-arandu-dark border-white/10 text-white" data-testid="alert-fecha" /></div>
+                <div><label className="text-slate-400 text-xs mb-1 block">Activo (opcional)</label>
+                  <select value={alertForm.activo_id} onChange={(e) => setAlertForm({...alertForm, activo_id: e.target.value})} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm"><option value="">Ninguno</option>{activos.filter(a => !alertForm.empresa_id || a.empresa_id === alertForm.empresa_id).map(a => <option key={a.id} value={a.id}>{a.nombre}</option>)}</select></div>
+                <div><label className="text-slate-400 text-xs mb-1 block">Descripcion</label><textarea value={alertForm.descripcion} onChange={(e) => setAlertForm({...alertForm, descripcion: e.target.value})} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm min-h-[50px]" /></div>
+                <div className="flex gap-2 justify-end pt-2">
+                  <Button onClick={() => setShowAlertForm(false)} variant="ghost" className="text-slate-400">Cancelar</Button>
+                  <Button onClick={saveAlert} className="bg-red-600 hover:bg-red-700 text-white" data-testid="save-alert-btn"><Save className="w-4 h-4 mr-2" /> Guardar</Button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+export default ReportesPage;
+

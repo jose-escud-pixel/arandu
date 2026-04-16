@@ -1,0 +1,406 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Manrope:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    margin: 0;
+    font-family: 'Manrope', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: #0a1628;
+    color: #f1f5f9;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: 'Outfit', sans-serif;
+}
+
+@layer base {
+    :root {
+        /* ── Arandu dynamic color tokens (RGB channels, space-separated) ── */
+        --a-blue:        59 130 246;   /* #3b82f6 */
+        --a-blue-light:  96 165 250;   /* #60a5fa */
+        --a-blue-dk:     37  99 235;   /* #2563eb */
+        --a-blue-dkr:    29  78 216;   /* #1d4ed8 */
+        --a-red:        239  68  68;   /* #ef4444 */
+        --a-red-light:  248 113 113;   /* #f87171 */
+        --a-red-dk:     220  38  38;   /* #dc2626 */
+        --a-dark:        10  22  40;   /* #0a1628 */
+        --a-dark-light:  15  30  55;   /* #0f1e37 */
+        --a-dark-lighter:22  42  74;   /* #162a4a */
+
+        /* ── shadcn/ui tokens ── */
+        --background: 216 50% 10%;
+        --foreground: 210 40% 98%;
+        --card: 216 45% 14%;
+        --card-foreground: 210 40% 98%;
+        --popover: 216 50% 10%;
+        --popover-foreground: 210 40% 98%;
+        --primary: 207 90% 54%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 0 84% 60%;
+        --secondary-foreground: 0 0% 100%;
+        --muted: 216 30% 20%;
+        --muted-foreground: 215 20% 65%;
+        --accent: 207 90% 54%;
+        --accent-foreground: 0 0% 100%;
+        --destructive: 0 63% 31%;
+        --destructive-foreground: 210 40% 98%;
+        --border: 216 30% 25%;
+        --input: 216 30% 25%;
+        --ring: 207 90% 54%;
+        --chart-1: 207 90% 54%;
+        --chart-2: 0 84% 60%;
+        --chart-3: 207 70% 45%;
+        --chart-4: 0 70% 50%;
+        --chart-5: 207 50% 35%;
+        --radius: 0.5rem;
+    }
+}
+
+/* ══════════════════════════════════════════════════════════
+   TEMAS DE EMPRESA — aplicados via [data-tema="..."] en el
+   wrapper raíz del panel admin. Solo cambia las variables.
+   ══════════════════════════════════════════════════════════ */
+
+/* ── OSCURO ROJO: dark bg + red accent ── */
+[data-tema="oscuro-rojo"] {
+    --a-blue:       239  68  68;
+    --a-blue-light: 248 113 113;
+    --a-blue-dk:    220  38  38;
+    --a-blue-dkr:   185  28  28;
+}
+
+/* ── CLARO ROJO: light bg + red accent ── */
+[data-tema="claro-rojo"] {
+    --a-blue:       220  38  38;
+    --a-blue-light: 239  68  68;
+    --a-blue-dk:    185  28  28;
+    --a-blue-dkr:   153  27  27;
+    --a-dark:       248 250 252;
+    --a-dark-light: 255 255 255;
+    --a-dark-lighter:241 245 249;
+    --background-override: #f8fafc;
+    --text-override: #1e293b;
+    --muted-text-override: #64748b;
+    --border-override: rgba(0,0,0,0.08);
+}
+
+/* ── CLARO DORADO: light bg + gold/amber accent ── */
+[data-tema="claro-dorado"] {
+    --a-blue:       217 119   6;
+    --a-blue-light: 245 158  11;
+    --a-blue-dk:    180  83   9;
+    --a-blue-dkr:   146  64  14;
+    --a-dark:       248 250 252;
+    --a-dark-light: 255 255 255;
+    --a-dark-lighter:241 245 249;
+    --background-override: #fefce8;
+    --text-override: #1c1917;
+    --muted-text-override: #78716c;
+    --border-override: rgba(0,0,0,0.08);
+}
+
+/* ── CLARO AZUL: light bg + blue accent ── */
+[data-tema="claro-azul"] {
+    --a-dark:       248 250 252;
+    --a-dark-light: 255 255 255;
+    --a-dark-lighter:241 245 249;
+    --background-override: #f0f9ff;
+    --text-override: #0f172a;
+    --muted-text-override: #64748b;
+    --border-override: rgba(0,0,0,0.08);
+}
+
+/* ── Sobrescrituras de texto/borde para temas CLAROS ── */
+[data-tema="claro-rojo"],
+[data-tema="claro-dorado"],
+[data-tema="claro-azul"] {
+    color-scheme: light;
+}
+[data-tema="claro-rojo"] .text-white,
+[data-tema="claro-dorado"] .text-white,
+[data-tema="claro-azul"] .text-white {
+    color: var(--text-override, #1e293b) !important;
+}
+[data-tema="claro-rojo"] .text-slate-300,
+[data-tema="claro-dorado"] .text-slate-300,
+[data-tema="claro-azul"] .text-slate-300 {
+    color: #475569 !important;
+}
+[data-tema="claro-rojo"] .text-slate-400,
+[data-tema="claro-dorado"] .text-slate-400,
+[data-tema="claro-azul"] .text-slate-400 {
+    color: #64748b !important;
+}
+[data-tema="claro-rojo"] .text-slate-500,
+[data-tema="claro-dorado"] .text-slate-500,
+[data-tema="claro-azul"] .text-slate-500 {
+    color: #94a3b8 !important;
+}
+[data-tema="claro-rojo"] .border-white\/5,
+[data-tema="claro-dorado"] .border-white\/5,
+[data-tema="claro-azul"] .border-white\/5 {
+    border-color: rgba(0,0,0,0.06) !important;
+}
+[data-tema="claro-rojo"] .border-white\/10,
+[data-tema="claro-dorado"] .border-white\/10,
+[data-tema="claro-azul"] .border-white\/10 {
+    border-color: rgba(0,0,0,0.1) !important;
+}
+[data-tema="claro-rojo"] .border-white\/20,
+[data-tema="claro-dorado"] .border-white\/20,
+[data-tema="claro-azul"] .border-white\/20 {
+    border-color: rgba(0,0,0,0.15) !important;
+}
+[data-tema="claro-rojo"] .bg-white\/5,
+[data-tema="claro-dorado"] .bg-white\/5,
+[data-tema="claro-azul"] .bg-white\/5 {
+    background-color: rgba(0,0,0,0.04) !important;
+}
+[data-tema="claro-rojo"] .hover\:bg-white\/5:hover,
+[data-tema="claro-dorado"] .hover\:bg-white\/5:hover,
+[data-tema="claro-azul"] .hover\:bg-white\/5:hover {
+    background-color: rgba(0,0,0,0.06) !important;
+}
+/* Sidebar border */
+[data-tema="claro-rojo"] .border-r.border-white\/5,
+[data-tema="claro-dorado"] .border-r.border-white\/5,
+[data-tema="claro-azul"] .border-r.border-white\/5 {
+    border-color: rgba(0,0,0,0.1) !important;
+}
+/* Scrollbar for light themes */
+[data-tema="claro-rojo"] ::-webkit-scrollbar-track,
+[data-tema="claro-dorado"] ::-webkit-scrollbar-track,
+[data-tema="claro-azul"] ::-webkit-scrollbar-track {
+    background: #e2e8f0;
+}
+/* Body bg for light themes (applied via JS too) */
+[data-tema="claro-rojo"] { background-color: #f8fafc; }
+[data-tema="claro-dorado"] { background-color: #fefce8; }
+[data-tema="claro-azul"] { background-color: #f0f9ff; }
+
+/* ── Mejor contraste de textos "emerald/blue/violet" en temas claros ── */
+[data-tema="claro-rojo"] .text-emerald-200,
+[data-tema="claro-rojo"] .text-emerald-300,
+[data-tema="claro-dorado"] .text-emerald-200,
+[data-tema="claro-dorado"] .text-emerald-300,
+[data-tema="claro-azul"]  .text-emerald-200,
+[data-tema="claro-azul"]  .text-emerald-300 {
+    color: #047857 !important;
+}
+[data-tema="claro-rojo"] .text-blue-300,
+[data-tema="claro-dorado"] .text-blue-300,
+[data-tema="claro-azul"]  .text-blue-300 {
+    color: #1d4ed8 !important;
+}
+[data-tema="claro-rojo"] .text-violet-300,
+[data-tema="claro-dorado"] .text-violet-300,
+[data-tema="claro-azul"]  .text-violet-300 {
+    color: #6d28d9 !important;
+}
+[data-tema="claro-rojo"] .text-amber-300,
+[data-tema="claro-dorado"] .text-amber-300,
+[data-tema="claro-azul"]  .text-amber-300 {
+    color: #b45309 !important;
+}
+[data-tema="claro-rojo"] .text-red-300,
+[data-tema="claro-dorado"] .text-red-300,
+[data-tema="claro-azul"]  .text-red-300 {
+    color: #b91c1c !important;
+}
+[data-tema="claro-rojo"] .text-orange-300,
+[data-tema="claro-dorado"] .text-orange-300,
+[data-tema="claro-azul"]  .text-orange-300 {
+    color: #c2410c !important;
+}
+[data-tema="claro-rojo"] .text-slate-400,
+[data-tema="claro-dorado"] .text-slate-400,
+[data-tema="claro-azul"]  .text-slate-400 {
+    color: #475569 !important;
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+    }
+}
+
+@layer utilities {
+    .gradient-text {
+        background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 50%, #2563eb 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .gradient-text-red {
+        background: linear-gradient(135deg, #ef4444 0%, #f87171 50%, #dc2626 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+
+    .glass-card {
+        backdrop-filter: blur(16px);
+        background: rgba(15, 30, 55, 0.8);
+        border: 1px solid rgba(59, 130, 246, 0.15);
+    }
+
+    .card-hover {
+        transition: all 0.4s ease;
+    }
+
+    .card-hover:hover {
+        transform: translateY(-8px);
+        box-shadow: 0 20px 40px -15px rgba(59, 130, 246, 0.3);
+    }
+
+    .glow-blue {
+        box-shadow: 0 0 30px rgba(59, 130, 246, 0.3);
+    }
+
+    .glow-red {
+        box-shadow: 0 0 30px rgba(239, 68, 68, 0.3);
+    }
+}
+
+/* Smooth scroll */
+html {
+    scroll-behavior: smooth;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #0a1628;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #3b82f6;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #60a5fa;
+}
+
+/* Hero gradient */
+.hero-gradient {
+    background: linear-gradient(135deg, rgba(10, 22, 40, 0.95) 0%, rgba(15, 30, 55, 0.9) 50%, rgba(10, 22, 40, 0.95) 100%);
+}
+
+/* Animation */
+@keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+}
+
+.animate-float {
+    animation: float 3s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.3); }
+    50% { box-shadow: 0 0 40px rgba(59, 130, 246, 0.5); }
+}
+
+.animate-pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* WhatsApp button */
+.whatsapp-float {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 100;
+    background: #25D366;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 20px rgba(37, 211, 102, 0.4);
+    transition: all 0.3s ease;
+}
+
+.whatsapp-float:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 30px rgba(37, 211, 102, 0.6);
+}
+
+
+/* Print styles para presupuestos */
+@media print {
+    @page {
+        size: A4;
+        margin: 0;
+    }
+    body {
+        background: white !important;
+        color: black !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    /* Ocultar todo usando visibility (permite que hijos lo sobreescriban) */
+    body * {
+        visibility: hidden;
+    }
+    /* Mostrar solo el presupuesto */
+    #presupuesto-print,
+    #presupuesto-print * {
+        visibility: visible !important;
+    }
+    #presupuesto-print {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
+        overflow: visible !important;
+        background: white !important;
+        z-index: 99999 !important;
+        border: none !important;
+        border-radius: 0 !important;
+        padding: 10mm !important;
+    }
+    /* Inventario (sin cambios) */
+    #inventario-print,
+    #inventario-print * {
+        visibility: visible !important;
+    }
+    #inventario-print {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
+        overflow: visible !important;
+        background: white !important;
+        z-index: 99999 !important;
+    }
+    .print\:hidden {
+        display: none !important;
+    }
+    table {
+        page-break-inside: auto !important;
+    }
+    tr {
+        page-break-inside: avoid !important;
+    }
+    thead {
+        display: table-header-group !important;
+    }
+}
