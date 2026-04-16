@@ -102,9 +102,11 @@ export default function IngresoVarioPage() {
   }, [ingresos, searchTerm]);
 
   const totalPYG = React.useMemo(() =>
-    ingresos.filter(i => i.moneda === "PYG").reduce((s, i) => s + i.monto, 0), [ingresos]);
+    ingresos.filter(i => i.moneda === "PYG" && i.monto > 0).reduce((s, i) => s + i.monto, 0), [ingresos]);
   const totalUSD = React.useMemo(() =>
-    ingresos.filter(i => i.moneda === "USD").reduce((s, i) => s + i.monto, 0), [ingresos]);
+    ingresos.filter(i => i.moneda === "USD" && i.monto > 0).reduce((s, i) => s + i.monto, 0), [ingresos]);
+  const totalEgresosPYG = React.useMemo(() =>
+    ingresos.filter(i => i.moneda === "PYG" && i.monto < 0).reduce((s, i) => s + Math.abs(i.monto), 0), [ingresos]);
 
   const openNew = () => {
     setEditingId(null);
@@ -281,7 +283,14 @@ export default function IngresoVarioPage() {
                     </td>
                     <td className="px-4 py-3 text-center text-slate-400 text-xs font-body">{iv.fecha}</td>
                     <td className="px-4 py-3 text-right">
-                      <span className="font-heading text-emerald-300 font-semibold">{fmtNum(iv.monto, iv.moneda)}</span>
+                      {iv.monto < 0 ? (
+                        <span className="font-heading text-red-400 font-semibold">
+                          -{fmtNum(Math.abs(iv.monto), iv.moneda)}
+                          <span className="ml-1 text-[10px] bg-red-500/15 text-red-300 border border-red-500/20 px-1.5 py-0.5 rounded uppercase">egreso</span>
+                        </span>
+                      ) : (
+                        <span className="font-heading text-emerald-300 font-semibold">{fmtNum(iv.monto, iv.moneda)}</span>
+                      )}
                       {iv.moneda === "USD" && iv.tipo_cambio && (
                         <p className="text-slate-500 text-xs">≈ {fmtNum(iv.monto_pyg, "PYG")}</p>
                       )}

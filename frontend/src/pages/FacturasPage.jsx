@@ -119,6 +119,7 @@ export default function FacturasPage() {
   const [pagoParcialFac, setPagoParcialFac] = useState(null);
   const [montoParcial, setMontoParcial] = useState("");
   const [fechaPagoParcial, setFechaPagoParcial] = useState(new Date().toISOString().slice(0, 10));
+  const [numeroReciboManual, setNumeroReciboManual] = useState("");
 
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -136,12 +137,13 @@ export default function FacturasPage() {
       if (logoFilter !== "todas") qR.set("logo_tipo", logoFilter);
       if (filtrarMes) qR.set("mes", mes);
 
+      const logoQ = logoFilter !== "todas" ? `?logo_tipo=${logoFilter}` : "";
       const [facRes, resRes, empRes, presRes, contRes] = await Promise.all([
         fetch(`${API}/admin/facturas?${q}`, { headers }),
         fetch(`${API}/admin/facturas/resumen?${qR}`, { headers }),
-        fetch(`${API}/admin/empresas`, { headers }),
-        fetch(`${API}/admin/presupuestos`, { headers }),
-        fetch(`${API}/admin/contratos`, { headers }),
+        fetch(`${API}/admin/empresas${logoQ}`, { headers }),
+        fetch(`${API}/admin/presupuestos${logoQ}`, { headers }),
+        fetch(`${API}/admin/contratos${logoQ}`, { headers }),
       ]);
       if (empRes.ok) setEmpresas(await empRes.json());
       if (presRes.ok) setPresupuestosDisp(await presRes.json());
@@ -267,40 +269,57 @@ export default function FacturasPage() {
     finally { setSaving(false); savingRef.current = false; }
   };
 
-  // ── Marcar pagada ──────────────────────────────────────────
+  // ── Pago total con recibo (reutilizable para contado y crédito total) ──
   const handlePagar = async () => {
     if (!fechaPago) { toast.error("Fecha de pago requerida"); return; }
     try {
-      const q = `estado=pagada&fecha_pago=${fechaPago}`;
-      const res = await fetch(`${API}/admin/facturas/${pagoFac.id}/estado?${q}`, {
-        method: "PATCH", headers,
+      const montoPendiente = (pagoFac.monto || 0) - (pagoFac.monto_pagado || 0);
+      const res = await fetch(`${API}/admin/facturas/${pagoFac.id}/pago-parcial`, {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          monto_pagado: montoPendiente,
+          fecha_pago: fechaPago,
+          numero_recibo: numeroReciboManual || null,
+        }),
       });
-      if (!res.ok) throw new Error();
-      toast.success("Factura marcada como pagada");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Error");
+      }
+      const data = await res.json();
+      toast.success(`Pagada · Recibo ${data.recibo?.numero || ""}`);
       setShowPagoModal(false);
+      setNumeroReciboManual("");
       fetchAll().catch(() => {});
-    } catch { toast.error("Error al actualizar estado"); }
+    } catch (e) { toast.error(e.message || "Error al registrar pago"); }
   };
 
-  // ── Pago contado (usa fecha de la factura) ────────────────
+  // ── Pago contado: abre modal con fecha bloqueada = fecha factura ──────
   const handlePagarContado = async (fac) => {
     try {
-      const q = `estado=pagada&fecha_pago=${fac.fecha}`;
-      const res = await fetch(`${API}/admin/facturas/${fac.id}/estado?${q}`, {
-        method: "PATCH", headers,
+      const res = await fetch(`${API}/admin/facturas/${fac.id}/pago-parcial`, {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          monto_pagado: (fac.monto || 0) - (fac.monto_pagado || 0),
+          fecha_pago: fac.fecha,
+        }),
       });
       if (!res.ok) throw new Error();
-      toast.success("Factura marcada como pagada");
+      const data = await res.json();
+      toast.success(`Pagada · Recibo ${data.recibo?.numero || ""}`);
       fetchAll().catch(() => {});
-    } catch { toast.error("Error al actualizar estado"); }
+    } catch { toast.error("Error al registrar pago"); }
   };
 
-  // ── Pago parcial ────────────────────────────────────────────
+  // ── Pago parcial (sólo para crédito) ────────────────────────────────
   const openPagoParcial = (fac) => {
     setPagoParcialFac(fac);
     const yaAbonado = fac.monto_pagado || 0;
     setMontoParcial(String(fac.monto - yaAbonado));
     setFechaPagoParcial(new Date().toISOString().slice(0, 10));
+    setNumeroReciboManual("");
     setShowPagoParcialModal(true);
   };
 
@@ -311,13 +330,25 @@ export default function FacturasPage() {
       const res = await fetch(`${API}/admin/facturas/${pagoParcialFac.id}/pago-parcial`, {
         method: "PATCH",
         headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ monto_pagado: monto, fecha_pago: fechaPagoParcial }),
+        body: JSON.stringify({
+          monto_pagado: monto,
+          fecha_pago: fechaPagoParcial,
+          numero_recibo: numeroReciboManual || null,
+        }),
       });
-      if (!res.ok) throw new Error();
-      toast.success(monto >= pagoParcialFac.monto ? "Factura pagada completamente" : "Pago parcial registrado");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Error");
+      }
+      const data = await res.json();
+      const msg = monto >= (pagoParcialFac.monto - (pagoParcialFac.monto_pagado || 0))
+        ? `Pagada completamente · Recibo ${data.recibo?.numero || ""}`
+        : `Pago parcial registrado · Recibo ${data.recibo?.numero || ""}`;
+      toast.success(msg);
       setShowPagoParcialModal(false);
+      setNumeroReciboManual("");
       fetchAll().catch(() => {});
-    } catch { toast.error("Error al registrar pago parcial"); }
+    } catch (e) { toast.error(e.message || "Error al registrar pago parcial"); }
   };
 
   const handleDeshacer = async (fac) => {
@@ -601,10 +632,12 @@ export default function FacturasPage() {
                                 Registrar pago
                               </button>
                             ) : (
-                              /* Contado: pago total con fecha de la factura */
+                              /* Contado: pago total con fecha de la factura (abre modal para elegir nº recibo opcional) */
                               <button onClick={() => {
-                                  // Para contado: pagar total con fecha de la factura
-                                  handlePagarContado(fac);
+                                  setPagoFac(fac);
+                                  setFechaPago(fac.fecha);
+                                  setNumeroReciboManual("");
+                                  setShowPagoModal(true);
                                 }}
                                 className="text-xs bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-600/30 px-2 py-1 rounded-lg transition-all">
                                 Pagar
@@ -885,6 +918,7 @@ export default function FacturasPage() {
                     {/* Selector para agregar otro presupuesto */}
                     <select
                       value=""
+                      disabled={!!form.contrato_id}
                       onChange={e => {
                         const val = e.target.value;
                         if (!val) return;
@@ -896,11 +930,14 @@ export default function FacturasPage() {
                           contrato_id: "",
                         }));
                       }}
-                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-400"
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-400 disabled:opacity-40"
                     >
-                      <option value="">+ Agregar presupuesto...</option>
+                      <option value="">
+                        {form.contrato_id ? "Primero quitá el contrato vinculado" : "+ Agregar presupuesto..."}
+                      </option>
                       {presupuestosDisp
                         .filter(p => !(form.presupuesto_ids || []).includes(p.id))
+                        .filter(p => !form.empresa_id || p.empresa_id === form.empresa_id)
                         .map(p => (
                           <option key={p.id} value={p.id}>
                             {p.numero}{p.nombre_archivo ? ` — ${p.nombre_archivo}` : ""} · {p.empresa_nombre || ""} ({p.moneda === "USD" ? `$${p.total}` : `₲${Number(p.total).toLocaleString("es-PY")}`})
@@ -909,22 +946,41 @@ export default function FacturasPage() {
                     </select>
                   </div>
 
-                  {/* Contrato (solo si no hay presupuestos vinculados) */}
-                  {(form.presupuesto_ids || []).length === 0 && (
+                  {/* Contrato (XOR — solo si no hay presupuestos vinculados) */}
+                  {(form.presupuesto_ids || []).length === 0 ? (
                     <div>
                       <label className="text-slate-400 text-xs block mb-1">Contrato</label>
                       <select
                         value={form.contrato_id || ""}
-                        onChange={e => setForm(f => ({ ...f, contrato_id: e.target.value }))}
+                        onChange={e => {
+                          const cid = e.target.value;
+                          const c = contratosDisp.find(x => x.id === cid);
+                          setForm(f => ({
+                            ...f,
+                            contrato_id: cid,
+                            presupuesto_ids: [],
+                            // Auto-completar si hay contrato y campos vacíos
+                            concepto: cid && c ? (c.nombre || c.descripcion || f.concepto) : f.concepto,
+                            monto: cid && c && (!f.monto || f.monto === 0) ? (c.monto || c.valor || f.monto) : f.monto,
+                            moneda: cid && c ? (c.moneda || f.moneda) : f.moneda,
+                            empresa_id: cid && c && !f.empresa_id ? (c.empresa_id || f.empresa_id) : f.empresa_id,
+                          }));
+                        }}
                         className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-400"
                       >
                         <option value="">— Sin vincular —</option>
-                        {contratosDisp.map(c => (
-                          <option key={c.id} value={c.id}>
-                            {c.numero || c.id.slice(0, 8)}{c.empresa_nombre ? ` — ${c.empresa_nombre}` : ""}
-                          </option>
-                        ))}
+                        {contratosDisp
+                          .filter(c => !form.empresa_id || c.empresa_id === form.empresa_id)
+                          .map(c => (
+                            <option key={c.id} value={c.id}>
+                              {c.numero || c.id.slice(0, 8)}{c.empresa_nombre ? ` — ${c.empresa_nombre}` : ""}{c.nombre ? ` · ${c.nombre}` : ""}
+                            </option>
+                          ))}
                       </select>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-slate-500 italic">
+                      No se puede vincular contrato y presupuesto a la vez. Quitá los presupuestos para elegir un contrato.
                     </div>
                   )}
 
@@ -983,10 +1039,30 @@ export default function FacturasPage() {
                 {pagoFac.monto_pagado > 0 && (
                   <p className="text-slate-400 text-xs mt-1">Ya abonado: {formatMonto(pagoFac.monto_pagado, pagoFac.moneda)}</p>
                 )}
+                <p className="text-slate-500 text-xs mt-1">
+                  Forma de pago: <span className={pagoFac.forma_pago === "contado" ? "text-emerald-400" : "text-blue-400"}>
+                    {pagoFac.forma_pago === "contado" ? "Contado" : "Crédito"}
+                  </span>
+                </p>
               </div>
               <div>
-                <label className="text-slate-400 text-xs block mb-1">Fecha de pago *</label>
-                <input type="date" value={fechaPago} onChange={e => setFechaPago(e.target.value)}
+                <label className="text-slate-400 text-xs block mb-1">
+                  Fecha de pago *
+                  {pagoFac.forma_pago === "contado" && (
+                    <span className="text-slate-500 text-[10px] ml-1">(en contado = fecha de la factura)</span>
+                  )}
+                </label>
+                <input type="date" value={fechaPago}
+                  disabled={pagoFac.forma_pago === "contado"}
+                  onChange={e => setFechaPago(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-60 disabled:cursor-not-allowed"
+                />
+              </div>
+              <div>
+                <label className="text-slate-400 text-xs block mb-1">N° Recibo <span className="text-slate-500 text-[10px]">(opcional — si queda vacío, se autogenera consecutivo)</span></label>
+                <input type="text" value={numeroReciboManual}
+                  onChange={e => setNumeroReciboManual(e.target.value)}
+                  placeholder="Ej: 000123 (dejar vacío para automático)"
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500"
                 />
               </div>
@@ -994,9 +1070,9 @@ export default function FacturasPage() {
                 <button onClick={() => setShowPagoModal(false)} className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm transition-all">
                   Cancelar
                 </button>
-                <button onClick={handlePagar}
+                <button onClick={handlePagar} data-testid="confirmar-pago-total"
                   className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-all">
-                  Confirmar
+                  Confirmar y emitir recibo
                 </button>
               </div>
             </div>
@@ -1087,14 +1163,23 @@ export default function FacturasPage() {
                 <input type="date" value={fechaPagoParcial} onChange={e => setFechaPagoParcial(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
                 />
+                <p className="text-slate-500 text-[10px] mt-1">El balance de ese mes registrará este cobro</p>
+              </div>
+              <div>
+                <label className="text-slate-400 text-xs block mb-1">N° Recibo <span className="text-slate-500 text-[10px]">(opcional — autogenera consecutivo)</span></label>
+                <input type="text" value={numeroReciboManual}
+                  onChange={e => setNumeroReciboManual(e.target.value)}
+                  placeholder="Ej: 000123"
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                />
               </div>
               <div className="flex gap-3">
                 <button onClick={() => setShowPagoParcialModal(false)} className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm transition-all">
                   Cancelar
                 </button>
-                <button onClick={handlePagoParcial}
+                <button onClick={handlePagoParcial} data-testid="confirmar-pago-parcial"
                   className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-all">
-                  Registrar pago
+                  Registrar pago y emitir recibo
                 </button>
               </div>
             </div>

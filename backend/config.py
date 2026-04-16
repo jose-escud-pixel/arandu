@@ -18,7 +18,7 @@ JWT_ALGORITHM = "HS256"
 # Permisos
 PERMISOS_DISPONIBLES = {
     "empresas": ["ver", "crear", "editar", "eliminar"],
-    "presupuestos": ["ver", "crear", "editar", "eliminar"],
+    "presupuestos": ["ver", "crear", "editar", "eliminar", "modo_libre"],
     "inventario": ["ver", "crear", "editar", "eliminar"],
     "credenciales": ["ver", "editar"],
     "reportes": ["ver", "exportar"],
@@ -29,7 +29,7 @@ PERMISOS_DISPONIBLES = {
     "proveedores": ["ver", "crear", "editar", "eliminar"],
     "costos_fijos": ["ver", "crear", "editar", "eliminar"],
     "empleados": ["ver", "crear", "editar", "eliminar"],
-    "facturas": ["ver", "crear", "editar", "eliminar"],
+    "facturas": ["ver", "crear", "editar", "eliminar", "modo_libre"],
     "balance": ["ver", "editar"],
     "ingresos_varios": ["ver", "crear", "editar", "eliminar"],
     "pagos_proveedores": ["ver", "crear", "editar", "eliminar"],

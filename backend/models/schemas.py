@@ -133,6 +133,7 @@ class PresupuestoItem(BaseModel):
     precio_unitario: float
     subtotal: float
     observacion: Optional[str] = None
+    observacion_oculta: Optional[str] = None  # Obs interna, solo visible en vista de costos, no en presupuesto final
     moneda_item: Optional[str] = None
     tipo_cambio_item: Optional[float] = None
     proveedor_id: Optional[str] = None
@@ -144,6 +145,7 @@ class CostoRealItem(BaseModel):
     costo_estimado: float = 0
     costo_real: float = 0
     observacion: Optional[str] = None
+    observacion_oculta: Optional[str] = None
     proveedor: str = ""
     es_nuevo: bool = False
     moneda_item: Optional[str] = None        # moneda del costo estimado (del presupuesto)

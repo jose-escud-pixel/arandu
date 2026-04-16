@@ -542,22 +542,13 @@ export default function ContratosPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-slate-400 text-xs mb-1 font-body">Nombre del servicio *</label>
+                <label className="block text-slate-400 text-xs mb-1 font-body">Nombre del servicio / descripción del contrato *</label>
                 <input
                   required
                   type="text"
                   value={formData.nombre}
                   onChange={e => setFormData(f => ({ ...f, nombre: e.target.value }))}
-                  placeholder="Ej: Soporte mensual, Hosting, etc."
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm font-body focus:outline-none focus:border-arandu-blue"
-                />
-              </div>
-              <div>
-                <label className="block text-slate-400 text-xs mb-1 font-body">Descripción</label>
-                <input
-                  type="text"
-                  value={formData.descripcion}
-                  onChange={e => setFormData(f => ({ ...f, descripcion: e.target.value }))}
+                  placeholder="Ej: Soporte mensual, Hosting, Mantenimiento…"
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm font-body focus:outline-none focus:border-arandu-blue"
                 />
               </div>

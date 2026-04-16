@@ -54,6 +54,7 @@ const LOGO_LABEL = { arandujar: "A&JAR", arandu: "Arandu", jar: "JAR" };
 const ESTADO_BADGE = {
   borrador:   { cls: "bg-slate-500/20 text-slate-400 border-slate-500/30",     label: "Borrador",   icon: Clock },
   aprobado:   { cls: "bg-blue-500/15 text-blue-300 border-blue-500/30",        label: "Aprobado",   icon: CheckCircle },
+  rechazado:  { cls: "bg-red-500/15 text-red-300 border-red-500/30",           label: "Rechazado",  icon: X },
   facturado:  { cls: "bg-orange-500/15 text-orange-300 border-orange-500/30",  label: "Facturado",  icon: Receipt },
   cobrado:    { cls: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",label: "Cobrado",   icon: CheckCircle },
   cancelado:  { cls: "bg-red-500/15 text-red-300 border-red-500/30",           label: "Cancelado",  icon: X },
@@ -62,6 +63,26 @@ const ESTADO_BADGE = {
   parcial:    { cls: "bg-blue-500/15 text-blue-300 border-blue-500/30",        label: "Parcial",    icon: Clock },
   anulada:    { cls: "bg-slate-500/20 text-slate-400 border-slate-500/30",     label: "Anulada",    icon: X },
 };
+
+// Header de tabla cliqueable para ordenar
+function SortTh({ label, sortKey, currentSort, onClick, className = "" }) {
+  const isActive = currentSort.key === sortKey;
+  return (
+    <th className={`px-4 py-2.5 text-slate-400 font-body uppercase text-[11px] tracking-wider cursor-pointer select-none hover:text-white transition-all ${className}`}
+        onClick={() => onClick(sortKey)}>
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {isActive ? (
+          currentSort.dir === "asc"
+            ? <span className="text-emerald-400">▲</span>
+            : <span className="text-emerald-400">▼</span>
+        ) : (
+          <span className="opacity-30">⇅</span>
+        )}
+      </span>
+    </th>
+  );
+}
 
 function StateBadge({ estado }) {
   const s = ESTADO_BADGE[estado] || ESTADO_BADGE.pendiente;
@@ -127,6 +148,37 @@ export default function VentasPage() {
   const [search, setSearch] = useState("");
   const [showNew, setShowNew] = useState(false);
   const newBtnRef = useRef(null);
+
+  // Ordenamiento por tab: { [tab]: { key, dir: "asc"|"desc" } }
+  const [sortBy, setSortBy] = useState({
+    presupuestos: { key: "fecha", dir: "desc" },
+    facturas:     { key: "fecha", dir: "desc" },
+    contratos:    { key: "numero", dir: "desc" },
+    ingresos:     { key: "fecha", dir: "desc" },
+  });
+  const toggleSort = (tabName, key) => {
+    setSortBy(prev => ({
+      ...prev,
+      [tabName]: prev[tabName].key === key
+        ? { key, dir: prev[tabName].dir === "asc" ? "desc" : "asc" }
+        : { key, dir: "asc" }
+    }));
+  };
+  const sortList = (list, sort) => {
+    const { key, dir } = sort;
+    const mult = dir === "asc" ? 1 : -1;
+    return [...list].sort((a, b) => {
+      const av = a[key] ?? "";
+      const bv = b[key] ?? "";
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * mult;
+      return String(av).localeCompare(String(bv), "es", { numeric: true }) * mult;
+    });
+  };
+
+  // Vista previa inline al click en fila
+  const [previewItem, setPreviewItem] = useState(null); // { kind, data }
+  const openPreview = (kind, data) => setPreviewItem({ kind, data });
+  const closePreview = () => setPreviewItem(null);
 
   // logo_tipo activo basado en empresa seleccionada
   const logoFilter = activeEmpresaPropia?.slug || "todas";
@@ -223,30 +275,33 @@ export default function VentasPage() {
 
   // ─── Filtros locales ─────────────────────────────────────────
   const q = search.toLowerCase();
-  const filteredPres = presupuestos
+  const filteredPres = sortList(presupuestos
     .filter(p => matchesYear(p.fecha))
     .filter(p =>
       !q || (p.numero && String(p.numero).includes(q)) ||
-      (p.empresa_nombre || "").toLowerCase().includes(q)
-    );
-  const filteredFac = facturas
+      (p.empresa_nombre || "").toLowerCase().includes(q) ||
+      String(p.total_pyg || p.total || "").includes(q)
+    ), sortBy.presupuestos);
+  const filteredFac = sortList(facturas
     .filter(f => matchesYear(f.fecha))
     .filter(f =>
       !q || (f.numero || "").toLowerCase().includes(q) ||
       (f.razon_social || "").toLowerCase().includes(q) ||
-      (f.concepto || "").toLowerCase().includes(q)
-    );
-  const filteredIng = ingresos
+      (f.concepto || "").toLowerCase().includes(q) ||
+      String(f.monto_pyg || f.monto || "").includes(q)
+    ), sortBy.facturas);
+  const filteredIng = sortList(ingresos
     .filter(i => matchesYear(i.fecha))
     .filter(i =>
       !q || (i.descripcion || "").toLowerCase().includes(q) ||
-      (i.categoria || "").toLowerCase().includes(q)
-    ).filter(i => logoFilter === "todas" || (i.logo_tipo || "arandujar") === logoFilter);
-  const filteredCon = contratos.filter(c =>
+      (i.categoria || "").toLowerCase().includes(q) ||
+      String(i.monto_pyg || i.monto || "").includes(q)
+    ).filter(i => logoFilter === "todas" || (i.logo_tipo || "arandujar") === logoFilter), sortBy.ingresos);
+  const filteredCon = sortList(contratos.filter(c =>
     !q || (c.numero || "").toLowerCase().includes(q) ||
     (c.empresa_nombre || "").toLowerCase().includes(q) ||
     (c.descripcion || "").toLowerCase().includes(q)
-  );
+  ), sortBy.contratos);
 
   // ─── Stats ───────────────────────────────────────────────────
   const totalFacturadoPYG = facturas
@@ -468,13 +523,12 @@ export default function VentasPage() {
                 <table className="w-full text-sm font-body">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/3">
-                      <th className="text-left px-4 py-3 text-slate-400 font-medium text-xs">N°</th>
-                      <th className="text-left px-4 py-3 text-slate-400 font-medium text-xs">Empresa</th>
-                      <th className="text-left px-4 py-3 text-slate-400 font-medium text-xs">Fecha</th>
-                      <th className="text-right px-4 py-3 text-slate-400 font-medium text-xs">Total</th>
+                      <SortTh label="N°"       sortKey="numero"    currentSort={sortBy.presupuestos} onClick={(k) => toggleSort("presupuestos", k)} className="text-left" />
+                      <SortTh label="Empresa"  sortKey="empresa_nombre" currentSort={sortBy.presupuestos} onClick={(k) => toggleSort("presupuestos", k)} className="text-left" />
+                      <SortTh label="Fecha"    sortKey="fecha"     currentSort={sortBy.presupuestos} onClick={(k) => toggleSort("presupuestos", k)} className="text-left" />
+                      <SortTh label="Total"    sortKey="total"     currentSort={sortBy.presupuestos} onClick={(k) => toggleSort("presupuestos", k)} className="text-right" />
                       <th className="text-right px-4 py-3 text-slate-400 font-medium text-xs">Utilidad</th>
-                      <th className="text-center px-4 py-3 text-slate-400 font-medium text-xs">Estado</th>
-                      <th className="text-center px-4 py-3 text-slate-400 font-medium text-xs">Empresa</th>
+                      <SortTh label="Estado"   sortKey="estado"    currentSort={sortBy.presupuestos} onClick={(k) => toggleSort("presupuestos", k)} className="text-center" />
                     </tr>
                   </thead>
                   <tbody>
@@ -487,7 +541,8 @@ export default function VentasPage() {
                       const utilPct = total > 0 && utilidad != null ? (utilidad / total * 100).toFixed(0) : null;
                       return (
                         <tr key={p.id}
-                          onClick={() => navigate("/admin/presupuestos")}
+                          onClick={() => openPreview("presupuesto", p)}
+                          data-testid={`pres-row-${p.id}`}
                           className="border-b border-white/5 hover:bg-white/3 cursor-pointer transition-colors">
                           <td className="px-4 py-3">
                             <span className="font-mono text-blue-300">#{p.numero}</span>
@@ -528,13 +583,6 @@ export default function VentasPage() {
                               disabled={!hasPermission("presupuestos.editar")}
                             />
                           </td>
-                          <td className="px-4 py-3 text-center">
-                            {p.logo_tipo && (
-                              <span className={`text-xs px-2 py-0.5 rounded-full border ${LOGO_CHIP[p.logo_tipo] || "bg-white/10 text-slate-300 border-white/10"}`}>
-                                {LOGO_LABEL[p.logo_tipo] || p.logo_tipo}
-                              </span>
-                            )}
-                          </td>
                         </tr>
                       );
                     })}
@@ -563,20 +611,19 @@ export default function VentasPage() {
                 <table className="w-full text-sm font-body">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/3">
-                      <th className="text-left px-4 py-3 text-slate-400 font-medium text-xs">N° Factura</th>
-                      <th className="text-left px-4 py-3 text-slate-400 font-medium text-xs">Razón Social</th>
-                      <th className="text-left px-4 py-3 text-slate-400 font-medium text-xs">Tipo</th>
-                      <th className="text-left px-4 py-3 text-slate-400 font-medium text-xs">Fecha</th>
-                      <th className="text-right px-4 py-3 text-slate-400 font-medium text-xs">Monto</th>
+                      <SortTh label="N° Factura"  sortKey="numero"       currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-left" />
+                      <SortTh label="Razón Social" sortKey="razon_social" currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-left" />
+                      <SortTh label="Fecha"       sortKey="fecha"        currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-left" />
+                      <SortTh label="Monto"       sortKey="monto"        currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-right" />
                       <th className="text-right px-4 py-3 text-slate-400 font-medium text-xs">IVA</th>
-                      <th className="text-center px-4 py-3 text-slate-400 font-medium text-xs">Estado</th>
-                      <th className="text-center px-4 py-3 text-slate-400 font-medium text-xs">Empresa</th>
+                      <SortTh label="Estado"      sortKey="estado"       currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-center" />
                     </tr>
                   </thead>
                   <tbody>
                     {filteredFac.map(f => (
                       <tr key={f.id}
-                        onClick={() => navigate("/admin/facturas")}
+                        onClick={() => openPreview("factura", f)}
+                        data-testid={`fact-row-${f.id}`}
                         className="border-b border-white/5 hover:bg-white/3 cursor-pointer transition-colors">
                         <td className="px-4 py-3">
                           <span className="font-mono text-emerald-300">{f.numero || "-"}</span>
@@ -609,15 +656,6 @@ export default function VentasPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-slate-300 max-w-[160px] truncate">{f.razon_social || "-"}</td>
-                        <td className="px-4 py-3">
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${
-                            f.tipo === "emitida"
-                              ? "bg-blue-500/15 text-blue-300"
-                              : "bg-red-500/15 text-red-300"
-                          }`}>
-                            {f.tipo === "emitida" ? "↑ Emitida" : "↓ Recibida"}
-                          </span>
-                        </td>
                         <td className="px-4 py-3 text-slate-400 text-xs">{f.fecha || "-"}</td>
                         <td className="px-4 py-3 text-right text-white font-medium">
                           {fmtMonto(f.monto, f.moneda)}
@@ -632,13 +670,6 @@ export default function VentasPage() {
                             onChange={(nuevo) => cambiarEstadoFactura(f.id, nuevo)}
                             disabled={!hasPermission("facturas.editar")}
                           />
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          {f.logo_tipo && (
-                            <span className={`text-xs px-2 py-0.5 rounded-full border ${LOGO_CHIP[f.logo_tipo] || "bg-white/10 text-slate-300 border-white/10"}`}>
-                              {LOGO_LABEL[f.logo_tipo] || f.logo_tipo}
-                            </span>
-                          )}
                         </td>
                       </tr>
                     ))}
@@ -672,29 +703,24 @@ export default function VentasPage() {
                 <table className="w-full text-sm font-body">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/3">
-                      <th className="text-left px-4 py-3 text-slate-400 font-medium text-xs">Número / Empresa</th>
-                      <th className="text-left px-4 py-3 text-slate-400 font-medium text-xs">Descripción</th>
-                      <th className="text-left px-4 py-3 text-slate-400 font-medium text-xs">Período</th>
-                      <th className="text-right px-4 py-3 text-slate-400 font-medium text-xs">Monto</th>
-                      <th className="text-center px-4 py-3 text-slate-400 font-medium text-xs">Estado</th>
+                      <SortTh label="Número"       sortKey="numero"          currentSort={sortBy.contratos} onClick={(k) => toggleSort("contratos", k)} className="text-left" />
+                      <SortTh label="Cliente"      sortKey="empresa_nombre"  currentSort={sortBy.contratos} onClick={(k) => toggleSort("contratos", k)} className="text-left" />
+                      <SortTh label="Descripción"  sortKey="descripcion"     currentSort={sortBy.contratos} onClick={(k) => toggleSort("contratos", k)} className="text-left" />
+                      <SortTh label="Período"      sortKey="fecha_inicio"    currentSort={sortBy.contratos} onClick={(k) => toggleSort("contratos", k)} className="text-left" />
+                      <SortTh label="Monto"        sortKey="monto"           currentSort={sortBy.contratos} onClick={(k) => toggleSort("contratos", k)} className="text-right" />
+                      <SortTh label="Estado"       sortKey="estado"          currentSort={sortBy.contratos} onClick={(k) => toggleSort("contratos", k)} className="text-center" />
                     </tr>
                   </thead>
                   <tbody>
                     {filteredCon.map(c => (
                       <tr key={c.id}
-                        onClick={() => navigate("/admin/contratos")}
+                        onClick={() => openPreview("contrato", c)}
+                        data-testid={`con-row-${c.id}`}
                         className="border-b border-white/5 hover:bg-white/3 cursor-pointer transition-colors">
-                        <td className="px-4 py-3">
-                          <p className="text-white font-medium">{c.numero || c.id?.slice(0,8)}</p>
-                          <p className="text-slate-400 text-xs">{c.empresa_nombre || c.cliente_nombre || "-"}</p>
-                          {c.logo_tipo && (
-                            <span className={`text-xs px-1.5 py-0.5 rounded border ${LOGO_CHIP[c.logo_tipo] || "bg-white/10 text-slate-400 border-white/10"}`}>
-                              {LOGO_LABEL[c.logo_tipo] || c.logo_tipo}
-                            </span>
-                          )}
-                        </td>
+                        <td className="px-4 py-3 text-white font-mono">{c.numero || c.id?.slice(0,8)}</td>
+                        <td className="px-4 py-3 text-slate-300">{c.empresa_nombre || c.cliente_nombre || "-"}</td>
                         <td className="px-4 py-3 text-slate-300 text-xs max-w-[200px]">
-                          <p className="truncate">{c.descripcion || "-"}</p>
+                          <p className="truncate">{c.descripcion || c.nombre || "-"}</p>
                         </td>
                         <td className="px-4 py-3 text-slate-400 text-xs">
                           {c.fecha_inicio && <p>{c.fecha_inicio}</p>}
@@ -733,17 +759,17 @@ export default function VentasPage() {
                 <table className="w-full text-sm font-body">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/3">
-                      <th className="text-left px-4 py-3 text-slate-400 font-medium text-xs">Descripción</th>
-                      <th className="text-left px-4 py-3 text-slate-400 font-medium text-xs">Categoría</th>
-                      <th className="text-left px-4 py-3 text-slate-400 font-medium text-xs">Fecha</th>
-                      <th className="text-right px-4 py-3 text-slate-400 font-medium text-xs">Monto</th>
-                      <th className="text-center px-4 py-3 text-slate-400 font-medium text-xs">Empresa</th>
+                      <SortTh label="Descripción" sortKey="descripcion" currentSort={sortBy.ingresos} onClick={(k) => toggleSort("ingresos", k)} className="text-left" />
+                      <SortTh label="Categoría"   sortKey="categoria"   currentSort={sortBy.ingresos} onClick={(k) => toggleSort("ingresos", k)} className="text-left" />
+                      <SortTh label="Fecha"       sortKey="fecha"       currentSort={sortBy.ingresos} onClick={(k) => toggleSort("ingresos", k)} className="text-left" />
+                      <SortTh label="Monto"       sortKey="monto"       currentSort={sortBy.ingresos} onClick={(k) => toggleSort("ingresos", k)} className="text-right" />
                     </tr>
                   </thead>
                   <tbody>
                     {filteredIng.map(i => (
                       <tr key={i.id}
-                        onClick={() => navigate("/admin/ingresos-varios")}
+                        onClick={() => openPreview("ingreso", i)}
+                        data-testid={`ing-row-${i.id}`}
                         className="border-b border-white/5 hover:bg-white/3 cursor-pointer transition-colors">
                         <td className="px-4 py-3 text-slate-200 max-w-[200px]">
                           <p className="truncate">{i.descripcion || "-"}</p>
@@ -761,13 +787,6 @@ export default function VentasPage() {
                             <p className="text-slate-500 text-xs">≈ {fmtMonto(i.monto * i.tipo_cambio, "PYG")}</p>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-center">
-                          {i.logo_tipo && (
-                            <span className={`text-xs px-2 py-0.5 rounded-full border ${LOGO_CHIP[i.logo_tipo] || "bg-white/10 text-slate-300 border-white/10"}`}>
-                              {LOGO_LABEL[i.logo_tipo] || i.logo_tipo}
-                            </span>
-                          )}
-                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -777,6 +796,159 @@ export default function VentasPage() {
           </div>
         )}
       </div>
+
+      {/* Vista previa inline ─────────────────────────────────── */}
+      {previewItem && (
+        <PreviewModal
+          item={previewItem}
+          onClose={closePreview}
+          navigate={navigate}
+          token={token}
+          onUpdated={() => { closePreview(); fetchAll(); }}
+        />
+      )}
     </div>
+  );
+}
+
+// ═══ Vista previa inline (modal) ════════════════════════════════════════
+function PreviewModal({ item, onClose, navigate, token, onUpdated }) {
+  const { kind, data } = item;
+  const d = data || {};
+  React.useEffect(() => {
+    const esc = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [onClose]);
+
+  const title = {
+    presupuesto: `Presupuesto #${d.numero || ""}`,
+    factura:     `Factura ${d.numero || ""}`,
+    contrato:    `Contrato ${d.numero || d.id?.slice(0, 8) || ""}`,
+    ingreso:     `Ingreso: ${d.descripcion || ""}`,
+  }[kind] || "Detalle";
+
+  const editUrl = {
+    presupuesto: "/admin/presupuestos",
+    factura:     "/admin/facturas",
+    contrato:    "/admin/contratos",
+    ingreso:     "/admin/ingresos-varios",
+  }[kind];
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-arandu-dark rounded-2xl border border-white/15 shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="sticky top-0 bg-arandu-dark border-b border-white/10 px-6 py-4 flex items-center justify-between">
+          <h3 className="font-heading text-white text-lg">{title}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white p-1">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="px-6 py-5 space-y-3 text-sm font-body text-slate-200">
+          {kind === "presupuesto" && <PresupuestoPreview p={d} />}
+          {kind === "factura"     && <FacturaPreview f={d} />}
+          {kind === "contrato"    && <ContratoPreview c={d} />}
+          {kind === "ingreso"     && <IngresoPreview i={d} />}
+        </div>
+        <div className="border-t border-white/10 px-6 py-3 flex justify-end gap-2">
+          <button
+            onClick={() => navigate(editUrl)}
+            data-testid="preview-edit-btn"
+            className="px-3 py-1.5 rounded-lg text-xs bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 transition-all"
+          >
+            Abrir módulo completo
+          </button>
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-lg text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/30 transition-all"
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const PreviewRow = ({ label, value, mono = false }) => (
+  <div className="flex items-start justify-between gap-4 border-b border-white/5 pb-2">
+    <span className="text-slate-400 text-xs uppercase tracking-wider min-w-[100px]">{label}</span>
+    <span className={`text-white ${mono ? "font-mono" : ""} text-right flex-1`}>{value || <span className="text-slate-500">—</span>}</span>
+  </div>
+);
+
+function PresupuestoPreview({ p }) {
+  return (
+    <>
+      <PreviewRow label="Número"   value={`#${p.numero || ""}`} mono />
+      <PreviewRow label="Nombre"   value={p.nombre} />
+      <PreviewRow label="Cliente"  value={p.empresa_nombre} />
+      <PreviewRow label="Fecha"    value={p.fecha} />
+      <PreviewRow label="Moneda"   value={p.moneda} />
+      <PreviewRow label="Forma pago" value={p.forma_pago} />
+      <PreviewRow label="Total"    value={fmtMonto(p.total || 0, p.moneda)} />
+      <PreviewRow label="Estado"   value={<StateBadge estado={p.estado} />} />
+      {p.items?.length > 0 && (
+        <div className="mt-3">
+          <p className="text-slate-400 text-xs uppercase tracking-wider mb-1">Ítems ({p.items.length})</p>
+          <div className="space-y-1 max-h-32 overflow-y-auto">
+            {p.items.map((it, idx) => (
+              <div key={idx} className="flex justify-between text-xs border-b border-white/5 py-1">
+                <span className="text-slate-300 truncate max-w-[60%]">{it.descripcion || it.nombre}</span>
+                <span className="text-white">{fmtMonto((it.precio_unitario || it.precio || 0) * (it.cantidad || 1), p.moneda)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {p.observaciones && <PreviewRow label="Observ." value={p.observaciones} />}
+    </>
+  );
+}
+
+function FacturaPreview({ f }) {
+  return (
+    <>
+      <PreviewRow label="Número"   value={f.numero} mono />
+      <PreviewRow label="Razón soc." value={f.razon_social} />
+      <PreviewRow label="RUC"      value={f.ruc} mono />
+      <PreviewRow label="Concepto" value={f.concepto} />
+      <PreviewRow label="Fecha"    value={f.fecha} />
+      <PreviewRow label="Forma pago" value={f.forma_pago} />
+      <PreviewRow label="Moneda"   value={f.moneda} />
+      <PreviewRow label="Monto"    value={fmtMonto(f.monto || 0, f.moneda)} />
+      <PreviewRow label="IVA"      value={f.iva ? fmtMonto(f.iva, f.moneda) : "—"} />
+      <PreviewRow label="Estado"   value={<StateBadge estado={f.estado} />} />
+      {f.notas && <PreviewRow label="Notas" value={f.notas} />}
+    </>
+  );
+}
+
+function ContratoPreview({ c }) {
+  return (
+    <>
+      <PreviewRow label="Número"     value={c.numero} mono />
+      <PreviewRow label="Cliente"    value={c.empresa_nombre || c.cliente_nombre} />
+      <PreviewRow label="Nombre"     value={c.nombre || c.descripcion} />
+      <PreviewRow label="Frecuencia" value={c.frecuencia} />
+      <PreviewRow label="Monto"      value={fmtMonto(c.monto || c.valor || 0, c.moneda || "PYG")} />
+      <PreviewRow label="Inicio"     value={c.fecha_inicio} />
+      <PreviewRow label="Fin"        value={c.fecha_fin} />
+      <PreviewRow label="Estado"     value={<StateBadge estado={c.estado || "activo"} />} />
+      {c.notas && <PreviewRow label="Notas" value={c.notas} />}
+    </>
+  );
+}
+
+function IngresoPreview({ i }) {
+  return (
+    <>
+      <PreviewRow label="Descripción" value={i.descripcion} />
+      <PreviewRow label="Categoría"   value={i.categoria} />
+      <PreviewRow label="Fecha"       value={i.fecha} />
+      <PreviewRow label="Moneda"      value={i.moneda} />
+      <PreviewRow label="Monto"       value={fmtMonto(i.monto || 0, i.moneda)} />
+      {i.notas && <PreviewRow label="Notas" value={i.notas} />}
+    </>
   );
 }

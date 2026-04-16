@@ -64,6 +64,8 @@ const PresupuestosPage = () => {
   const canEdit = hasPermission("presupuestos.editar");
   const canDelete = hasPermission("presupuestos.eliminar");
   const canEditCostos = hasPermission("costos.editar");
+  const canModoLibre = isAdmin || hasPermission("presupuestos.modo_libre");
+  const defaultModo = canModoLibre ? "libre" : "productos";
   const [searchParams] = useSearchParams();
   const empresaFilter = searchParams.get("empresa");
   const estadoFromUrl = searchParams.get("estado");
@@ -106,8 +108,8 @@ const PresupuestosPage = () => {
     fecha: new Date().toISOString().split('T')[0],
     validez_dias: 15,
     tipo_cambio: "",
-    modo: "libre",
-    items: [{ descripcion: "", observacion: "", cantidad: 1, costo: 0, margen: 30, precio_unitario: 0, subtotal: 0, moneda_item: "", tipo_cambio_item: "", proveedor_id: "", proveedor_nombre: "", producto_id: "", imagen: null, imagen_comentario: "" }],
+    modo: canModoLibre ? "libre" : "productos",
+    items: [{ descripcion: "", observacion: "", observacion_oculta: "", cantidad: 1, costo: 0, margen: 30, precio_unitario: 0, subtotal: 0, moneda_item: "", tipo_cambio_item: "", proveedor_id: "", proveedor_nombre: "", producto_id: "", imagen: null, imagen_comentario: "" }],
     observaciones: "",
     condiciones: "- Precios expresados en Guaraníes (IVA incluido).\n- Validez de la oferta: 15 días.\n- Forma de pago: Al contado.\n- Tiempo de entrega: A confirmar según stock."
   });
@@ -249,7 +251,7 @@ const PresupuestosPage = () => {
   const addItem = () => {
     setFormData({
       ...formData,
-      items: [...formData.items, { descripcion: "", observacion: "", cantidad: 1, costo: 0, margen: 30, precio_unitario: 0, subtotal: 0, moneda_item: "", tipo_cambio_item: "", proveedor_id: "", proveedor_nombre: "", producto_id: "", imagen: null, imagen_comentario: "" }]
+      items: [...formData.items, { descripcion: "", observacion: "", observacion_oculta: "", cantidad: 1, costo: 0, margen: 30, precio_unitario: 0, subtotal: 0, moneda_item: "", tipo_cambio_item: "", proveedor_id: "", proveedor_nombre: "", producto_id: "", imagen: null, imagen_comentario: "" }]
     });
   };
 
@@ -557,7 +559,7 @@ const PresupuestosPage = () => {
       validez_dias: 15,
       tipo_cambio: "",
       modo: "libre",
-      items: [{ descripcion: "", observacion: "", cantidad: 1, costo: 0, margen: 30, precio_unitario: 0, subtotal: 0, moneda_item: "", tipo_cambio_item: "", proveedor_id: "", proveedor_nombre: "", producto_id: "", imagen: null, imagen_comentario: "" }],
+      items: [{ descripcion: "", observacion: "", observacion_oculta: "", cantidad: 1, costo: 0, margen: 30, precio_unitario: 0, subtotal: 0, moneda_item: "", tipo_cambio_item: "", proveedor_id: "", proveedor_nombre: "", producto_id: "", imagen: null, imagen_comentario: "" }],
       observaciones: "",
       condiciones: "- Precios expresados en Guaraníes (IVA incluido).\n- Validez de la oferta: 15 días.\n- Forma de pago: Al contado.\n- Tiempo de entrega: A confirmar según stock."
     });
@@ -642,6 +644,7 @@ const PresupuestosPage = () => {
               costo_estimado: item.costo,   // en moneda_item original
               costo_real: item.costo,
               observacion: item.observacion || "",
+              observacion_oculta: item.observacion_oculta || "",
               proveedor: "",
               es_nuevo: false,
               moneda_item: mItem,
@@ -750,6 +753,7 @@ const PresupuestosPage = () => {
       costo_estimado: 0,
       costo_real: 0,
       observacion: "",
+      observacion_oculta: "",
       proveedor: "",
       es_nuevo: true,
       moneda_item: docMoneda,
@@ -1413,34 +1417,38 @@ const PresupuestosPage = () => {
                 </div>
               </div>
 
-              {/* Mode Toggle */}
-              <div className="flex items-center gap-3 mb-1">
-                <span className="text-slate-400 text-sm">Modo de carga:</span>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, modo: "libre" }))}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                      formData.modo !== "productos"
-                        ? 'border-arandu-blue bg-arandu-blue/20 text-arandu-blue'
-                        : 'border-white/10 text-slate-400 hover:border-white/30'
-                    }`}
-                  >
-                    ✏️ Libre
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, modo: "productos" }))}
-                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
-                      formData.modo === "productos"
-                        ? 'border-emerald-500 bg-emerald-500/20 text-emerald-400'
-                        : 'border-white/10 text-slate-400 hover:border-white/30'
-                    }`}
-                  >
-                    📦 Por catálogo
-                  </button>
+              {/* Mode Toggle — sólo visible si el usuario tiene permiso presupuestos.modo_libre (admins siempre) */}
+              {(user?.role === "admin" || hasPermission("presupuestos.modo_libre")) ? (
+                <div className="flex items-center gap-3 mb-1">
+                  <span className="text-slate-400 text-sm">Modo de carga:</span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, modo: "libre" }))}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
+                        formData.modo !== "productos"
+                          ? 'border-arandu-blue bg-arandu-blue/20 text-arandu-blue'
+                          : 'border-white/10 text-slate-400 hover:border-white/30'
+                      }`}
+                    >
+                      ✏️ Libre
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, modo: "productos" }))}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
+                        formData.modo === "productos"
+                          ? 'border-emerald-500 bg-emerald-500/20 text-emerald-400'
+                          : 'border-white/10 text-slate-400 hover:border-white/30'
+                      }`}
+                    >
+                      📦 Por catálogo
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <input type="hidden" value="productos" onChange={() => {}} />
+              )}
 
               {/* Items Table */}
               <div>
@@ -1499,6 +1507,15 @@ const PresupuestosPage = () => {
                               className="bg-transparent border-white/5 text-yellow-400/80 text-xs italic"
                               placeholder="Obs: destino, ubicación..."
                               data-testid={`item-obs-${index}`}
+                            />
+                            <Input
+                              type="text"
+                              value={item.observacion_oculta || ""}
+                              onChange={(e) => updateItem(index, "observacion_oculta", e.target.value)}
+                              className="bg-transparent border-dashed border-white/5 text-orange-300/80 text-xs italic mt-1"
+                              placeholder="🔒 Obs interna (solo visible en costos)"
+                              data-testid={`item-obs-oculta-${index}`}
+                              title="Esta nota solo se ve en la vista de costos, no aparece en el presupuesto final"
                             />
                             {proveedores.filter(p => !p.logo_tipo || p.logo_tipo === formData.logo_tipo).length > 0 && (
                               <select

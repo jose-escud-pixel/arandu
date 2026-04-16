@@ -167,11 +167,12 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
     # - Facturas sin pagos[] (pago único / datos legacy): usamos fecha_pago directamente
     # Las facturas vinculadas a contratos se descartan; su ingreso ya está en cobros_contratos.
 
-    def _registrar_ingreso_fac(fac, monto_base, fuente):
-        """Aplica retención si corresponde y agrega el ingreso a la lista."""
+    def _registrar_ingreso_fac(fac, monto_base, fuente, tiene_recibo=False):
+        """Aplica retención si corresponde y agrega el ingreso a la lista.
+        Si tiene_recibo=True → NO descuenta retención porque ya hay egreso automático."""
         razon_social = fac.get("razon_social", "")
         pct_retencion = retencion_map.get(razon_social, 0)
-        if pct_retencion and monto_base:
+        if pct_retencion and monto_base and not tiene_recibo:
             iva = monto_base / 11.0
             monto_efectivo = monto_base - iva * (pct_retencion / 100.0)
         else:
@@ -194,7 +195,8 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
         for pago in (fac.get("pagos") or []):
             if not (pago.get("fecha") or "").startswith(periodo):
                 continue  # solo los pagos de este mes
-            _registrar_ingreso_fac(fac, pago.get("monto", 0), "Facturas emitidas")
+            _registrar_ingreso_fac(fac, pago.get("monto", 0), "Facturas emitidas",
+                                   tiene_recibo=bool(pago.get("recibo_id")))
 
     # Rama 2: facturas SIN pagos[] (pago único o datos legacy)
     # Si tiene fecha_pago → cash-basis: contar en el mes en que se cobró.
@@ -338,10 +340,20 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
     ).to_list(1000)
     for iv in ingresos_varios:
         moneda_iv = iv.get("moneda", "PYG")
-        monto_pyg = to_pyg(iv.get("monto", 0), moneda_iv, iv.get("tipo_cambio"))
-        ingresos.append({"fuente": "Ingresos varios", "descripcion": iv.get("descripcion", ""), "monto_pyg": monto_pyg})
-        if moneda_iv == "USD":
-            ingresos_usd.append({"fuente": "Ingresos varios", "monto_usd": iv["monto"]})
+        monto_raw = iv.get("monto", 0)
+        # Egresos (monto negativo, típicamente de retención IVA automática) van a egresos
+        if monto_raw < 0:
+            monto_pyg = to_pyg(abs(monto_raw), moneda_iv, iv.get("tipo_cambio"))
+            egresos.append({
+                "fuente": iv.get("categoria") or "Retención IVA",
+                "descripcion": iv.get("descripcion", ""),
+                "monto_pyg": monto_pyg,
+            })
+        else:
+            monto_pyg = to_pyg(monto_raw, moneda_iv, iv.get("tipo_cambio"))
+            ingresos.append({"fuente": "Ingresos varios", "descripcion": iv.get("descripcion", ""), "monto_pyg": monto_pyg})
+            if moneda_iv == "USD":
+                ingresos_usd.append({"fuente": "Ingresos varios", "monto_usd": iv["monto"]})
 
     # ── Totales ──────────────────────────────────────────────────
     total_ingresos = sum(i["monto_pyg"] for i in ingresos)
