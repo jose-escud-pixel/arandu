@@ -235,15 +235,6 @@ const AdminDashboard = () => {
                 )}
               </Link>
             )}
-            {hasPermission("contratos.ver") && (
-              <Link
-                to="/admin/contratos"
-                className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
-              >
-                <ClipboardList className="w-5 h-5" />
-                <span className="font-body">Contratos</span>
-              </Link>
-            )}
             {hasPermission("proveedores.ver") && (
               <Link
                 to="/admin/proveedores"
@@ -269,6 +260,16 @@ const AdminDashboard = () => {
               >
                 <Scale className="w-5 h-5" />
                 <span className="font-body">Balance</span>
+              </Link>
+            )}
+            {hasPermission("balance.ver") && (
+              <Link
+                to="/admin/bancos"
+                data-testid="menu-bancos"
+                className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
+              >
+                <Building2 className="w-5 h-5" />
+                <span className="font-body">Bancos</span>
               </Link>
             )}
             {hasPermission("estadisticas.ver") && (

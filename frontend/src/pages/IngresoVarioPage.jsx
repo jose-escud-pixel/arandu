@@ -54,6 +54,7 @@ const emptyForm = {
   moneda: "PYG",
   tipo_cambio: "",
   fecha: new Date().toISOString().slice(0, 10),
+  cuenta_id: "",
   notas: "",
 };
 
@@ -71,6 +72,7 @@ export default function IngresoVarioPage() {
   const [editingId, setEditingId] = useState(null);
   const [formData, setFormData] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [cuentasDisp, setCuentasDisp] = useState([]);
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -86,10 +88,17 @@ export default function IngresoVarioPage() {
     const init = async () => {
       setLoading(true);
       await fetchIngresos();
+      // cargar cuentas bancarias
+      try {
+        const q = new URLSearchParams();
+        if (activeEmpresaPropia?.slug) q.set("logo_tipo", activeEmpresaPropia.slug);
+        const res = await fetch(`${API}/admin/cuentas-bancarias${q.toString() ? `?${q}` : ""}`, { headers });
+        if (res.ok) setCuentasDisp(await res.json());
+      } catch {}
       setLoading(false);
     };
     init();
-  }, [fetchIngresos]); // eslint-disable-line
+  }, [fetchIngresos, activeEmpresaPropia]); // eslint-disable-line
 
   const ingresosFiltrados = React.useMemo(() => {
     if (!searchTerm.trim()) return ingresos;
@@ -124,6 +133,7 @@ export default function IngresoVarioPage() {
       tipo_cambio: iv.tipo_cambio || "",
       fecha: iv.fecha,
       notas: iv.notas || "",
+      cuenta_id: iv.cuenta_id || "",
     });
     setShowForm(true);
   };
@@ -141,6 +151,7 @@ export default function IngresoVarioPage() {
         monto: parseFloat(formData.monto) || 0,
         tipo_cambio: formData.tipo_cambio ? parseFloat(formData.tipo_cambio) : null,
         notas: formData.notas || null,
+        cuenta_id: formData.cuenta_id || null,
       };
       const url = editingId
         ? `${API}/admin/ingresos-varios/${editingId}`
@@ -387,6 +398,24 @@ export default function IngresoVarioPage() {
                 <input required type="date" value={formData.fecha}
                   onChange={e => setFormData(f => ({ ...f, fecha: e.target.value }))}
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm font-body focus:outline-none focus:border-emerald-500" />
+              </div>
+
+              {/* Cuenta bancaria destino */}
+              <div>
+                <label className="block text-slate-400 text-xs mb-1 font-body">
+                  Cuenta bancaria destino
+                  <span className="text-slate-500 text-[10px] ml-1">(si queda vacío, usa la predeterminada)</span>
+                </label>
+                <select value={formData.cuenta_id}
+                  onChange={e => setFormData(f => ({ ...f, cuenta_id: e.target.value }))}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm font-body focus:outline-none focus:border-emerald-500">
+                  <option value="">— Predeterminada de {formData.moneda} —</option>
+                  {cuentasDisp.filter(c => c.moneda === formData.moneda).map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.nombre}{c.banco ? ` · ${c.banco}` : ""}{c.es_predeterminada ? " ★" : ""}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {/* Notas */}

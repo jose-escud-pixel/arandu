@@ -222,6 +222,48 @@ h1, h2, h3, h4, h5, h6 {
     color: #475569 !important;
 }
 
+/* ── texto blanco principal: usar slate-900 en claros para legibilidad ── */
+[data-tema="claro-rojo"] .text-white,
+[data-tema="claro-dorado"] .text-white,
+[data-tema="claro-azul"]  .text-white {
+    color: #0f172a !important;
+}
+[data-tema="claro-rojo"] .text-slate-200,
+[data-tema="claro-dorado"] .text-slate-200,
+[data-tema="claro-azul"]  .text-slate-200 {
+    color: #1e293b !important;
+}
+[data-tema="claro-rojo"] .text-slate-300,
+[data-tema="claro-dorado"] .text-slate-300,
+[data-tema="claro-azul"]  .text-slate-300 {
+    color: #334155 !important;
+}
+[data-tema="claro-rojo"] .text-slate-500,
+[data-tema="claro-dorado"] .text-slate-500,
+[data-tema="claro-azul"]  .text-slate-500 {
+    color: #64748b !important;
+}
+
+/* Backgrounds blancos con texto oscuro: quitar text-white específicos para valores monetarios */
+[data-tema="claro-rojo"] .font-heading,
+[data-tema="claro-dorado"] .font-heading,
+[data-tema="claro-azul"]  .font-heading {
+    color: inherit;
+}
+
+/* Fondos oscuros locales en tema claro: mantener texto blanco visible */
+[data-tema="claro-rojo"] .bg-arandu-dark .text-white,
+[data-tema="claro-dorado"] .bg-arandu-dark .text-white,
+[data-tema="claro-azul"]  .bg-arandu-dark .text-white,
+[data-tema="claro-rojo"] [class*="bg-slate-8"] .text-white,
+[data-tema="claro-dorado"] [class*="bg-slate-8"] .text-white,
+[data-tema="claro-azul"]  [class*="bg-slate-8"] .text-white,
+[data-tema="claro-rojo"] [class*="bg-slate-9"] .text-white,
+[data-tema="claro-dorado"] [class*="bg-slate-9"] .text-white,
+[data-tema="claro-azul"]  [class*="bg-slate-9"] .text-white {
+    color: #ffffff !important;
+}
+
 @layer base {
     * {
         @apply border-border;

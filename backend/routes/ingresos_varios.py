@@ -54,6 +54,16 @@ async def create_ingreso_varios(
     tipo_cambio = float(data["tipo_cambio"]) if data.get("tipo_cambio") else None
     monto_pyg = monto * (tipo_cambio or 1) if moneda != "PYG" else monto
 
+    # Cuenta bancaria destino (si no viene, usar predeterminada)
+    cuenta_id = (data.get("cuenta_id") or "").strip() or None
+    if not cuenta_id:
+        pred = await db.cuentas_bancarias.find_one(
+            {"logo_tipo": data.get("logo_tipo", "arandujar"), "moneda": moneda,
+             "es_predeterminada": True, "activo": {"$ne": False}},
+            {"_id": 0, "id": 1}
+        )
+        cuenta_id = pred["id"] if pred else None
+
     doc = {
         "id": str(uuid.uuid4()),
         "descripcion": data.get("descripcion", "").strip(),
@@ -64,6 +74,7 @@ async def create_ingreso_varios(
         "monto_pyg": monto_pyg,
         "fecha": data.get("fecha", datetime.now(timezone.utc).strftime("%Y-%m-%d")),
         "logo_tipo": data.get("logo_tipo", "arandujar"),
+        "cuenta_id": cuenta_id,
         "notas": data.get("notas") or None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -97,6 +108,7 @@ async def update_ingreso_varios(
         "monto_pyg": monto_pyg,
         "fecha": data.get("fecha", doc["fecha"]),
         "logo_tipo": data.get("logo_tipo", doc["logo_tipo"]),
+        "cuenta_id": data.get("cuenta_id", doc.get("cuenta_id")),
         "notas": data.get("notas") or None,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }

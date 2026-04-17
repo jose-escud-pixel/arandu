@@ -185,6 +185,7 @@ async def pago_parcial_factura(
     fecha_pago = data.get("fecha_pago") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     numero_recibo = (data.get("numero_recibo") or "").strip() or None
     notas_recibo = data.get("notas") or ""
+    cuenta_id = (data.get("cuenta_id") or "").strip() or None
 
     if monto_nuevo <= 0:
         raise HTTPException(status_code=400, detail="El monto pagado debe ser mayor a 0")
@@ -198,6 +199,17 @@ async def pago_parcial_factura(
         # En contado la fecha de pago es la de la factura
         fecha_pago = fac.get("fecha") or fecha_pago
 
+    # ── Resolver cuenta destino (si no se pasa, usar la predeterminada del logo+moneda) ──
+    if not cuenta_id:
+        logo_tipo_fac = fac.get("logo_tipo") or "arandujar"
+        moneda_fac = fac.get("moneda") or "PYG"
+        pred = await db.cuentas_bancarias.find_one(
+            {"logo_tipo": logo_tipo_fac, "moneda": moneda_fac,
+             "es_predeterminada": True, "activo": {"$ne": False}},
+            {"_id": 0, "id": 1}
+        )
+        cuenta_id = pred["id"] if pred else None
+
     # ── Generar recibo ─────────────────────────────────────────
     recibo_doc = await _crear_recibo(
         factura=fac,
@@ -206,6 +218,7 @@ async def pago_parcial_factura(
         user=user,
         numero_recibo=numero_recibo,
         notas=notas_recibo,
+        cuenta_id=cuenta_id,
     )
 
     # ── Acumular pagos en array ──────────────────────────────────
@@ -214,6 +227,7 @@ async def pago_parcial_factura(
         "id": str(uuid.uuid4()),
         "monto": monto_nuevo,
         "fecha": fecha_pago,
+        "cuenta_id": cuenta_id,
         "recibo_id": recibo_doc["id"],
         "recibo_numero": recibo_doc["numero"],
         "registrado_por": user.get("name", ""),
@@ -267,7 +281,8 @@ async def pago_parcial_factura(
 # ─────────────────────────────────────────────
 
 async def _crear_recibo(factura: dict, monto: float, fecha_pago: str,
-                         user: dict, numero_recibo: str = None, notas: str = ""):
+                         user: dict, numero_recibo: str = None, notas: str = "",
+                         cuenta_id: str = None):
     """Crea un recibo con número consecutivo por empresa (logo_tipo).
     Si numero_recibo viene vacío, lo autogenera como next(max) + 1.
     """
@@ -300,6 +315,7 @@ async def _crear_recibo(factura: dict, monto: float, fecha_pago: str,
         "moneda": factura.get("moneda") or "PYG",
         "fecha_pago": fecha_pago,
         "logo_tipo": logo_tipo,
+        "cuenta_id": cuenta_id,
         "notas": notas,
         "created_by": user.get("name", ""),
         "created_at": datetime.now(timezone.utc).isoformat(),

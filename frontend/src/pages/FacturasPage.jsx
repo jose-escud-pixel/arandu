@@ -120,6 +120,8 @@ export default function FacturasPage() {
   const [montoParcial, setMontoParcial] = useState("");
   const [fechaPagoParcial, setFechaPagoParcial] = useState(new Date().toISOString().slice(0, 10));
   const [numeroReciboManual, setNumeroReciboManual] = useState("");
+  const [cuentaPago, setCuentaPago] = useState("");   // cuenta bancaria destino
+  const [cuentasDisp, setCuentasDisp] = useState([]); // cuentas disponibles
 
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -138,16 +140,18 @@ export default function FacturasPage() {
       if (filtrarMes) qR.set("mes", mes);
 
       const logoQ = logoFilter !== "todas" ? `?logo_tipo=${logoFilter}` : "";
-      const [facRes, resRes, empRes, presRes, contRes] = await Promise.all([
+      const [facRes, resRes, empRes, presRes, contRes, cuentasRes] = await Promise.all([
         fetch(`${API}/admin/facturas?${q}`, { headers }),
         fetch(`${API}/admin/facturas/resumen?${qR}`, { headers }),
         fetch(`${API}/admin/empresas${logoQ}`, { headers }),
         fetch(`${API}/admin/presupuestos${logoQ}`, { headers }),
         fetch(`${API}/admin/contratos${logoQ}`, { headers }),
+        fetch(`${API}/admin/cuentas-bancarias${logoQ}`, { headers }),
       ]);
       if (empRes.ok) setEmpresas(await empRes.json());
       if (presRes.ok) setPresupuestosDisp(await presRes.json());
       if (contRes.ok) setContratosDisp(await contRes.json());
+      if (cuentasRes.ok) setCuentasDisp(await cuentasRes.json());
       const sanitizeDate = (v) => (v ? v.slice(0, 10) : null);
       if (facRes.ok) {
         const data = await facRes.json();
@@ -213,6 +217,11 @@ export default function FacturasPage() {
   const openPago = (fac) => {
     setPagoFac(fac);
     setFechaPago(new Date().toISOString().slice(0, 10));
+    setNumeroReciboManual("");
+    const def = cuentasDisp.find(c =>
+      c.logo_tipo === fac.logo_tipo && c.moneda === fac.moneda && c.es_predeterminada
+    ) || cuentasDisp.find(c => c.logo_tipo === fac.logo_tipo && c.moneda === fac.moneda);
+    setCuentaPago(def?.id || "");
     setShowPagoModal(true);
   };
 
@@ -281,6 +290,7 @@ export default function FacturasPage() {
           monto_pagado: montoPendiente,
           fecha_pago: fechaPago,
           numero_recibo: numeroReciboManual || null,
+          cuenta_id: cuentaPago || null,
         }),
       });
       if (!res.ok) {
@@ -320,6 +330,11 @@ export default function FacturasPage() {
     setMontoParcial(String(fac.monto - yaAbonado));
     setFechaPagoParcial(new Date().toISOString().slice(0, 10));
     setNumeroReciboManual("");
+    // Cuenta default: predeterminada del logo_tipo de la factura + moneda
+    const def = cuentasDisp.find(c =>
+      c.logo_tipo === fac.logo_tipo && c.moneda === fac.moneda && c.es_predeterminada
+    ) || cuentasDisp.find(c => c.logo_tipo === fac.logo_tipo && c.moneda === fac.moneda);
+    setCuentaPago(def?.id || "");
     setShowPagoParcialModal(true);
   };
 
@@ -334,6 +349,7 @@ export default function FacturasPage() {
           monto_pagado: monto,
           fecha_pago: fechaPagoParcial,
           numero_recibo: numeroReciboManual || null,
+          cuenta_id: cuentaPago || null,
         }),
       });
       if (!res.ok) {
@@ -637,6 +653,10 @@ export default function FacturasPage() {
                                   setPagoFac(fac);
                                   setFechaPago(fac.fecha);
                                   setNumeroReciboManual("");
+                                  const def = cuentasDisp.find(c =>
+                                    c.logo_tipo === fac.logo_tipo && c.moneda === fac.moneda && c.es_predeterminada
+                                  ) || cuentasDisp.find(c => c.logo_tipo === fac.logo_tipo && c.moneda === fac.moneda);
+                                  setCuentaPago(def?.id || "");
                                   setShowPagoModal(true);
                                 }}
                                 className="text-xs bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-600/30 px-2 py-1 rounded-lg transition-all">
@@ -1066,6 +1086,20 @@ export default function FacturasPage() {
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500"
                 />
               </div>
+              <div>
+                <label className="text-slate-400 text-xs block mb-1">Cuenta bancaria destino</label>
+                <select value={cuentaPago} onChange={e => setCuentaPago(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500">
+                  <option value="">— Sin especificar —</option>
+                  {cuentasDisp
+                    .filter(c => c.moneda === pagoFac.moneda)
+                    .map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.nombre}{c.banco ? ` · ${c.banco}` : ""}{c.es_predeterminada ? " ★" : ""}
+                      </option>
+                    ))}
+                </select>
+              </div>
               <div className="flex gap-3">
                 <button onClick={() => setShowPagoModal(false)} className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm transition-all">
                   Cancelar
@@ -1172,6 +1206,20 @@ export default function FacturasPage() {
                   placeholder="Ej: 000123"
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
                 />
+              </div>
+              <div>
+                <label className="text-slate-400 text-xs block mb-1">Cuenta bancaria destino</label>
+                <select value={cuentaPago} onChange={e => setCuentaPago(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+                  <option value="">— Sin especificar —</option>
+                  {cuentasDisp
+                    .filter(c => c.moneda === pagoParcialFac.moneda)
+                    .map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.nombre}{c.banco ? ` · ${c.banco}` : ""}{c.es_predeterminada ? " ★" : ""}
+                      </option>
+                    ))}
+                </select>
               </div>
               <div className="flex gap-3">
                 <button onClick={() => setShowPagoParcialModal(false)} className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm transition-all">

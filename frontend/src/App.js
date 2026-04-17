@@ -1,6 +1,6 @@
 import React from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { Toaster } from "./components/ui/sonner";
 import LandingPage from "./pages/LandingPage";
 import LoginPage from "./pages/LoginPage";
@@ -24,6 +24,7 @@ import IngresoVarioPage from "./pages/IngresoVarioPage";
 import EgresosPage from "./pages/EgresosPage";
 import VentasPage from "./pages/VentasPage";
 import ProductosPage from "./pages/ProductosPage";
+import BancosPage from "./pages/BancosPage";
 import EmpresasPropiasPage from "./pages/EmpresasPropiasPage";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -32,17 +33,22 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 export const AuthContext = React.createContext(null);
 
 // Aplica el tema de la empresa activa al elemento raíz del admin
+// IMPORTANTE: solo aplica cuando el usuario está en /admin/*; en / (landing) y /login
+// mantiene el tema oscuro-azul por defecto para no "romper" el branding público.
 function applyTheme(tema) {
   const el = document.getElementById("arandu-admin-root");
   if (!el) return;
   const temas = ["oscuro-azul", "oscuro-rojo", "claro-rojo", "claro-dorado", "claro-azul"];
   temas.forEach(t => el.removeAttribute("data-tema"));
-  if (tema && tema !== "oscuro-azul") {
+
+  const onAdmin = typeof window !== "undefined" && window.location.pathname.startsWith("/admin");
+
+  if (onAdmin && tema && tema !== "oscuro-azul") {
     el.setAttribute("data-tema", tema);
   }
-  // Para temas claros también cambiamos el body bg
+  // Para temas claros también cambiamos el body bg — solo si estamos en /admin
   const lightBgs = { "claro-rojo": "#f8fafc", "claro-dorado": "#fefce8", "claro-azul": "#f0f9ff" };
-  document.body.style.backgroundColor = lightBgs[tema] || "#0a1628";
+  document.body.style.backgroundColor = onAdmin ? (lightBgs[tema] || "#0a1628") : "#0a1628";
 }
 
 function AuthProvider({ children }) {
@@ -251,6 +257,17 @@ function ProtectedRoute({ children, adminOnly = false, requiredPermission = null
   return children;
 }
 
+// Observa la ruta y re-aplica el tema correcto cuando entramos/salimos del admin
+function ThemeWatcher() {
+  const location = useLocation();
+  const { activeEmpresaPropia } = React.useContext(AuthContext) || {};
+  React.useEffect(() => {
+    const tema = activeEmpresaPropia?.tema || "oscuro-azul";
+    applyTheme(tema);
+  }, [location.pathname, activeEmpresaPropia]);
+  return null;
+}
+
 function App() {
   return (
     <AuthProvider>
@@ -258,6 +275,7 @@ function App() {
       <div id="arandu-admin-root" className="App min-h-screen bg-arandu-dark">
         <Toaster position="top-right" theme="dark" />
         <BrowserRouter>
+          <ThemeWatcher />
           <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
@@ -323,6 +341,9 @@ function App() {
             } />
             <Route path="/admin/empresas-propias" element={
               <ProtectedRoute adminOnly={true}><EmpresasPropiasPage /></ProtectedRoute>
+            } />
+            <Route path="/admin/bancos" element={
+              <ProtectedRoute requiredPermission="balance.ver"><BancosPage /></ProtectedRoute>
             } />
           </Routes>
         </BrowserRouter>
