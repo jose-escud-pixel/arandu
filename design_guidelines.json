@@ -1,0 +1,131 @@
+{
+  "design_system": {
+    "identity": "The Midnight Gentleman",
+    "description": "A luxury, masculine, and sophisticated design language that combines deep obsidian backgrounds with matte gold accents. It evokes the feeling of a high-end private club or a bespoke tailor shop.",
+    "theme_strategy": "dark_mode_only",
+    "typography": {
+      "font_family": {
+        "heading": "Playfair Display, serif",
+        "body": "Manrope, sans-serif",
+        "accent": "Cinzel, serif"
+      },
+      "scale": {
+        "h1": "text-5xl md:text-7xl font-bold tracking-tight",
+        "h2": "text-4xl md:text-5xl font-semibold tracking-tight",
+        "h3": "text-2xl md:text-3xl font-medium",
+        "body_lg": "text-lg leading-relaxed",
+        "body_base": "text-base leading-relaxed text-muted-foreground",
+        "caption": "text-sm tracking-widest uppercase text-gold-500/80"
+      },
+      "import_statement": "@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Manrope:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap');"
+    },
+    "colors": {
+      "palette": {
+        "background": "#050505",
+        "surface": "#121212",
+        "surface_highlight": "#1E1E1E",
+        "text_primary": "#F5F5F0",
+        "text_secondary": "#A1A1AA",
+        "primary_gold": "#D4AF37",
+        "gold_muted": "#C5A059",
+        "gold_dim": "#8A7030",
+        "error": "#991B1B",
+        "success": "#065F46"
+      },
+      "tailwind_config_extension": {
+        "colors": {
+          "obsidian": {
+            "DEFAULT": "#050505",
+            "light": "#121212",
+            "lighter": "#1E1E1E"
+          },
+          "gold": {
+            "DEFAULT": "#D4AF37",
+            "muted": "#C5A059",
+            "dim": "#8A7030",
+            "glow": "#FCD34D"
+          }
+        }
+      }
+    },
+    "visual_enhancers": {
+      "borders": "1px solid rgba(212, 175, 55, 0.15)",
+      "glassmorphism": "backdrop-filter: blur(12px); background: rgba(18, 18, 18, 0.7); border: 1px solid rgba(255, 255, 255, 0.05);",
+      "shadows": {
+        "glow": "0 0 20px rgba(212, 175, 55, 0.15)",
+        "card": "0 10px 30px -10px rgba(0, 0, 0, 0.5)"
+      },
+      "gradients": {
+        "gold_text": "linear-gradient(135deg, #D4AF37 0%, #FCD34D 50%, #C5A059 100%)",
+        "hero_overlay": "linear-gradient(to bottom, rgba(5,5,5,0) 0%, #050505 100%)"
+      }
+    },
+    "layout_strategy": {
+      "container": "max-w-7xl mx-auto px-6 md:px-12",
+      "spacing": "Generous. Use gap-8, gap-12, py-24 for sections to create luxury breathing room.",
+      "grid_system": "Bento Grid (Asymmetrical). Avoid equal squares. Use col-span-2 or row-span-2 to create hierarchy."
+    },
+    "components": {
+      "buttons": {
+        "primary": "bg-gold text-obsidian font-bold uppercase tracking-wider px-8 py-3 rounded-sm hover:bg-gold-muted transition-all duration-300 shadow-[0_0_15px_rgba(212,175,55,0.3)]",
+        "secondary": "bg-transparent border border-gold/30 text-gold px-8 py-3 rounded-sm hover:border-gold hover:bg-gold/5 transition-all duration-300",
+        "ghost": "text-zinc-400 hover:text-gold transition-colors"
+      },
+      "cards": {
+        "style": "bg-obsidian-light border border-white/5 rounded-md p-6 hover:border-gold/30 transition-all duration-500 group relative overflow-hidden",
+        "hover_effect": "Add a subtle golden glow or lift on hover."
+      },
+      "inputs": {
+        "style": "bg-obsidian-lighter border-b border-white/10 focus:border-gold px-4 py-3 text-white placeholder-zinc-600 focus:outline-none transition-all rounded-t-sm"
+      }
+    },
+    "animation": {
+      "micro_interactions": "Smooth, slow transitions (duration-500 ease-out).",
+      "entrance": "Fade up with delay. 'motion.div initial={{opacity: 0, y: 20}} animate={{opacity: 1, y: 0}}'"
+    },
+    "assets": {
+      "image_urls": {
+        "hero_main": "https://images.unsplash.com/photo-1626913671142-8a2431ab5219?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHwxfHxtYW4lMjBpbiUyMHN1aXQlMjBwb3J0cmFpdCUyMGRhcmslMjBsaWdodGluZyUyMGVsZWdhbnR8ZW58MHx8fHwxNzc0MDExMDc1fDA&ixlib=rb-4.1.0&q=85",
+        "hero_secondary": "https://images.unsplash.com/photo-1645502274847-c3de0e3539e7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2OTV8MHwxfHNlYXJjaHwyfHxtYW4lMjBpbiUyMHN1aXQlMjBwb3J0cmFpdCUyMGRhcmslMjBsaWdodGluZyUyMGVsZWdhbnR8ZW58MHx8fHwxNzc0MDExMDc1fDA&ixlib=rb-4.1.0&q=85",
+        "texture_gold": "https://images.unsplash.com/photo-1761437856376-2ce1c483343b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwzfHxsdXh1cnklMjBnb2xkJTIwdGV4dHVyZSUyMGJsYWNrJTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3NzQwMTEwNzd8MA&ixlib=rb-4.1.0&q=85",
+        "texture_gold_rings": "https://images.unsplash.com/photo-1761437856311-3ba13025f161?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwyfHxsdXh1cnklMjBnb2xkJTIwdGV4dHVyZSUyMGJsYWNrJTIwYmFja2dyb3VuZHxlbnwwfHx8fDE3NzQwMTEwNzd8MA&ixlib=rb-4.1.0&q=85",
+        "beard_grooming": "https://images.unsplash.com/photo-1599011176306-4a96f1516d4d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzl8MHwxfHNlYXJjaHwxfHxtZW4lMjBncm9vbWluZyUyMGJlYXJkJTIwY2xvc2UlMjB1cCUyMHN0eWxpc2h8ZW58MHx8fHwxNzc0MDExMDc1fDA&ixlib=rb-4.1.0&q=85",
+        "barber_action": "https://images.pexels.com/photos/3998417/pexels-photo-3998417.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "fashion_lifestyle": "https://images.unsplash.com/photo-1641785724506-6402ca422e7a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzN8MHwxfHNlYXJjaHwyfHxtb2Rlcm4lMjBnZW50bGVtYW4lMjBmYXNoaW9uJTIwbGlmZXN0eWxlfGVufDB8fHx8MTc3NDAxMTA4MHww&ixlib=rb-4.1.0&q=85",
+        "fashion_coat": "https://images.pexels.com/photos/1643025/pexels-photo-1643025.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+      },
+      "icons": "Use 'lucide-react' with thin strokes (stroke-width={1.5}) to maintain elegance."
+    }
+  },
+  "instructions_to_main_agent": {
+    "setup": [
+      "Install dependencies: npm install lucide-react framer-motion clsx tailwind-merge",
+      "Update tailwind.config.js with the colors.obsidian and colors.gold palette.",
+      "Add the Google Fonts import to index.css.",
+      "Set the body background to bg-obsidian text-text_primary."
+    ],
+    "page_guidelines": {
+      "landing_page": {
+        "structure": "Hero (Full height, img background with gradient overlay) -> Value Prop (Bento Grid) -> How it Works (Step by Step) -> Testimonials -> CTA",
+        "vibe": "Cinematic. Use the 'man in black suit' image as a hero background. Text should be Gold and White."
+      },
+      "dashboard": {
+        "structure": "Sidebar (Glassmorphism) + Main Content (Grid of widgets).",
+        "widgets": "Dark cards with gold numbers. Use charts with gold/white strokes (no rainbows).",
+        "upload_section": "A designated 'Drop Zone' that looks like a high-tech scanner. Use a dashed gold border."
+      },
+      "results_page": {
+        "structure": "Editorial Magazine Layout. Large typography for the 'Verdict'.",
+        "details": "Use progress bars styled as thin gold lines. Recommendations should look like product cards in a luxury catalog."
+      }
+    },
+    "universal_rules": [
+      "NEVER use default blue/slate colors.",
+      "NEVER use rounded-full for buttons unless it's a specific 'pill' design. Prefer rounded-sm or rounded-md for a sharper, masculine look.",
+      "Always add data-testid to interactive elements.",
+      "Use 'Playfair Display' for all Headings (h1-h3).",
+      "Use 'Manrope' for all Body text.",
+      "Keep gradients subtle. No neon."
+    ]
+  }
+}

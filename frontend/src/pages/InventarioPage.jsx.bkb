@@ -1,0 +1,1310 @@
+import React, { useState, useEffect, useContext, useMemo } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  ArrowLeft, Server, Plus, Search, Edit, Trash2, Eye, EyeOff,
+  X, Save, Monitor, Wifi, HardDrive, Globe, Key, Clock,
+  Building2, Copy, Settings, Download, Lock, History,
+  ArrowUpDown, ChevronUp, ChevronDown, Check, Laptop, Link2
+} from "lucide-react";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { AuthContext } from "../App";
+import { toast } from "sonner";
+
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+const categoriaIconMap = {
+  "Servidores": <HardDrive className="w-5 h-5" />,
+  "Dispositivos": <Monitor className="w-5 h-5" />,
+  "Cuentas de Acceso": <Key className="w-5 h-5" />,
+  "Dominios y Servicios": <Globe className="w-5 h-5" />,
+};
+
+const estadoColors = {
+  "activo": "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+  "inactivo": "bg-red-500/20 text-red-400 border-red-500/30",
+  "mantenimiento": "bg-amber-500/20 text-amber-400 border-amber-500/30",
+};
+
+const ipToNumber = (ip) => {
+  if (!ip) return -1;
+
+  const parts = String(ip).trim().split(".");
+  if (parts.length !== 4) return -1;
+
+  const nums = parts.map(p => Number(p));
+  if (nums.some(n => Number.isNaN(n) || n < 0 || n > 255)) return -1;
+
+  return nums.reduce((acc, oct) => acc * 256 + oct, 0);
+};
+
+// Campos personalizados por subtipo de Cuenta de Acceso
+const CAMPOS_CUENTA = {
+  "AnyDesk": [
+    { key: "id_anydesk", label: "ID AnyDesk", placeholder: "123 456 789" },
+    { key: "alias", label: "Alias", placeholder: "PC-Recepcion" },
+    { key: "contrasena", label: "Contrasena", placeholder: "***", isPassword: true },
+  ],
+  "Office 365": [
+    { key: "tenant", label: "Tenant", placeholder: "empresa.onmicrosoft.com" },
+    { key: "admin_email", label: "Email Admin", placeholder: "admin@empresa.com" },
+    { key: "contrasena", label: "Contrasena", placeholder: "***", isPassword: true },
+    { key: "licencias", label: "Licencias", placeholder: "Business Basic x5" },
+  ],
+  "Correo": [
+    { key: "servidor", label: "Servidor", placeholder: "mail.empresa.com" },
+    { key: "correo", label: "Correo", placeholder: "usuario@empresa.com" },
+    { key: "contrasena", label: "Contrasena", placeholder: "***", isPassword: true },
+    { key: "protocolo", label: "Protocolo", placeholder: "IMAP / POP3 / SMTP" },
+    { key: "puerto", label: "Puerto", placeholder: "993" },
+  ],
+  "Zimbra": [
+    { key: "servidor", label: "Servidor", placeholder: "zimbra.empresa.com" },
+    { key: "dominio", label: "Dominio", placeholder: "empresa.com" },
+    { key: "admin", label: "Admin", placeholder: "admin@empresa.com" },
+    { key: "contrasena", label: "Contrasena", placeholder: "***", isPassword: true },
+    { key: "puerto_web", label: "Puerto Admin", placeholder: "7071" },
+  ],
+  "SSH": [
+    { key: "host", label: "Host", placeholder: "192.168.1.1" },
+    { key: "puerto", label: "Puerto", placeholder: "22" },
+    { key: "usuario", label: "Usuario", placeholder: "root" },
+    { key: "contrasena", label: "Contrasena", placeholder: "***", isPassword: true },
+  ],
+  "RDP": [
+    { key: "host", label: "Host", placeholder: "192.168.1.100" },
+    { key: "puerto", label: "Puerto", placeholder: "3389" },
+    { key: "usuario", label: "Usuario", placeholder: "administrador" },
+    { key: "contrasena", label: "Contrasena", placeholder: "***", isPassword: true },
+  ],
+  "VPN": [
+    { key: "servidor", label: "Servidor", placeholder: "vpn.empresa.com" },
+    { key: "tipo", label: "Tipo VPN", placeholder: "L2TP / OpenVPN / WireGuard" },
+    { key: "usuario", label: "Usuario", placeholder: "user" },
+    { key: "contrasena", label: "Contrasena", placeholder: "***", isPassword: true },
+    { key: "secreto", label: "Secreto/PSK", placeholder: "***", isPassword: true },
+  ],
+  "WiFi": [
+    { key: "ssid", label: "SSID (Nombre Red)", placeholder: "Empresa-WiFi" },
+    { key: "contrasena", label: "Contrasena", placeholder: "***", isPassword: true },
+    { key: "seguridad", label: "Seguridad", placeholder: "WPA2 / WPA3" },
+  ],
+  "Panel Web": [
+    { key: "url", label: "URL", placeholder: "https://panel.empresa.com" },
+    { key: "usuario", label: "Usuario", placeholder: "admin" },
+    { key: "contrasena", label: "Contrasena", placeholder: "***", isPassword: true },
+  ],
+  "Base de Datos": [
+    { key: "host", label: "Host", placeholder: "localhost" },
+    { key: "puerto", label: "Puerto", placeholder: "3306" },
+    { key: "nombre_bd", label: "Nombre BD", placeholder: "produccion_db" },
+    { key: "usuario", label: "Usuario", placeholder: "root" },
+    { key: "contrasena", label: "Contrasena", placeholder: "***", isPassword: true },
+  ],
+  "Winbox": [
+    { key: "host", label: "Host / IP", placeholder: "192.168.88.1" },
+    { key: "usuario", label: "Usuario", placeholder: "admin" },
+    { key: "contrasena", label: "Contrasena", placeholder: "***", isPassword: true },
+  ],
+  "FTP": [
+    { key: "host", label: "Host", placeholder: "ftp.empresa.com" },
+    { key: "puerto", label: "Puerto", placeholder: "21" },
+    { key: "usuario", label: "Usuario", placeholder: "ftpuser" },
+    { key: "contrasena", label: "Contrasena", placeholder: "***", isPassword: true },
+  ],
+  "Personalizada": [
+    { key: "campo1_nombre", label: "Campo 1 - Nombre", placeholder: "Ej: Servidor" },
+    { key: "campo1_valor", label: "Campo 1 - Valor", placeholder: "Ej: 192.168.1.1" },
+    { key: "campo2_nombre", label: "Campo 2 - Nombre", placeholder: "Ej: Usuario" },
+    { key: "campo2_valor", label: "Campo 2 - Valor", placeholder: "Ej: admin" },
+    { key: "campo3_nombre", label: "Campo 3 - Nombre", placeholder: "Ej: Contrasena" },
+    { key: "campo3_valor", label: "Campo 3 - Valor", placeholder: "***", isPassword: true },
+  ],
+};
+
+const InventarioPage = () => {
+  const { token, user, hasPermission } = useContext(AuthContext);
+  const isAdmin = user?.role === "admin";
+  const canCreate = hasPermission("inventario.crear");
+  const canEdit = hasPermission("inventario.editar");
+  const canDelete = hasPermission("inventario.eliminar");
+  const [searchParams] = useSearchParams();
+  const empresaFromUrl = searchParams.get("empresa") || "";
+
+  const [activos, setActivos] = useState([]);
+  const [empresas, setEmpresas] = useState([]);
+  const [categorias, setCategorias] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const [filterEmpresa, setFilterEmpresa] = useState(empresaFromUrl);
+  const [filterCategoria, setFilterCategoria] = useState("");
+  const [filterEstado, setFilterEstado] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sortBy, setSortBy] = useState("nombre");
+  const [sortDir, setSortDir] = useState("asc");
+
+  const [showForm, setShowForm] = useState(false);
+  const [editingActivo, setEditingActivo] = useState(null);
+  const [showCredenciales, setShowCredenciales] = useState(null);
+  const [showHistorial, setShowHistorial] = useState(null);
+  const [showCategorias, setShowCategorias] = useState(false);
+  const [showDetail, setShowDetail] = useState(null);
+  const [detailPasswords, setDetailPasswords] = useState({});
+
+  const [credenciales, setCredenciales] = useState([]);
+  const [showPasswords, setShowPasswords] = useState({});
+  const [credForm, setCredForm] = useState(null);
+  const [historial, setHistorial] = useState([]);
+  const [showFieldPasswords, setShowFieldPasswords] = useState({});
+
+  const emptyForm = {
+    empresa_id: "", categoria: "", subtipo: "", nombre: "", descripcion: "",
+    ubicacion: "", ip_local: "", ip_publica: "", ips_locales: [], ips_publicas: [],
+    dominio: "", puerto_local: "", puerto_externo: "", version: "", estado: "activo",
+    ultima_revision: "", observaciones: "",
+    campos_personalizados: {}, activos_asignados: []
+  };
+
+  const [formData, setFormData] = useState(emptyForm);
+  const [newIpLocal, setNewIpLocal] = useState("");
+  const [newIpPublica, setNewIpPublica] = useState("");
+
+  const [catForm, setCatForm] = useState({ nombre: "", subtipos: "" });
+  const [editingCat, setEditingCat] = useState(null);
+  const [newSubtipo, setNewSubtipo] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { fetchAll(); }, []);
+
+  const fetchAll = async () => {
+    try {
+      const [actRes, empRes, catRes] = await Promise.all([
+        fetch(`${API}/admin/activos`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/admin/empresas`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/admin/categorias`, { headers: { Authorization: `Bearer ${token}` } })
+      ]);
+      if (actRes.ok) setActivos(await actRes.json());
+      if (empRes.ok) setEmpresas(await empRes.json());
+      if (catRes.ok) setCategorias(await catRes.json());
+    } catch (err) {
+      toast.error("Error al cargar datos");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const isCuenta = (cat) => cat === "Cuentas de Acceso";
+
+const filteredActivos = useMemo(() => {
+  let result = activos.filter(a => {
+    if (filterEmpresa && a.empresa_id !== filterEmpresa) return false;
+    if (filterCategoria && a.categoria !== filterCategoria) return false;
+    if (filterEstado && a.estado !== filterEstado) return false;
+
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      const allIps = [a.ip_local, a.ip_publica, ...(a.ips_locales || []), ...(a.ips_publicas || [])]
+        .join(" ")
+        .toLowerCase();
+      const cpVals = Object.values(a.campos_personalizados || {}).join(" ").toLowerCase();
+
+      return (
+        (a.nombre || "").toLowerCase().includes(term) ||
+        allIps.includes(term) ||
+        (a.dominio || "").toLowerCase().includes(term) ||
+        (a.descripcion || "").toLowerCase().includes(term) ||
+        (a.ubicacion || "").toLowerCase().includes(term) ||
+        (a.empresa_nombre || "").toLowerCase().includes(term) ||
+        (a.subtipo || "").toLowerCase().includes(term) ||
+        cpVals.includes(term)
+      );
+    }
+
+    return true;
+  });
+
+  result.sort((a, b) => {
+    if (sortBy === "ip") {
+      const ipA = a.ip_local || (a.ips_locales?.[0] || "");
+      const ipB = b.ip_local || (b.ips_locales?.[0] || "");
+
+      const cmp = ipToNumber(ipA) - ipToNumber(ipB);
+      return sortDir === "asc" ? cmp : -cmp;
+    }
+
+    let va, vb;
+    if (sortBy === "nombre") { va = a.nombre; vb = b.nombre; }
+    else if (sortBy === "fecha") { va = a.created_at; vb = b.created_at; }
+    else if (sortBy === "categoria") { va = a.categoria; vb = b.categoria; }
+    else if (sortBy === "empresa") { va = a.empresa_nombre; vb = b.empresa_nombre; }
+    else { va = a.nombre; vb = b.nombre; }
+
+    const cmp = String(va || "").localeCompare(String(vb || ""), "es", { sensitivity: "base" });
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  return result;
+}, [activos, filterEmpresa, filterCategoria, filterEstado, searchTerm, sortBy, sortDir]);
+
+  const groupedByCategoria = useMemo(() => {
+    const groups = {};
+    filteredActivos.forEach(a => {
+      const catName = a.categoria || "Sin Categoria";
+      if (!groups[catName]) groups[catName] = [];
+      groups[catName].push(a);
+    });
+    return groups;
+  }, [filteredActivos]);
+
+  const toggleSort = (field) => {
+    if (sortBy === field) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortBy(field); setSortDir("asc"); }
+  };
+
+  // CRUD
+  const openNewForm = () => {
+    setEditingActivo(null);
+    setFormData({ ...emptyForm, empresa_id: filterEmpresa || "" });
+    setNewIpLocal(""); setNewIpPublica("");
+    setShowFieldPasswords({});
+    setShowForm(true);
+  };
+
+  const openEditForm = (activo) => {
+    setEditingActivo(activo);
+    setFormData({
+      empresa_id: activo.empresa_id, categoria: activo.categoria, subtipo: activo.subtipo || "",
+      nombre: activo.nombre, descripcion: activo.descripcion || "",
+      ubicacion: activo.ubicacion || "", ip_local: activo.ip_local || "",
+      ip_publica: activo.ip_publica || "",
+      ips_locales: activo.ips_locales || [], ips_publicas: activo.ips_publicas || [],
+      dominio: activo.dominio || "", puerto_local: activo.puerto_local || "",
+      puerto_externo: activo.puerto_externo || "", version: activo.version || "",
+      estado: activo.estado || "activo", ultima_revision: activo.ultima_revision || "",
+      observaciones: activo.observaciones || "",
+      campos_personalizados: activo.campos_personalizados || {},
+      activos_asignados: activo.activos_asignados || []
+    });
+    setNewIpLocal(""); setNewIpPublica("");
+    setShowFieldPasswords({});
+    setShowForm(true);
+  };
+
+  const addIp = (type) => {
+    if (type === "local" && newIpLocal.trim()) {
+      setFormData(f => ({ ...f, ips_locales: [...f.ips_locales, newIpLocal.trim()] }));
+      setNewIpLocal("");
+    } else if (type === "publica" && newIpPublica.trim()) {
+      setFormData(f => ({ ...f, ips_publicas: [...f.ips_publicas, newIpPublica.trim()] }));
+      setNewIpPublica("");
+    }
+  };
+
+  const removeIp = (type, idx) => {
+    if (type === "local") setFormData(f => ({ ...f, ips_locales: f.ips_locales.filter((_, i) => i !== idx) }));
+    else setFormData(f => ({ ...f, ips_publicas: f.ips_publicas.filter((_, i) => i !== idx) }));
+  };
+
+  const updateCampo = (key, value) => {
+    setFormData(f => ({ ...f, campos_personalizados: { ...f.campos_personalizados, [key]: value } }));
+  };
+
+  const toggleActivoAsignado = (activoId) => {
+    setFormData(f => ({
+      ...f,
+      activos_asignados: f.activos_asignados.includes(activoId)
+        ? f.activos_asignados.filter(id => id !== activoId)
+        : [...f.activos_asignados, activoId]
+    }));
+  };
+
+  const saveActivo = async () => {
+    if (!formData.empresa_id || !formData.categoria || !formData.nombre) {
+      toast.error("Empresa, categoria y nombre son obligatorios"); return;
+    }
+    // Si el usuario escribió una IP pero no presionó Enter, incluirla igual al guardar
+    const dataToSave = { ...formData };
+    if (newIpLocal.trim()) {
+      dataToSave.ips_locales = [...dataToSave.ips_locales, newIpLocal.trim()];
+      setNewIpLocal("");
+    }
+    if (newIpPublica.trim()) {
+      dataToSave.ips_publicas = [...dataToSave.ips_publicas, newIpPublica.trim()];
+      setNewIpPublica("");
+    }
+    setSaving(true);
+    try {
+      const url = editingActivo ? `${API}/admin/activos/${editingActivo.id}` : `${API}/admin/activos`;
+      const res = await fetch(url, {
+        method: editingActivo ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(dataToSave)
+      });
+      if (res.ok) {
+        toast.success(editingActivo ? "Activo actualizado" : "Activo creado");
+        setShowForm(false); fetchAll();
+      } else { const err = await res.json(); toast.error(err.detail || "Error"); }
+    } catch { toast.error("Error de conexion"); }
+    finally { setSaving(false); }
+  };
+
+  const deleteActivo = async (id) => {
+    if (!window.confirm("Eliminar este activo?")) return;
+    try {
+      const res = await fetch(`${API}/admin/activos/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) { toast.success("Activo eliminado"); fetchAll(); }
+    } catch { toast.error("Error"); }
+  };
+
+  // Credenciales
+  const openCredenciales = async (activo) => {
+    setShowCredenciales(activo);
+    setShowPasswords({});
+    try {
+      const res = await fetch(`${API}/admin/activos/${activo.id}/credenciales`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) setCredenciales(await res.json());
+    } catch { toast.error("Error"); }
+  };
+
+  const saveCredencial = async () => {
+    if (!credForm) return;
+    setSaving(true);
+    try {
+      const isEdit = credForm.id;
+      const url = isEdit ? `${API}/admin/credenciales/${credForm.id}` : `${API}/admin/activos/${showCredenciales.id}/credenciales`;
+      const res = await fetch(url, {
+        method: isEdit ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ activo_id: showCredenciales.id, ...credForm })
+      });
+      if (res.ok) { toast.success(isEdit ? "Actualizada" : "Agregada"); setCredForm(null); openCredenciales(showCredenciales); }
+    } catch { toast.error("Error"); }
+    finally { setSaving(false); }
+  };
+
+  const deleteCredencial = async (id) => {
+    if (!window.confirm("Eliminar esta credencial?")) return;
+    try { await fetch(`${API}/admin/credenciales/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }); toast.success("Eliminada"); openCredenciales(showCredenciales); } catch { toast.error("Error"); }
+  };
+
+  const copyToClipboard = (text) => { navigator.clipboard.writeText(text); toast.success("Copiado"); };
+
+  const openDetail = (activo) => {
+    setShowDetail(activo);
+    setDetailPasswords({});
+  };
+
+  const navigateToActivo = (activoId) => {
+    const target = activos.find(a => a.id === activoId);
+    if (target) {
+      setShowDetail(target);
+      setDetailPasswords({});
+    }
+  };
+
+  // Historial
+  const openHistorial = async (activo) => {
+    setShowHistorial(activo);
+    try {
+      const res = await fetch(`${API}/admin/activos/${activo.id}/historial`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) setHistorial(await res.json());
+    } catch { toast.error("Error"); }
+  };
+
+  // Categorias
+  const saveCat = async () => {
+    if (!catForm.nombre) return;
+    setSaving(true);
+    try {
+      const payload = { nombre: catForm.nombre, subtipos: catForm.subtipos ? catForm.subtipos.split(",").map(s => s.trim()).filter(Boolean) : [] };
+      const url = editingCat ? `${API}/admin/categorias/${editingCat.id}` : `${API}/admin/categorias`;
+      await fetch(url, { method: editingCat ? "PUT" : "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
+      toast.success(editingCat ? "Actualizada" : "Creada");
+      setCatForm({ nombre: "", subtipos: "" }); setEditingCat(null);
+      const catRes = await fetch(`${API}/admin/categorias`, { headers: { Authorization: `Bearer ${token}` } });
+      if (catRes.ok) setCategorias(await catRes.json());
+    } catch { toast.error("Error"); }
+    finally { setSaving(false); }
+  };
+
+  const addSubtipoToCat = async (cat) => {
+    if (!newSubtipo.trim()) return;
+    const updated = { nombre: cat.nombre, subtipos: [...(cat.subtipos || []), newSubtipo.trim()] };
+    try {
+      await fetch(`${API}/admin/categorias/${cat.id}`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(updated) });
+      toast.success("Subtipo agregado"); setNewSubtipo("");
+      const catRes = await fetch(`${API}/admin/categorias`, { headers: { Authorization: `Bearer ${token}` } });
+      if (catRes.ok) setCategorias(await catRes.json());
+    } catch { toast.error("Error"); }
+  };
+
+  const removeSubtipo = async (cat, subIdx) => {
+    const updated = { nombre: cat.nombre, subtipos: cat.subtipos.filter((_, i) => i !== subIdx) };
+    try {
+      await fetch(`${API}/admin/categorias/${cat.id}`, { method: "PUT", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(updated) });
+      const catRes = await fetch(`${API}/admin/categorias`, { headers: { Authorization: `Bearer ${token}` } });
+      if (catRes.ok) setCategorias(await catRes.json());
+    } catch { toast.error("Error"); }
+  };
+
+  const deleteCat = async (id) => {
+    if (!window.confirm("Eliminar?")) return;
+    try { await fetch(`${API}/admin/categorias/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }); toast.success("Eliminada"); const r = await fetch(`${API}/admin/categorias`, { headers: { Authorization: `Bearer ${token}` } }); if (r.ok) setCategorias(await r.json()); } catch { toast.error("Error"); }
+  };
+
+  const selectedCatSubtipos = useMemo(() => categorias.find(c => c.nombre === formData.categoria)?.subtipos || [], [formData.categoria, categorias]);
+
+  const allIps = (a) => {
+    const locals = [a.ip_local, ...(a.ips_locales || [])].filter(Boolean);
+    const publics = [a.ip_publica, ...(a.ips_publicas || [])].filter(Boolean);
+    return { locals: [...new Set(locals)], publics: [...new Set(publics)] };
+  };
+
+  const formatDate = (d) => d ? new Date(d).toLocaleDateString("es-PY", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+
+  // Get devices that a cuenta is assigned to
+  const getAssignedDeviceNames = (activo) => {
+    if (!activo.activos_asignados || activo.activos_asignados.length === 0) return [];
+    return activo.activos_asignados.map(id => {
+      const dev = activos.find(a => a.id === id);
+      return dev ? dev.nombre : null;
+    }).filter(Boolean);
+  };
+
+  // Get cuentas assigned to a device
+  const getCuentasForDevice = (deviceId) => {
+    return activos.filter(a => isCuenta(a.categoria) && (a.activos_asignados || []).includes(deviceId));
+  };
+
+  // Devices for assignment (servidores + dispositivos from same empresa)
+  const devicesForAssignment = useMemo(() => {
+    if (!formData.empresa_id) return [];
+    return activos.filter(a => a.empresa_id === formData.empresa_id && !isCuenta(a.categoria));
+  }, [activos, formData.empresa_id]);
+
+  if (loading) return <div className="flex items-center justify-center h-screen"><div className="text-arandu-blue animate-pulse text-xl">Cargando inventario...</div></div>;
+
+  const empresaName = filterEmpresa ? empresas.find(e => e.id === filterEmpresa)?.nombre : null;
+
+  return (
+    <div className="p-3 sm:p-4 md:p-8">
+      {/* Header */}
+      <div className="flex flex-col gap-4 mb-6">
+        <div>
+          <Link to={filterEmpresa ? "/admin/empresas" : "/admin"} className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2 text-sm">
+            <ArrowLeft className="w-4 h-4" /> {filterEmpresa ? "Volver a Empresas" : "Volver al Dashboard"}
+          </Link>
+          <h1 className="font-heading text-xl sm:text-2xl md:text-3xl font-bold text-white flex items-center gap-3" data-testid="inventario-title">
+            <Server className="w-6 h-6 sm:w-8 sm:h-8 text-cyan-400" />
+            Inventario Tecnico
+          </h1>
+          {empresaName && <span className="text-arandu-blue text-sm mt-1 block">{empresaName}</span>}
+          <p className="text-slate-400 text-xs mt-1">{filteredActivos.length} activos</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {isAdmin && (
+            <Button onClick={() => setShowCategorias(true)} className="bg-purple-600 hover:bg-purple-700 text-white text-xs sm:text-sm" data-testid="manage-categories-btn">
+              <Settings className="w-4 h-4 mr-1 sm:mr-2" /> <span className="hidden sm:inline">Categorias</span><span className="sm:hidden">Cat.</span>
+            </Button>
+          )}
+          <Link to={`/admin/reportes${filterEmpresa ? `?empresa=${filterEmpresa}` : ""}`}>
+            <Button className="bg-amber-600 hover:bg-amber-700 text-white text-xs sm:text-sm" data-testid="export-btn">
+              <Download className="w-4 h-4 mr-1 sm:mr-2" /> Reportes
+            </Button>
+          </Link>
+          {canCreate && (
+            <Button onClick={openNewForm} className="bg-cyan-600 hover:bg-cyan-700 text-white text-xs sm:text-sm" data-testid="new-activo-btn">
+              <Plus className="w-4 h-4 mr-1 sm:mr-2" /> Nuevo
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row flex-wrap gap-2 sm:gap-3 mb-4">
+        <div className="relative flex-1 min-w-0">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <Input type="text" placeholder="Buscar..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="bg-arandu-dark border-white/10 text-white pl-10 text-sm" data-testid="inv-search" />
+        </div>
+        <select value={filterEmpresa} onChange={(e) => setFilterEmpresa(e.target.value)} className="bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-xs sm:text-sm" data-testid="inv-filter-empresa">
+          <option value="">Todas las empresas</option>
+          {empresas.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+        </select>
+        <select value={filterCategoria} onChange={(e) => setFilterCategoria(e.target.value)} className="bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-xs sm:text-sm">
+          <option value="">Todas las categorias</option>
+          {categorias.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
+        </select>
+        <select value={filterEstado} onChange={(e) => setFilterEstado(e.target.value)} className="bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-xs sm:text-sm">
+          <option value="">Todos</option>
+          <option value="activo">Activo</option>
+          <option value="inactivo">Inactivo</option>
+          <option value="mantenimiento">Mantenimiento</option>
+        </select>
+      </div>
+
+{/* Sort */}
+<div className="flex gap-1.5 sm:gap-2 mb-6 flex-wrap">
+  <span className="text-slate-500 text-xs self-center mr-1">
+    <ArrowUpDown className="w-3 h-3 inline" /> Orden:
+  </span>
+  {[
+    { key: "nombre", label: "Nombre" },
+    { key: "categoria", label: "Categoria" },
+    { key: "empresa", label: "Empresa" },
+    { key: "ip", label: "IP" },
+  ].map(s => (
+    <button
+      key={s.key}
+      onClick={() => toggleSort(s.key)}
+      className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-all ${
+        sortBy === s.key
+          ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30"
+          : "bg-arandu-dark-lighter text-slate-500 border border-white/5 hover:border-white/20"
+      }`}
+      data-testid={`sort-${s.key}`}
+    >
+      {s.label}
+      {sortBy === s.key && (
+        sortDir === "asc"
+          ? <ChevronUp className="w-3 h-3" />
+          : <ChevronDown className="w-3 h-3" />
+      )}
+    </button>
+  ))}
+</div>
+
+      {/* Activos grouped by categoria */}
+      {filteredActivos.length === 0 ? (
+        <div className="text-center py-16 bg-arandu-dark-light rounded-xl border border-white/5">
+          <Server className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+          <p className="text-slate-400 text-lg">No hay activos registrados</p>
+          {canCreate && <Button onClick={openNewForm} className="mt-4 bg-cyan-600 hover:bg-cyan-700 text-white"><Plus className="w-4 h-4 mr-2" /> Nuevo Activo</Button>}
+        </div>
+      ) : (
+        Object.entries(groupedByCategoria).map(([catName, items]) => (
+          <div key={catName} className="mb-8" data-testid={`cat-group-${catName}`}>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="text-cyan-400">{categoriaIconMap[catName] || <Server className="w-5 h-5" />}</div>
+              <h2 className="font-heading font-bold text-white text-base sm:text-lg">{catName}</h2>
+              <span className="text-slate-500 text-sm">({items.length})</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+              {items.map((activo, idx) => {
+                const ips = allIps(activo);
+                const assignedDevices = getAssignedDeviceNames(activo);
+                const assignedCuentas = !isCuenta(activo.categoria) ? getCuentasForDevice(activo.id) : [];
+                const cp = activo.campos_personalizados || {};
+
+                return (
+                  <motion.div key={activo.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.02 }}
+                    className="bg-arandu-dark-light border border-white/5 rounded-xl p-3 sm:p-4 hover:border-cyan-500/30 transition-all group" data-testid={`activo-card-${idx}`}>
+                    <div className="flex items-start justify-between mb-2 sm:mb-3">
+                      <div className="flex items-center gap-2 sm:gap-3 min-w-0 cursor-pointer" onClick={() => openDetail(activo)} data-testid={`detail-btn-${idx}`}>
+                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400 flex-shrink-0 group-hover:bg-cyan-500/20 transition-colors">
+                          {categoriaIconMap[activo.categoria] || <Server className="w-4 h-4 sm:w-5 sm:h-5" />}
+                        </div>
+                        <div className="min-w-0">
+                          <h3 className="text-white font-semibold text-xs sm:text-sm truncate group-hover:text-cyan-400 transition-colors">{activo.nombre}</h3>
+                          <p className="text-slate-500 text-xs truncate">{activo.subtipo || activo.categoria}</p>
+                        </div>
+                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded-full border flex-shrink-0 ${estadoColors[activo.estado] || estadoColors.activo}`}>{activo.estado}</span>
+                    </div>
+
+                    <div className="space-y-1 text-xs mb-2 sm:mb-3">
+                      {/* For devices/servers: show IPs */}
+                      {!isCuenta(activo.categoria) && (
+                        <>
+                          {ips.locals.length > 0 && <div className="flex justify-between gap-2"><span className="text-slate-500 flex-shrink-0">IP Local</span><span className="text-slate-300 truncate text-right">{ips.locals.join(", ")}</span></div>}
+                          {ips.publics.length > 0 && <div className="flex justify-between gap-2"><span className="text-slate-500 flex-shrink-0">IP Publica</span><span className="text-slate-300 truncate text-right">{ips.publics.join(", ")}</span></div>}
+                          {activo.dominio && <div className="flex justify-between gap-2"><span className="text-slate-500 flex-shrink-0">Dominio</span><span className="text-cyan-400 truncate text-right">{activo.dominio}</span></div>}
+                          {activo.ubicacion && <div className="flex justify-between gap-2"><span className="text-slate-500 flex-shrink-0">Ubicacion</span><span className="text-slate-300 truncate text-right">{activo.ubicacion}</span></div>}
+                        </>
+                      )}
+                      {/* For cuentas: show key fields from campos_personalizados */}
+                      {isCuenta(activo.categoria) && Object.entries(cp).length > 0 && (
+                        Object.entries(cp).slice(0, 3).map(([k, v]) => {
+                          if (!v || k.includes("contrasena") || k.includes("secreto") || k.includes("password")) return null;
+                          const label = k.replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase());
+                          return <div key={k} className="flex justify-between gap-2"><span className="text-slate-500 flex-shrink-0">{label}</span><span className="text-slate-300 truncate text-right">{v}</span></div>;
+                        })
+                      )}
+                      {activo.empresa_nombre && !filterEmpresa && <div className="flex justify-between gap-2"><span className="text-slate-500 flex-shrink-0">Empresa</span><span className="text-arandu-blue truncate text-right">{activo.empresa_nombre}</span></div>}
+                    </div>
+
+                    {/* Assigned devices (for cuentas) - clickable */}
+                    {assignedDevices.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        <Link2 className="w-3 h-3 text-purple-400 mt-0.5" />
+                        {(activo.activos_asignados || []).map((devId) => {
+                          const dev = activos.find(a => a.id === devId);
+                          return dev ? (
+                            <button key={devId} onClick={() => openDetail(dev)}
+                              className="text-xs bg-purple-500/10 text-purple-300 px-1.5 py-0.5 rounded border border-purple-500/20 hover:bg-purple-500/20 hover:border-purple-400/40 transition-all cursor-pointer">
+                              {dev.nombre}
+                            </button>
+                          ) : null;
+                        })}
+                      </div>
+                    )}
+
+                    {/* Assigned cuentas (for devices) - clickable */}
+                    {assignedCuentas.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        <Key className="w-3 h-3 text-amber-400 mt-0.5" />
+                        {assignedCuentas.map((c) => (
+                          <button key={c.id} onClick={() => openDetail(c)}
+                            className="text-xs bg-amber-500/10 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/20 hover:bg-amber-500/20 hover:border-amber-400/40 transition-all cursor-pointer">
+                            {c.subtipo || c.nombre}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-1 pt-2 border-t border-white/5 flex-wrap">
+                      {!isCuenta(activo.categoria) && (
+                        <button onClick={() => openCredenciales(activo)} className="flex items-center gap-1 px-2 py-1 rounded text-xs text-amber-400 hover:bg-amber-500/10" data-testid={`cred-btn-${idx}`}><Key className="w-3 h-3" /> {activo.credenciales_count || 0}</button>
+                      )}
+                      <button onClick={() => openHistorial(activo)} className="flex items-center gap-1 px-2 py-1 rounded text-xs text-purple-400 hover:bg-purple-500/10" data-testid={`hist-btn-${idx}`}><History className="w-3 h-3" /></button>
+                      <div className="flex-1" />
+                      {canEdit && <button onClick={() => openEditForm(activo)} className="p-1.5 rounded text-slate-400 hover:text-cyan-400 hover:bg-cyan-500/10" data-testid={`edit-activo-${idx}`}><Edit className="w-3.5 h-3.5" /></button>}
+                      {canDelete && <button onClick={() => deleteActivo(activo.id)} className="p-1.5 rounded text-slate-400 hover:text-red-400 hover:bg-red-500/10" data-testid={`del-activo-${idx}`}><Trash2 className="w-3.5 h-3.5" /></button>}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
+          </div>
+        ))
+      )}
+
+      {/* ===== DETAIL MODAL ===== */}
+      <AnimatePresence>
+        {showDetail && (() => {
+          const d = showDetail;
+          const ips = allIps(d);
+          const cp = d.campos_personalizados || {};
+          const detailCuentas = !isCuenta(d.categoria) ? getCuentasForDevice(d.id) : [];
+          const detailDevices = isCuenta(d.categoria) ? (d.activos_asignados || []).map(id => activos.find(a => a.id === id)).filter(Boolean) : [];
+          const camposDef = isCuenta(d.categoria) && d.subtipo ? (CAMPOS_CUENTA[d.subtipo] || []) : [];
+          const empresa = empresas.find(e => e.id === d.empresa_id);
+
+          return (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/80 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto"
+              onClick={(e) => e.target === e.currentTarget && setShowDetail(null)}>
+              <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }}
+                className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-2xl my-4">
+                {/* Header */}
+                <div className="sticky top-0 bg-arandu-dark-light/95 backdrop-blur-sm border-b border-white/10 p-4 flex items-center justify-between z-10">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                      isCuenta(d.categoria) ? "bg-amber-500/10 text-amber-400" : "bg-cyan-500/10 text-cyan-400"
+                    }`}>
+                      {categoriaIconMap[d.categoria] || <Server className="w-5 h-5 sm:w-6 sm:h-6" />}
+                    </div>
+                    <div className="min-w-0">
+                      <h2 className="font-heading text-base sm:text-lg font-bold text-white truncate">{d.nombre}</h2>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-slate-400 text-xs">{d.subtipo || d.categoria}</span>
+                        {empresa && <span className="text-arandu-blue text-xs">{empresa.nombre}</span>}
+                        <span className={`text-xs px-2 py-0.5 rounded-full border ${estadoColors[d.estado] || estadoColors.activo}`}>{d.estado}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-1 flex-shrink-0">
+                    {canEdit && <button onClick={() => { setShowDetail(null); openEditForm(d); }} className="p-2 text-slate-400 hover:text-cyan-400 hover:bg-cyan-500/10 rounded-lg"><Edit className="w-4 h-4" /></button>}
+                    <button onClick={() => setShowDetail(null)} className="p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg"><X className="w-4 h-4" /></button>
+                  </div>
+                </div>
+
+                <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+                  {/* === DEVICE/SERVER DETAIL === */}
+                  {!isCuenta(d.categoria) && (
+                    <>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {ips.locals.length > 0 && (
+                          <div className="bg-arandu-dark rounded-lg p-3 border border-white/5">
+                            <p className="text-slate-500 text-xs mb-1">IPs Locales</p>
+                            <div className="space-y-1">{ips.locals.map((ip, i) => (
+                              <div key={i} className="flex items-center justify-between">
+                                <span className="text-white text-sm font-mono">{ip}</span>
+                                <button onClick={() => copyToClipboard(ip)} className="text-slate-500 hover:text-cyan-400"><Copy className="w-3 h-3" /></button>
+                              </div>
+                            ))}</div>
+                          </div>
+                        )}
+                        {ips.publics.length > 0 && (
+                          <div className="bg-arandu-dark rounded-lg p-3 border border-white/5">
+                            <p className="text-slate-500 text-xs mb-1">IPs Publicas</p>
+                            <div className="space-y-1">{ips.publics.map((ip, i) => (
+                              <div key={i} className="flex items-center justify-between">
+                                <span className="text-white text-sm font-mono">{ip}</span>
+                                <button onClick={() => copyToClipboard(ip)} className="text-slate-500 hover:text-cyan-400"><Copy className="w-3 h-3" /></button>
+                              </div>
+                            ))}</div>
+                          </div>
+                        )}
+                        {d.dominio && (
+                          <div className="bg-arandu-dark rounded-lg p-3 border border-white/5">
+                            <p className="text-slate-500 text-xs mb-1">Dominio</p>
+                            <div className="flex items-center justify-between">
+                              <span className="text-cyan-400 text-sm">{d.dominio}</span>
+                              <button onClick={() => copyToClipboard(d.dominio)} className="text-slate-500 hover:text-cyan-400"><Copy className="w-3 h-3" /></button>
+                            </div>
+                          </div>
+                        )}
+                        {d.ubicacion && (
+                          <div className="bg-arandu-dark rounded-lg p-3 border border-white/5">
+                            <p className="text-slate-500 text-xs mb-1">Ubicacion</p>
+                            <span className="text-white text-sm">{d.ubicacion}</span>
+                          </div>
+                        )}
+                        {(d.puerto_local || d.puerto_externo) && (
+                          <div className="bg-arandu-dark rounded-lg p-3 border border-white/5">
+                            <p className="text-slate-500 text-xs mb-1">Puertos</p>
+                            <span className="text-white text-sm">{d.puerto_local && `Local: ${d.puerto_local}`} {d.puerto_externo && `Ext: ${d.puerto_externo}`}</span>
+                          </div>
+                        )}
+                        {d.version && (
+                          <div className="bg-arandu-dark rounded-lg p-3 border border-white/5">
+                            <p className="text-slate-500 text-xs mb-1">Version</p>
+                            <span className="text-white text-sm">{d.version}</span>
+                          </div>
+                        )}
+                      </div>
+                      {d.descripcion && <div className="bg-arandu-dark rounded-lg p-3 border border-white/5"><p className="text-slate-500 text-xs mb-1">Descripcion</p><p className="text-white text-sm">{d.descripcion}</p></div>}
+                      {d.observaciones && <div className="bg-arandu-dark rounded-lg p-3 border border-white/5"><p className="text-slate-500 text-xs mb-1">Observaciones</p><p className="text-slate-300 text-sm">{d.observaciones}</p></div>}
+
+                      {/* CUENTAS DE ACCESO ASIGNADAS */}
+                      <div className="border border-amber-500/20 rounded-lg overflow-hidden">
+                        <div className="bg-amber-500/5 p-3 flex items-center gap-2 border-b border-amber-500/10">
+                          <Key className="w-4 h-4 text-amber-400" />
+                          <span className="text-amber-400 font-semibold text-sm">Cuentas de Acceso Asignadas</span>
+                          <span className="text-slate-500 text-xs">({detailCuentas.length})</span>
+                        </div>
+                        {detailCuentas.length === 0 ? (
+                          <div className="p-4 text-center"><p className="text-slate-500 text-sm">Sin cuentas asignadas a este equipo</p></div>
+                        ) : (
+                          <div className="p-3 space-y-2">
+                            {detailCuentas.map(cuenta => {
+                              const ccp = cuenta.campos_personalizados || {};
+                              const cDef = CAMPOS_CUENTA[cuenta.subtipo] || [];
+                              return (
+                                <div key={cuenta.id} className="bg-arandu-dark rounded-lg p-3 border border-white/5 hover:border-amber-500/20 transition-all cursor-pointer"
+                                  onClick={() => navigateToActivo(cuenta.id)} data-testid={`detail-cuenta-${cuenta.id}`}>
+                                  <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-amber-400 font-semibold text-xs bg-amber-500/10 px-2 py-0.5 rounded">{cuenta.subtipo}</span>
+                                      <span className="text-white text-sm">{cuenta.nombre}</span>
+                                    </div>
+                                    <Eye className="w-3.5 h-3.5 text-slate-500" />
+                                  </div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {cDef.length > 0 ? cDef.map(campo => {
+                                      const val = ccp[campo.key];
+                                      if (!val) return null;
+                                      const isHidden = campo.isPassword && !detailPasswords[`${cuenta.id}_${campo.key}`];
+                                      return (
+                                        <div key={campo.key} className="flex items-center justify-between gap-1">
+                                          <div className="min-w-0">
+                                            <p className="text-slate-500 text-xs">{campo.label}</p>
+                                            <p className="text-white text-xs font-mono truncate">{isHidden ? "********" : val}</p>
+                                          </div>
+                                          <div className="flex gap-0.5 flex-shrink-0">
+                                            {campo.isPassword && (
+                                              <button onClick={(e) => { e.stopPropagation(); setDetailPasswords(p => ({...p, [`${cuenta.id}_${campo.key}`]: !p[`${cuenta.id}_${campo.key}`]})); }}
+                                                className="p-1 text-slate-500 hover:text-amber-400">
+                                                {isHidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                                              </button>
+                                            )}
+                                            <button onClick={(e) => { e.stopPropagation(); copyToClipboard(val); }} className="p-1 text-slate-500 hover:text-cyan-400"><Copy className="w-3 h-3" /></button>
+                                          </div>
+                                        </div>
+                                      );
+                                    }) : Object.entries(ccp).map(([k, v]) => {
+                                      if (!v) return null;
+                                      const isPw = k.includes("contrasena") || k.includes("password") || k.includes("secreto");
+                                      const isHidden = isPw && !detailPasswords[`${cuenta.id}_${k}`];
+                                      return (
+                                        <div key={k} className="flex items-center justify-between gap-1">
+                                          <div className="min-w-0">
+                                            <p className="text-slate-500 text-xs">{k.replace(/_/g, " ")}</p>
+                                            <p className="text-white text-xs font-mono truncate">{isHidden ? "********" : v}</p>
+                                          </div>
+                                          <div className="flex gap-0.5 flex-shrink-0">
+                                            {isPw && <button onClick={(e) => { e.stopPropagation(); setDetailPasswords(p => ({...p, [`${cuenta.id}_${k}`]: !p[`${cuenta.id}_${k}`]})); }} className="p-1 text-slate-500 hover:text-amber-400">{isHidden ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}</button>}
+                                            <button onClick={(e) => { e.stopPropagation(); copyToClipboard(v); }} className="p-1 text-slate-500 hover:text-cyan-400"><Copy className="w-3 h-3" /></button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {/* === CUENTA DE ACCESO DETAIL === */}
+                  {isCuenta(d.categoria) && (
+                    <>
+                      {/* Full credential fields */}
+                      <div className="border border-amber-500/20 rounded-lg overflow-hidden">
+                        <div className="bg-amber-500/5 p-3 flex items-center gap-2 border-b border-amber-500/10">
+                          <Key className="w-4 h-4 text-amber-400" />
+                          <span className="text-amber-400 font-semibold text-sm">Datos de {d.subtipo}</span>
+                        </div>
+                        <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {camposDef.length > 0 ? camposDef.map(campo => {
+                            const val = cp[campo.key];
+                            if (!val) return null;
+                            const isHidden = campo.isPassword && !detailPasswords[campo.key];
+                            return (
+                              <div key={campo.key} className="bg-arandu-dark rounded-lg p-3 border border-white/5">
+                                <p className="text-slate-500 text-xs mb-1">{campo.label}</p>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-white text-sm font-mono truncate">{isHidden ? "********" : val}</span>
+                                  <div className="flex gap-1 flex-shrink-0">
+                                    {campo.isPassword && (
+                                      <button onClick={() => setDetailPasswords(p => ({...p, [campo.key]: !p[campo.key]}))}
+                                        className="p-1 text-slate-500 hover:text-amber-400">
+                                        {isHidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                                      </button>
+                                    )}
+                                    <button onClick={() => copyToClipboard(val)} className="p-1 text-slate-500 hover:text-cyan-400"><Copy className="w-3.5 h-3.5" /></button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }) : Object.entries(cp).map(([k, v]) => {
+                            if (!v) return null;
+                            const isPw = k.includes("contrasena") || k.includes("password") || k.includes("secreto");
+                            const isHidden = isPw && !detailPasswords[k];
+                            return (
+                              <div key={k} className="bg-arandu-dark rounded-lg p-3 border border-white/5">
+                                <p className="text-slate-500 text-xs mb-1">{k.replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase())}</p>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-white text-sm font-mono truncate">{isHidden ? "********" : v}</span>
+                                  <div className="flex gap-1 flex-shrink-0">
+                                    {isPw && <button onClick={() => setDetailPasswords(p => ({...p, [k]: !p[k]}))} className="p-1 text-slate-500 hover:text-amber-400">{isHidden ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}</button>}
+                                    <button onClick={() => copyToClipboard(v)} className="p-1 text-slate-500 hover:text-cyan-400"><Copy className="w-3.5 h-3.5" /></button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Assigned devices - clickable to navigate */}
+                      <div className="border border-purple-500/20 rounded-lg overflow-hidden">
+                        <div className="bg-purple-500/5 p-3 flex items-center gap-2 border-b border-purple-500/10">
+                          <Link2 className="w-4 h-4 text-purple-400" />
+                          <span className="text-purple-400 font-semibold text-sm">Dispositivos Asignados</span>
+                          <span className="text-slate-500 text-xs">({detailDevices.length})</span>
+                        </div>
+                        {detailDevices.length === 0 ? (
+                          <div className="p-4 text-center"><p className="text-slate-500 text-sm">Sin dispositivos asignados</p></div>
+                        ) : (
+                          <div className="p-3 space-y-2">
+                            {detailDevices.map(dev => {
+                              const devIps = allIps(dev);
+                              return (
+                                <button key={dev.id} onClick={() => navigateToActivo(dev.id)}
+                                  className="w-full bg-arandu-dark rounded-lg p-3 border border-white/5 hover:border-purple-500/30 transition-all text-left flex items-center gap-3"
+                                  data-testid={`detail-device-${dev.id}`}>
+                                  <div className="w-9 h-9 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400 flex-shrink-0">
+                                    {categoriaIconMap[dev.categoria] || <Server className="w-4 h-4" />}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-white text-sm font-medium truncate">{dev.nombre}</p>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-slate-500 text-xs">{dev.subtipo || dev.categoria}</span>
+                                      {devIps.locals.length > 0 && <span className="text-slate-400 text-xs font-mono">{devIps.locals[0]}</span>}
+                                    </div>
+                                  </div>
+                                  <Eye className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      {d.observaciones && <div className="bg-arandu-dark rounded-lg p-3 border border-white/5"><p className="text-slate-500 text-xs mb-1">Observaciones</p><p className="text-slate-300 text-sm">{d.observaciones}</p></div>}
+                    </>
+                  )}
+
+                  <p className="text-slate-600 text-xs text-right">Creado: {formatDate(d.created_at)}</p>
+                </div>
+              </motion.div>
+            </motion.div>
+          );
+        })()}
+      </AnimatePresence>
+
+      {/* ===== FORM MODAL ===== */}
+      <AnimatePresence>
+        {showForm && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/80 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto" onClick={(e) => e.target === e.currentTarget && setShowForm(false)}>
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-3xl my-4">
+              <div className="sticky top-0 bg-arandu-dark-light/95 backdrop-blur-sm border-b border-white/10 p-3 sm:p-4 flex justify-between items-center z-10">
+                <h2 className="font-heading text-base sm:text-lg font-bold text-white">{editingActivo ? "Editar Activo" : "Nuevo Activo"}</h2>
+                <div className="flex gap-2">
+                  <Button onClick={saveActivo} disabled={saving} className="bg-cyan-600 hover:bg-cyan-700 text-white text-xs sm:text-sm" data-testid="save-activo-btn"><Save className="w-4 h-4 mr-1" /> {saving ? "..." : "Guardar"}</Button>
+                  <Button onClick={() => setShowForm(false)} variant="ghost" className="text-slate-400"><X className="w-4 h-4" /></Button>
+                </div>
+              </div>
+              <div className="p-3 sm:p-4 space-y-4 max-h-[75vh] overflow-y-auto">
+                {/* Basic: Empresa + Categoria + Subtipo */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="sm:col-span-2">
+                    <label className="text-slate-400 text-xs mb-1 block">Empresa *</label>
+                    <select value={formData.empresa_id} onChange={(e) => setFormData({...formData, empresa_id: e.target.value})} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm" data-testid="form-empresa">
+                      <option value="">Seleccionar empresa...</option>
+                      {empresas.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs mb-1 block">Categoria *</label>
+                    <select value={formData.categoria} onChange={(e) => setFormData({...formData, categoria: e.target.value, subtipo: "", campos_personalizados: {}})} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm" data-testid="form-categoria">
+                      <option value="">Seleccionar...</option>
+                      {categorias.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs mb-1 block">Subtipo</label>
+                    <select value={formData.subtipo} onChange={(e) => {
+                      const newSubtipo = e.target.value;
+                      setFormData(f => ({...f, subtipo: newSubtipo, campos_personalizados: isCuenta(f.categoria) ? {} : f.campos_personalizados }));
+                    }} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm" data-testid="form-subtipo">
+                      <option value="">Seleccionar...</option>
+                      {selectedCatSubtipos.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Nombre + Descripcion */}
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Nombre *</label>
+                  <Input value={formData.nombre} onChange={(e) => setFormData({...formData, nombre: e.target.value})} onKeyDown={(e) => e.key === "Enter" && saveActivo()} className="bg-arandu-dark border-white/10 text-white" placeholder={isCuenta(formData.categoria) ? "Ej: AnyDesk - Recepcion" : "Nombre del equipo..."} data-testid="form-nombre" />
+                </div>
+
+                {/* ====== CAMPOS PARA CUENTAS DE ACCESO ====== */}
+                {isCuenta(formData.categoria) && formData.subtipo && CAMPOS_CUENTA[formData.subtipo] && (
+                  <div className="border border-amber-500/20 rounded-lg p-3 sm:p-4 bg-amber-500/5">
+                    <label className="text-amber-400 text-xs font-semibold mb-3 block flex items-center gap-1">
+                      <Key className="w-3.5 h-3.5" /> Datos de {formData.subtipo}
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {CAMPOS_CUENTA[formData.subtipo].map(campo => (
+                        <div key={campo.key}>
+                          <label className="text-slate-400 text-xs mb-1 block">{campo.label}</label>
+                          <div className="relative">
+                            <Input
+                              type={campo.isPassword && !showFieldPasswords[campo.key] ? "password" : "text"}
+                              value={formData.campos_personalizados[campo.key] || ""}
+                              onChange={(e) => updateCampo(campo.key, e.target.value)}
+                              className="bg-arandu-dark border-white/10 text-white pr-8"
+                              placeholder={campo.placeholder}
+                              data-testid={`campo-${campo.key}`}
+                            />
+                            {campo.isPassword && (
+                              <button type="button" onClick={() => setShowFieldPasswords(p => ({...p, [campo.key]: !p[campo.key]}))}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-amber-400">
+                                {showFieldPasswords[campo.key] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ====== ASIGNAR A DISPOSITIVOS (solo para cuentas) ====== */}
+                {isCuenta(formData.categoria) && formData.empresa_id && (
+                  <div className="border border-purple-500/20 rounded-lg p-3 sm:p-4 bg-purple-500/5">
+                    <label className="text-purple-400 text-xs font-semibold mb-2 block flex items-center gap-1">
+                      <Link2 className="w-3.5 h-3.5" /> Asignar a Dispositivos/Servidores
+                    </label>
+                    {devicesForAssignment.length === 0 ? (
+                      <p className="text-slate-500 text-xs">No hay dispositivos/servidores en esta empresa</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto">
+                        {devicesForAssignment.map(dev => (
+                          <button key={dev.id} type="button" onClick={() => toggleActivoAsignado(dev.id)}
+                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                              formData.activos_asignados.includes(dev.id)
+                                ? "bg-purple-500/20 text-purple-300 border border-purple-500/40"
+                                : "bg-arandu-dark text-slate-400 border border-white/5 hover:border-white/20"
+                            }`} data-testid={`assign-dev-${dev.id}`}>
+                            {formData.activos_asignados.includes(dev.id) && <Check className="w-3 h-3" />}
+                            <Monitor className="w-3 h-3" />
+                            {dev.nombre}
+                            <span className="text-slate-600">({dev.subtipo || dev.categoria})</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ====== CAMPOS PARA DISPOSITIVOS/SERVIDORES/DOMINIOS ====== */}
+                {!isCuenta(formData.categoria) && (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div><label className="text-slate-400 text-xs mb-1 block">Descripcion</label>
+                        <textarea value={formData.descripcion} onChange={(e) => setFormData({...formData, descripcion: e.target.value})} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm min-h-[50px]" placeholder="Descripcion..." data-testid="form-desc" />
+                      </div>
+                      <div className="space-y-3">
+                        <div><label className="text-slate-400 text-xs mb-1 block">Ubicacion</label><Input value={formData.ubicacion} onChange={(e) => setFormData({...formData, ubicacion: e.target.value})} className="bg-arandu-dark border-white/10 text-white" placeholder="Rack 1..." /></div>
+                        <div>
+                          <label className="text-slate-400 text-xs mb-1 block">Estado</label>
+                          <select value={formData.estado} onChange={(e) => setFormData({...formData, estado: e.target.value})} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm"><option value="activo">Activo</option><option value="inactivo">Inactivo</option><option value="mantenimiento">Mantenimiento</option></select>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Multi IP Local */}
+                    <div className="border border-white/5 rounded-lg p-3">
+                      <label className="text-cyan-400 text-xs font-semibold mb-2 block">IPs Locales</label>
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        {formData.ips_locales.map((ip, i) => (
+                          <span key={i} className="flex items-center gap-1 bg-arandu-dark text-white text-xs px-2 py-1 rounded border border-white/10">
+                            {ip} <button onClick={() => removeIp("local", i)} className="text-red-400 hover:text-red-300"><X className="w-3 h-3" /></button>
+                          </span>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
+                        <Input value={newIpLocal} onChange={(e) => setNewIpLocal(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addIp("local"))} className="bg-arandu-dark border-white/10 text-white flex-1" placeholder="192.168.1.x" data-testid="form-ip-local" />
+                        <Button type="button" onClick={() => addIp("local")} className="bg-cyan-600/50 hover:bg-cyan-600 text-white text-xs"><Plus className="w-3 h-3" /></Button>
+                      </div>
+                    </div>
+
+                    {/* Multi IP Publica */}
+                    <div className="border border-white/5 rounded-lg p-3">
+                      <label className="text-cyan-400 text-xs font-semibold mb-2 block">IPs Publicas</label>
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        {formData.ips_publicas.map((ip, i) => (
+                          <span key={i} className="flex items-center gap-1 bg-arandu-dark text-white text-xs px-2 py-1 rounded border border-white/10">
+                            {ip} <button onClick={() => removeIp("publica", i)} className="text-red-400 hover:text-red-300"><X className="w-3 h-3" /></button>
+                          </span>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
+                        <Input value={newIpPublica} onChange={(e) => setNewIpPublica(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addIp("publica"))} className="bg-arandu-dark border-white/10 text-white flex-1" placeholder="200.x.x.x" data-testid="form-ip-publica" />
+                        <Button type="button" onClick={() => addIp("publica")} className="bg-cyan-600/50 hover:bg-cyan-600 text-white text-xs"><Plus className="w-3 h-3" /></Button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div><label className="text-slate-400 text-xs mb-1 block">Dominio</label><Input value={formData.dominio} onChange={(e) => setFormData({...formData, dominio: e.target.value})} className="bg-arandu-dark border-white/10 text-white" placeholder="ejemplo.com" /></div>
+                      <div><label className="text-slate-400 text-xs mb-1 block">Version</label><Input value={formData.version} onChange={(e) => setFormData({...formData, version: e.target.value})} className="bg-arandu-dark border-white/10 text-white" placeholder="v6.49..." /></div>
+                      <div><label className="text-slate-400 text-xs mb-1 block">Puerto Local</label><Input value={formData.puerto_local} onChange={(e) => setFormData({...formData, puerto_local: e.target.value})} className="bg-arandu-dark border-white/10 text-white" placeholder="8080" /></div>
+                      <div><label className="text-slate-400 text-xs mb-1 block">Puerto Externo</label><Input value={formData.puerto_externo} onChange={(e) => setFormData({...formData, puerto_externo: e.target.value})} className="bg-arandu-dark border-white/10 text-white" placeholder="443" /></div>
+                    </div>
+                  </>
+                )}
+
+                {/* Observaciones + Estado (shared) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {isCuenta(formData.categoria) && (
+                    <div>
+                      <label className="text-slate-400 text-xs mb-1 block">Estado</label>
+                      <select value={formData.estado} onChange={(e) => setFormData({...formData, estado: e.target.value})} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm"><option value="activo">Activo</option><option value="inactivo">Inactivo</option><option value="mantenimiento">Mantenimiento</option></select>
+                    </div>
+                  )}
+                  <div className={isCuenta(formData.categoria) ? "" : "sm:col-span-2"}>
+                    <label className="text-slate-400 text-xs mb-1 block">Observaciones</label>
+                    <textarea value={formData.observaciones} onChange={(e) => setFormData({...formData, observaciones: e.target.value})} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm min-h-[50px]" placeholder="Notas..." />
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ===== CREDENCIALES MODAL ===== */}
+      <AnimatePresence>
+        {showCredenciales && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/80 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto" onClick={(e) => e.target === e.currentTarget && setShowCredenciales(null)}>
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-3xl my-4">
+              <div className="sticky top-0 bg-arandu-dark-light/95 backdrop-blur-sm border-b border-white/10 p-3 sm:p-4 flex justify-between items-center z-10">
+                <div className="min-w-0">
+                  <h2 className="font-heading text-base sm:text-lg font-bold text-white flex items-center gap-2"><Key className="w-5 h-5 text-amber-400" /> Credenciales</h2>
+                  <p className="text-slate-400 text-xs sm:text-sm truncate">{showCredenciales.nombre}</p>
+                </div>
+                <div className="flex gap-2 flex-shrink-0">
+                  <Button onClick={() => setCredForm({ tipo_acceso: "", usuario: "", password: "", url_acceso: "", observaciones: "", dispositivos_asignados: [] })} className="bg-amber-600 hover:bg-amber-700 text-white text-xs sm:text-sm" data-testid="add-cred-btn"><Plus className="w-4 h-4 mr-1" /> <span className="hidden sm:inline">Nueva</span></Button>
+                  <Button onClick={() => setShowCredenciales(null)} variant="ghost" className="text-slate-400"><X className="w-4 h-4" /></Button>
+                </div>
+              </div>
+              <div className="p-3 sm:p-4 space-y-3 max-h-[70vh] overflow-y-auto">
+                {credenciales.length === 0 && !credForm && (
+                  <div className="text-center py-8"><Lock className="w-10 h-10 text-slate-600 mx-auto mb-3" /><p className="text-slate-400">Sin credenciales</p></div>
+                )}
+                {credForm && (
+                  <div className="bg-arandu-dark border border-amber-500/20 rounded-lg p-3 sm:p-4 space-y-3">
+                    <h3 className="text-amber-400 font-semibold text-sm">{credForm.id ? "Editar" : "Nueva"} Credencial</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-slate-400 text-xs mb-1 block">Tipo de Acceso</label>
+                        <select value={credForm.tipo_acceso} onChange={(e) => setCredForm({...credForm, tipo_acceso: e.target.value})} className="w-full bg-arandu-dark-light border border-white/10 text-white rounded-lg px-3 py-2 text-sm" data-testid="cred-tipo">
+                          <option value="">Seleccionar...</option>
+                          <option value="SSH">SSH</option><option value="RDP">RDP</option><option value="Winbox">Winbox</option>
+                          <option value="Panel Web">Panel Web</option><option value="FTP">FTP</option><option value="VPN">VPN</option>
+                          <option value="WiFi">WiFi</option><option value="Base de Datos">Base de Datos</option>
+                          <option value="NID">NID</option><option value="Otro">Otro</option>
+                        </select>
+                      </div>
+                      <div><label className="text-slate-400 text-xs mb-1 block">Usuario / ID</label><Input value={credForm.usuario} onChange={(e) => setCredForm({...credForm, usuario: e.target.value})} className="bg-arandu-dark-light border-white/10 text-white" data-testid="cred-user" /></div>
+                      <div><label className="text-slate-400 text-xs mb-1 block">Contrasena</label><Input value={credForm.password} onChange={(e) => setCredForm({...credForm, password: e.target.value})} className="bg-arandu-dark-light border-white/10 text-white" data-testid="cred-pass" /></div>
+                      <div><label className="text-slate-400 text-xs mb-1 block">URL de Acceso</label><Input value={credForm.url_acceso} onChange={(e) => setCredForm({...credForm, url_acceso: e.target.value})} className="bg-arandu-dark-light border-white/10 text-white" data-testid="cred-url" /></div>
+                      <div className="sm:col-span-2"><label className="text-slate-400 text-xs mb-1 block">Observaciones</label><Input value={credForm.observaciones} onChange={(e) => setCredForm({...credForm, observaciones: e.target.value})} className="bg-arandu-dark-light border-white/10 text-white" /></div>
+                      <div className="sm:col-span-2">
+                        <label className="text-slate-400 text-xs mb-1 block">Asignar a dispositivos</label>
+                        <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto bg-arandu-dark-light border border-white/5 rounded-lg p-2">
+                          {activos.filter(a => a.empresa_id === showCredenciales.empresa_id && !isCuenta(a.categoria)).map(a => (
+                            <button key={a.id} type="button"
+                              onClick={() => setCredForm(f => ({ ...f, dispositivos_asignados: f.dispositivos_asignados?.includes(a.id) ? f.dispositivos_asignados.filter(d => d !== a.id) : [...(f.dispositivos_asignados || []), a.id] }))}
+                              className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-all ${(credForm.dispositivos_asignados || []).includes(a.id) ? "bg-amber-500/20 text-amber-400 border border-amber-500/30" : "bg-arandu-dark text-slate-400 border border-white/5"}`}>
+                              {(credForm.dispositivos_asignados || []).includes(a.id) && <Check className="w-3 h-3" />} {a.nombre}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 justify-end">
+                      <Button onClick={() => setCredForm(null)} variant="ghost" className="text-slate-400 text-sm">Cancelar</Button>
+                      <Button onClick={saveCredencial} disabled={saving} className="bg-amber-600 hover:bg-amber-700 text-white text-sm" data-testid="save-cred-btn"><Save className="w-4 h-4 mr-1" /> Guardar</Button>
+                    </div>
+                  </div>
+                )}
+                {credenciales.map((cred, idx) => (
+                  <div key={cred.id} className="bg-arandu-dark border border-white/5 rounded-lg p-3 sm:p-4 hover:border-amber-500/20 transition-all" data-testid={`cred-item-${idx}`}>
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex items-center gap-2 flex-wrap min-w-0">
+                        <span className="text-amber-400 font-semibold text-xs sm:text-sm bg-amber-500/10 px-2 py-0.5 rounded">{cred.tipo_acceso || "Acceso"}</span>
+                        {cred.url_acceso && <a href={cred.url_acceso} target="_blank" rel="noreferrer" className="text-cyan-400 text-xs hover:underline truncate max-w-[150px]">{cred.url_acceso}</a>}
+                      </div>
+                      <div className="flex gap-1 flex-shrink-0">
+                        <button onClick={() => setCredForm({...cred})} className="p-1 text-slate-400 hover:text-amber-400"><Edit className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => deleteCredencial(cred.id)} className="p-1 text-slate-400 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
+                      <div>
+                        <p className="text-slate-500 text-xs mb-0.5">Usuario / ID</p>
+                        <div className="flex items-center gap-2"><p className="text-white text-sm font-mono truncate">{cred.usuario}</p><button onClick={() => copyToClipboard(cred.usuario)} className="text-slate-500 hover:text-cyan-400 flex-shrink-0"><Copy className="w-3 h-3" /></button></div>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 text-xs mb-0.5">Contrasena</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-white text-sm font-mono truncate">{showPasswords[cred.id] ? cred.password : "********"}</p>
+                          <button onClick={() => setShowPasswords(p => ({...p, [cred.id]: !p[cred.id]}))} className="text-slate-500 hover:text-amber-400 flex-shrink-0" data-testid={`toggle-pass-${idx}`}>{showPasswords[cred.id] ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}</button>
+                          <button onClick={() => copyToClipboard(cred.password)} className="text-slate-500 hover:text-cyan-400 flex-shrink-0"><Copy className="w-3 h-3" /></button>
+                        </div>
+                      </div>
+                    </div>
+                    {(cred.dispositivos_asignados || []).length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        <span className="text-slate-500 text-xs">Dispositivos:</span>
+                        {cred.dispositivos_asignados.map(did => (
+                          <span key={did} className="text-xs bg-slate-700/50 text-slate-300 px-1.5 py-0.5 rounded">{activos.find(a => a.id === did)?.nombre || did}</span>
+                        ))}
+                      </div>
+                    )}
+                    {cred.observaciones && <p className="text-slate-500 text-xs mt-2 italic">{cred.observaciones}</p>}
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ===== HISTORIAL MODAL ===== */}
+      <AnimatePresence>
+        {showHistorial && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/80 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto" onClick={(e) => e.target === e.currentTarget && setShowHistorial(null)}>
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-lg my-4 max-h-[85vh] overflow-y-auto">
+              <div className="sticky top-0 bg-arandu-dark-light/95 backdrop-blur-sm border-b border-white/10 p-3 sm:p-4 flex justify-between items-center z-10">
+                <h2 className="font-heading text-base sm:text-lg font-bold text-white flex items-center gap-2"><History className="w-5 h-5 text-purple-400" /> Historial</h2>
+                <Button onClick={() => setShowHistorial(null)} variant="ghost" className="text-slate-400"><X className="w-4 h-4" /></Button>
+              </div>
+              <div className="p-3 sm:p-4 space-y-2">
+                {historial.length === 0 ? <p className="text-slate-400 text-center py-6">Sin historial</p> : historial.map((h, idx) => (
+                  <div key={h.id || idx} className="flex items-start gap-3 p-3 bg-arandu-dark rounded-lg border border-white/5">
+                    <div className="w-8 h-8 rounded-full bg-purple-500/10 flex items-center justify-center shrink-0"><Clock className="w-4 h-4 text-purple-400" /></div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5 flex-wrap"><span className="text-white text-sm font-medium">{h.usuario_nombre}</span><span className="text-purple-400 text-xs bg-purple-500/10 px-1.5 py-0.5 rounded">{h.accion}</span></div>
+                      {h.detalle && <p className="text-slate-400 text-xs">{h.detalle}</p>}
+                      <p className="text-slate-600 text-xs mt-1">{formatDate(h.fecha)}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ===== CATEGORIAS MODAL ===== */}
+      <AnimatePresence>
+        {showCategorias && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/80 z-50 flex items-start sm:items-center justify-center p-2 sm:p-4 overflow-y-auto" onClick={(e) => e.target === e.currentTarget && setShowCategorias(false)}>
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-lg my-4 max-h-[85vh] overflow-y-auto">
+              <div className="sticky top-0 bg-arandu-dark-light/95 backdrop-blur-sm border-b border-white/10 p-3 sm:p-4 flex justify-between items-center z-10">
+                <h2 className="font-heading text-base sm:text-lg font-bold text-white flex items-center gap-2"><Settings className="w-5 h-5 text-purple-400" /> Categorias</h2>
+                <Button onClick={() => setShowCategorias(false)} variant="ghost" className="text-slate-400"><X className="w-4 h-4" /></Button>
+              </div>
+              <div className="p-3 sm:p-4">
+                <div className="bg-arandu-dark border border-white/10 rounded-lg p-3 mb-4">
+                  <p className="text-slate-400 text-xs mb-2 font-semibold">Nueva Categoria</p>
+                  <div className="flex gap-2">
+                    <Input value={catForm.nombre} onChange={(e) => setCatForm({...catForm, nombre: e.target.value})} className="bg-arandu-dark-light border-white/10 text-white flex-1" placeholder="Nombre" data-testid="cat-name" />
+                    <Button onClick={saveCat} disabled={saving} className="bg-purple-600 hover:bg-purple-700 text-white" data-testid="save-cat-btn"><Plus className="w-4 h-4" /></Button>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  {categorias.map(cat => (
+                    <div key={cat.id} className="bg-arandu-dark border border-white/5 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-white font-medium text-sm">{cat.nombre}</p>
+                        <button onClick={() => deleteCat(cat.id)} className="p-1 text-slate-500 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        {(cat.subtipos || []).map((sub, si) => (
+                          <span key={si} className="flex items-center gap-1 bg-arandu-dark-light text-slate-300 text-xs px-2 py-0.5 rounded border border-white/5">
+                            {sub}
+                            <button onClick={() => removeSubtipo(cat, si)} className="text-red-500/50 hover:text-red-400"><X className="w-2.5 h-2.5" /></button>
+                          </span>
+                        ))}
+                      </div>
+                      <div className="flex gap-1">
+                        <Input value={editingCat?.id === cat.id ? newSubtipo : ""} onChange={(e) => { setEditingCat(cat); setNewSubtipo(e.target.value); }}
+                          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSubtipoToCat(cat); } }}
+                          className="bg-arandu-dark-light border-white/10 text-white flex-1 h-7 text-xs" placeholder="Nuevo subtipo + Enter" />
+                        <Button type="button" onClick={() => addSubtipoToCat(cat)} className="bg-purple-600/50 hover:bg-purple-600 text-white h-7 text-xs px-2"><Plus className="w-3 h-3" /></Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+export default InventarioPage;
+

@@ -1,0 +1,159 @@
+from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, timezone
+import uuid
+from typing import List, Optional
+
+from config import db
+from auth import require_admin, require_authenticated, has_permission, can_access_empresa, log_auditoria
+from models.schemas import PresupuestoCreate, PresupuestoResponse, CostosReales
+
+router = APIRouter()
+
+
+async def get_next_presupuesto_number():
+    year = datetime.now().year
+    count = await db.presupuestos.count_documents({"numero": {"$regex": f"^P{year}"}})
+    return f"P{year}-{str(count + 1).zfill(4)}"
+
+@router.post("/admin/presupuestos", response_model=PresupuestoResponse)
+async def create_presupuesto(data: PresupuestoCreate, user: dict = Depends(require_authenticated)):
+    if not has_permission(user, "presupuestos.crear"):
+        raise HTTPException(status_code=403, detail="No tiene permiso para crear presupuestos")
+    if not can_access_empresa(user, data.empresa_id):
+        raise HTTPException(status_code=403, detail="No tiene acceso a esta empresa")
+    empresa = await db.empresas.find_one({"id": data.empresa_id}, {"_id": 0})
+    if not empresa:
+        raise HTTPException(status_code=404, detail="Empresa no encontrada")
+    presupuesto_id = str(uuid.uuid4())
+    numero = data.numero or await get_next_presupuesto_number()
+    fecha = data.fecha or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    presupuesto_doc = {
+        "id": presupuesto_id, "empresa_id": data.empresa_id, "logo_tipo": data.logo_tipo,
+        "moneda": data.moneda, "numero": numero, "fecha": fecha,
+        "validez_dias": data.validez_dias, "items": [item.dict() for item in data.items],
+        "observaciones": data.observaciones,
+        "condiciones": data.condiciones or f"- Precios expresados en Guaranies (IVA incluido).\n- Validez de la oferta: {data.validez_dias} dias.\n- Forma de pago: A convenir.\n- Tiempo de entrega: A confirmar segun stock.",
+        "subtotal": data.subtotal, "iva": data.iva, "total": data.total,
+        "estado": "borrador", "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.presupuestos.insert_one(presupuesto_doc)
+    await log_auditoria(user, "presupuestos", "crear", f"Presupuesto {numero} creado para {empresa['nombre']}", presupuesto_id)
+    response = {**{k: v for k, v in presupuesto_doc.items() if k != "_id"}, "empresa_nombre": empresa["nombre"]}
+    return response
+
+@router.get("/admin/presupuestos", response_model=List[PresupuestoResponse])
+async def get_presupuestos(empresa_id: Optional[str] = None, estado: Optional[str] = None, user: dict = Depends(require_authenticated)):
+    if not has_permission(user, "presupuestos.ver"):
+        raise HTTPException(status_code=403, detail="No tiene permiso para ver presupuestos")
+    query = {}
+    if empresa_id:
+        if not can_access_empresa(user, empresa_id):
+            return []
+        query["empresa_id"] = empresa_id
+    elif user.get("role") != "admin" and user.get("empresas_asignadas"):
+        query["empresa_id"] = {"$in": user["empresas_asignadas"]}
+    elif user.get("role") != "admin" and not user.get("empresas_asignadas"):
+        return []
+    if estado:
+        query["estado"] = estado
+    presupuestos = await db.presupuestos.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    empresa_ids = list(set(p["empresa_id"] for p in presupuestos))
+    empresas_list = await db.empresas.find({"id": {"$in": empresa_ids}}, {"_id": 0, "id": 1, "nombre": 1}).to_list(500)
+    empresa_map = {e["id"]: e["nombre"] for e in empresas_list}
+    for p in presupuestos:
+        p["empresa_nombre"] = empresa_map.get(p["empresa_id"], "Desconocida")
+    return presupuestos
+
+@router.get("/admin/presupuestos/{presupuesto_id}", response_model=PresupuestoResponse)
+async def get_presupuesto(presupuesto_id: str, user: dict = Depends(require_authenticated)):
+    if not has_permission(user, "presupuestos.ver"):
+        raise HTTPException(status_code=403, detail="No tiene permiso")
+    presupuesto = await db.presupuestos.find_one({"id": presupuesto_id}, {"_id": 0})
+    if not presupuesto:
+        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    if not can_access_empresa(user, presupuesto["empresa_id"]):
+        raise HTTPException(status_code=403, detail="No tiene acceso a esta empresa")
+    empresa = await db.empresas.find_one({"id": presupuesto["empresa_id"]}, {"_id": 0})
+    presupuesto["empresa_nombre"] = empresa["nombre"] if empresa else "Desconocida"
+    return presupuesto
+
+@router.put("/admin/presupuestos/{presupuesto_id}/estado")
+async def update_presupuesto_estado(presupuesto_id: str, estado: str, user: dict = Depends(require_authenticated)):
+    if not has_permission(user, "presupuestos.editar"):
+        raise HTTPException(status_code=403, detail="No tiene permiso para editar presupuestos")
+    valid_estados = ["borrador", "enviado", "aprobado", "rechazado", "facturado", "cobrado"]
+    if estado not in valid_estados:
+        raise HTTPException(status_code=400, detail=f"Estado invalido. Use: {valid_estados}")
+    update_fields = {"estado": estado}
+    if estado == "facturado":
+        update_fields["fecha_facturado"] = datetime.now(timezone.utc).isoformat()
+        presupuesto = await db.presupuestos.find_one({"id": presupuesto_id}, {"_id": 0})
+        if presupuesto and not presupuesto.get("costos_reales"):
+            items = presupuesto.get("items", [])
+            costos_items = []
+            total_costos = 0
+            for item in items:
+                costo_total = item["costo"] * item["cantidad"]
+                total_costos += costo_total
+                costos_items.append({
+                    "descripcion": item["descripcion"], "cantidad": item["cantidad"],
+                    "costo_estimado": item["costo"], "costo_real": item["costo"],
+                    "observacion": item.get("observacion", "")
+                })
+            total_facturado = presupuesto.get("total", 0)
+            update_fields["costos_reales"] = {
+                "items": costos_items, "total_costos": total_costos,
+                "total_facturado": total_facturado, "ganancia": total_facturado - total_costos
+            }
+    elif estado == "cobrado":
+        update_fields["fecha_cobrado"] = datetime.now(timezone.utc).isoformat()
+    result = await db.presupuestos.update_one({"id": presupuesto_id}, {"$set": update_fields})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    await log_auditoria(user, "presupuestos", "cambiar_estado", f"Estado cambiado a {estado}", presupuesto_id)
+    return {"success": True}
+
+@router.put("/admin/presupuestos/{presupuesto_id}/costos")
+async def update_costos_reales(presupuesto_id: str, data: CostosReales, user: dict = Depends(require_authenticated)):
+    if not has_permission(user, "costos.editar"):
+        raise HTTPException(status_code=403, detail="No tiene permiso para editar costos")
+    presupuesto = await db.presupuestos.find_one({"id": presupuesto_id}, {"_id": 0})
+    if not presupuesto:
+        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    await db.presupuestos.update_one({"id": presupuesto_id}, {"$set": {"costos_reales": data.dict()}})
+    await log_auditoria(user, "presupuestos", "actualizar_costos", f"Costos actualizados para {presupuesto.get('numero', presupuesto_id)}", presupuesto_id)
+    return {"success": True}
+
+@router.put("/admin/presupuestos/{presupuesto_id}", response_model=PresupuestoResponse)
+async def update_presupuesto(presupuesto_id: str, data: PresupuestoCreate, user: dict = Depends(require_authenticated)):
+    if not has_permission(user, "presupuestos.editar"):
+        raise HTTPException(status_code=403, detail="No tiene permiso para editar presupuestos")
+    if not can_access_empresa(user, data.empresa_id):
+        raise HTTPException(status_code=403, detail="No tiene acceso a esta empresa")
+    empresa = await db.empresas.find_one({"id": data.empresa_id}, {"_id": 0})
+    if not empresa:
+        raise HTTPException(status_code=404, detail="Empresa no encontrada")
+    existing = await db.presupuestos.find_one({"id": presupuesto_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    await db.presupuestos.update_one(
+        {"id": presupuesto_id},
+        {"$set": {
+            "empresa_id": data.empresa_id, "logo_tipo": data.logo_tipo, "moneda": data.moneda,
+            "fecha": data.fecha or existing["fecha"], "validez_dias": data.validez_dias,
+            "items": [item.dict() for item in data.items], "observaciones": data.observaciones,
+            "condiciones": data.condiciones, "subtotal": data.subtotal, "iva": data.iva, "total": data.total
+        }}
+    )
+    updated = await db.presupuestos.find_one({"id": presupuesto_id}, {"_id": 0})
+    updated["empresa_nombre"] = empresa["nombre"]
+    return updated
+
+@router.delete("/admin/presupuestos/{presupuesto_id}")
+async def delete_presupuesto(presupuesto_id: str, user: dict = Depends(require_authenticated)):
+    if not has_permission(user, "presupuestos.eliminar"):
+        raise HTTPException(status_code=403, detail="No tiene permiso para eliminar presupuestos")
+    result = await db.presupuestos.delete_one({"id": presupuesto_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    return {"success": True}

@@ -1,0 +1,23 @@
+INSTRUCCIONES DE DEPLOY
+========================
+
+1. BACKEND — reemplazar archivo:
+   backend/routes/cuentas_bancarias.py  ←  cuentas_bancarias.py
+
+2. FRONTEND — reemplazar archivo:
+   frontend/src/pages/BancosPage.jsx    ←  BancosPage.jsx
+   frontend/src/pages/BalancePage.jsx   ←  BalancePage.jsx
+
+3. MIGRACIÓN (UNA SOLA VEZ) — ejecutar desde backend/:
+   python migrate_cuenta_id.py
+
+   Asigna cuenta_id predeterminada a todos los movimientos históricos
+   que no tienen cuenta asignada (facturas, compras, ingresos_varios,
+   pagos_costos_fijos, pagos_proveedores).
+   Se puede ejecutar múltiples veces sin problema (es idempotente).
+
+CAMBIOS PRINCIPALES:
+- Saldo total PYG/USD en BancosPage ahora viene del mismo cálculo que BalancePage (no se duplica)
+- PUT cuentas-bancarias guarda correctamente saldo_inicial, notas, etc.
+- DELETE no borra físicamente (soft-delete, marca activa=False)
+- BalancePage usa /saldos endpoint para el breakdown por cuenta
