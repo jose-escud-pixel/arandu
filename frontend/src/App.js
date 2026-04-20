@@ -6,7 +6,6 @@ import LandingPage from "./pages/LandingPage";
 import LoginPage from "./pages/LoginPage";
 import AdminDashboard from "./pages/AdminDashboard";
 import EmpresasPage from "./pages/EmpresasPage";
-import PresupuestosPage from "./pages/PresupuestosPage";
 import EstadisticasPage from "./pages/EstadisticasPage";
 import UsuariosPage from "./pages/UsuariosPage";
 import PerfilPage from "./pages/PerfilPage";
@@ -286,7 +285,7 @@ function App() {
               <ProtectedRoute requiredPermission="empresas.ver"><EmpresasPage /></ProtectedRoute>
             } />
             <Route path="/admin/presupuestos" element={
-              <ProtectedRoute requiredPermission="presupuestos.ver"><PresupuestosPage /></ProtectedRoute>
+              <ProtectedRoute requiredPermission="presupuestos.ver"><VentasPage /></ProtectedRoute>
             } />
             <Route path="/admin/estadisticas" element={
               <ProtectedRoute requiredPermission="estadisticas.ver"><EstadisticasPage /></ProtectedRoute>

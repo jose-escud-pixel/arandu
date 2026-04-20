@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AuthContext } from "../App";
 import { toast } from "sonner";
 import {
@@ -147,7 +147,11 @@ const TABS = [
 export default function VentasPage() {
   const { token, user, hasPermission, empresasPropias, activeEmpresaPropia } = useContext(AuthContext);
   const navigate = useNavigate();
-  const [tab, setTab] = useState("presupuestos");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => {
+    const t = searchParams.get("tab");
+    return t && ["presupuestos", "facturas", "contratos", "ingresos", "recibos"].includes(t) ? t : "presupuestos";
+  });
   // Filtro temporal: "todos" | "mes" | "anio"
   const [filtroTipo, setFiltroTipo] = useState("todos");
   const [mes, setMes] = useState(getMesActual());
@@ -356,6 +360,24 @@ export default function VentasPage() {
   };
 
   useEffect(() => { fetchAll(); }, [mes, filtroTipo, activeEmpresaPropia]); // eslint-disable-line
+
+  // ── Al entrar con ?empresa=<id> desde Clientes, pre-llenar el buscador chip ──
+  // (ruta vieja era /admin/presupuestos?empresa=X; ahora es /admin/ventas?tab=presupuestos&empresa=X
+  //  y también /admin/presupuestos?empresa=X sigue funcionando porque apunta a este mismo componente)
+  useEffect(() => {
+    const empresaId = searchParams.get("empresa");
+    if (!empresaId || empresas.length === 0) return;
+    const emp = empresas.find(e => e.id === empresaId);
+    if (!emp) return;
+    // Colocar el nombre del cliente como chip de búsqueda si no está ya
+    setPresChips(prev => (prev.includes(emp.nombre) ? prev : [...prev, emp.nombre]));
+    setTab("presupuestos");
+    // Limpiar el param para que recargas manuales no lo vuelvan a poner dos veces
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("empresa");
+    setSearchParams(nextParams, { replace: true });
+    // eslint-disable-next-line
+  }, [empresas]);
 
   // ── Cambiar estado de presupuesto/factura inline ──
   const PRESUP_ESTADOS = ["aprobado", "rechazado"];
@@ -733,9 +755,9 @@ export default function VentasPage() {
       {/* Header */}
       <div className="border-b border-white/10 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <button onClick={() => navigate(-1)} className="text-slate-400 hover:text-white transition-colors" data-testid="back-btn" title="Volver">
+          <Link to="/admin" className="text-slate-400 hover:text-white transition-colors" data-testid="back-btn" title="Volver al Dashboard">
             <ArrowLeft className="w-5 h-5" />
-          </button>
+          </Link>
           <div>
             <h1 className="font-heading text-2xl text-white flex items-center gap-2">
               <BarChart3 className="w-6 h-6 text-emerald-400" />
@@ -1528,10 +1550,10 @@ export default function VentasPage() {
         <PresupuestoDocModal
           presupuesto={presDoc}
           onClose={() => setPresDoc(null)}
-          onEdit={() => { setPresDoc(null); navigate(`/admin/presupuestos?edit=${presDoc.id}`); }}
+          onEdit={() => { setPresDoc(null); setPresFormItem({ presupuesto: presDoc, mode: "edit" }); }}
           onDelete={() => deletePresupuesto(presDoc.id)}
           onDuplicate={() => duplicatePresupuesto(presDoc)}
-          onCostos={() => { setPresDoc(null); navigate(`/admin/presupuestos?costos=${presDoc.id}`); }}
+          onCostos={() => { setPresDoc(null); setPresCostosItem(presDoc); }}
           onEstadoChange={(nuevo) => { cambiarEstadoPresupuesto(presDoc.id, nuevo); setPresDoc(p => ({ ...p, estado: nuevo })); }}
           canEdit={hasPermission("presupuestos.editar")}
           canDelete={hasPermission("presupuestos.eliminar")}

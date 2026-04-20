@@ -12,8 +12,36 @@ router = APIRouter()
 
 async def get_next_presupuesto_number():
     year = datetime.now().year
-    count = await db.presupuestos.count_documents({"numero": {"$regex": f"^P{year}"}})
-    return f"P{year}-{str(count + 1).zfill(4)}"
+    # Busca el mayor contador ya usado este año y devuelve el siguiente disponible.
+    # Es robusto contra huecos (presupuestos eliminados) y contra duplicados históricos.
+    prefix = f"P{year}-"
+    cursor = db.presupuestos.find({"numero": {"$regex": f"^P{year}-"}}, {"numero": 1, "_id": 0})
+    max_n = 0
+    async for doc in cursor:
+        try:
+            n = int(str(doc.get("numero", "")).split("-", 1)[1])
+            if n > max_n:
+                max_n = n
+        except Exception:
+            continue
+    candidate = max_n + 1
+    # Protección extra: si por alguna razón el candidato ya existe, avanza
+    while await db.presupuestos.find_one({"numero": f"{prefix}{str(candidate).zfill(4)}"}):
+        candidate += 1
+    return f"{prefix}{str(candidate).zfill(4)}"
+
+
+async def _ensure_numero_unico(numero: str, ignore_id: str | None = None):
+    """Lanza HTTP 409 si el número ya existe en otro presupuesto."""
+    if not numero:
+        return
+    q = {"numero": numero}
+    if ignore_id:
+        q["id"] = {"$ne": ignore_id}
+    existing = await db.presupuestos.find_one(q, {"_id": 0, "id": 1})
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Ya existe un presupuesto con el número {numero}")
+
 
 @router.post("/admin/presupuestos", response_model=PresupuestoResponse)
 async def create_presupuesto(data: PresupuestoCreate, user: dict = Depends(require_authenticated)):
@@ -26,6 +54,8 @@ async def create_presupuesto(data: PresupuestoCreate, user: dict = Depends(requi
         raise HTTPException(status_code=404, detail="Empresa no encontrada")
     presupuesto_id = str(uuid.uuid4())
     numero = data.numero or await get_next_presupuesto_number()
+    # Evitar duplicados: si el usuario fuerza un número, validamos; si usamos auto, get_next ya lo garantiza
+    await _ensure_numero_unico(numero)
     fecha = data.fecha or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     moneda_text = "Dolares Americanos" if data.moneda == "USD" else "Guaranies"
     pago_text = "A credito" if (data.forma_pago or "contado") == "credito" else "Al contado"
@@ -197,6 +227,10 @@ async def update_presupuesto(presupuesto_id: str, data: PresupuestoCreate, user:
     existing = await db.presupuestos.find_one({"id": presupuesto_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    # Si cambia el número, validar que sea único
+    nuevo_numero = data.numero or existing.get("numero")
+    if nuevo_numero and nuevo_numero != existing.get("numero"):
+        await _ensure_numero_unico(nuevo_numero, ignore_id=presupuesto_id)
     await db.presupuestos.update_one(
         {"id": presupuesto_id},
         {"$set": {

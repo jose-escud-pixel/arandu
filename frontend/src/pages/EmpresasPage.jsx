@@ -292,10 +292,10 @@ const EmpresasPage = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
-          <button onClick={() => navigate(-1)} className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2" data-testid="back-btn">
+          <Link to="/admin" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2" data-testid="back-btn">
             <ArrowLeft className="w-4 h-4" />
-            Volver
-          </button>
+            Volver al Dashboard
+          </Link>
           <h1 className="font-heading text-2xl md:text-3xl font-bold text-white flex items-center gap-3">
             <Building2 className="w-8 h-8 text-arandu-blue" />
             Clientes
