@@ -977,11 +977,20 @@ const PresupuestosPage = () => {
       : buildLogoSVG(logoTipo);
 
     return `
-    <div style="background:linear-gradient(135deg,${gradFrom} 0%,${gradTo} 60%,#0f172a 100%);padding:22px 26px;margin:0;position:relative;overflow:hidden">
+    <div style="background:linear-gradient(135deg,${gradFrom} 0%,${gradTo} 60%,#0f172a 100%);padding:18px 22px 16px;margin:0;position:relative;overflow:hidden">
       <div style="position:absolute;right:-20px;top:-20px;width:130px;height:130px;border-radius:50%;background:${accentColor};opacity:0.10"></div>
       <div style="position:absolute;right:60px;bottom:-30px;width:90px;height:90px;border-radius:50%;background:${accentLight};opacity:0.07"></div>
-      <div style="display:flex;justify-content:space-between;align-items:center;position:relative;z-index:1;gap:20px">
-        <div style="display:flex;align-items:center">${logoImg}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;position:relative;z-index:1;gap:20px">
+        <!-- Izquierda: logo + datos empresa -->
+        <div>
+          <div style="display:flex;align-items:center">${logoImg}</div>
+          <div style="margin-top:10px;font-size:10px;color:#cbd5e1;line-height:1.7">
+            <div>De la Conquista 1132 c/ Isabel la Católica, Sajonia, Asunción</div>
+            <div>Tel: 021-421330 &nbsp;|&nbsp; WhatsApp: 0981 500 282</div>
+            <div>info@aranduinformatica.net</div>
+          </div>
+        </div>
+        <!-- Derecha: badge PRESUPUESTO -->
         <div style="text-align:right">
           <div style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.18);border-radius:10px;padding:12px 20px">
             <div style="font-size:11px;font-weight:700;color:${accentLight};letter-spacing:4px;text-transform:uppercase;margin-bottom:4px">PRESUPUESTO</div>
@@ -1081,21 +1090,21 @@ const PresupuestosPage = () => {
   <meta charset="UTF-8">
   <title>${printFileName || `Presupuesto ${showPreview.numero}`}</title>
   <style>
-    @page { size: A4; margin: 10mm 0; }
+    /* margin:0 en @page = sin encabezado/pie auto-generado por el navegador
+       (sin URL, sin título, sin fecha/hora, sin número de página) */
+    @page { size: A4; margin: 0; }
     * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     html, body { margin: 0; padding: 0; background: white; color: #1e293b; font-family: 'Segoe UI', Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .content { padding: 6mm 10mm 10mm; }
-    /* Fixes de corte al imprimir largos presupuestos */
+    .content { padding: 8mm 10mm 10mm; }
+    /* Fixes de corte al imprimir presupuestos largos */
     table { border-collapse: collapse; width: 100%; }
     thead { display: table-header-group; }      /* repite el encabezado de la tabla en cada página */
-    tfoot { display: table-row-group; }          /* totales no se fijan al pie; fluyen naturalmente */
+    tfoot { display: table-row-group; }          /* totales fluyen con el contenido, no se fijan al pie */
     tr, td, th { page-break-inside: avoid; break-inside: avoid; }
     .no-break { page-break-inside: avoid; break-inside: avoid; }
     @media print {
-      @page { size: A4; margin: 10mm 0; }
-      body { padding: 0; }
-      /* Ocultar cualquier header/footer del navegador si el usuario lo tiene activado */
-      .content { padding: 6mm 10mm 10mm; }
+      @page { size: A4; margin: 0; }
+      html, body { margin: 0; padding: 0; }
     }
   </style>
 </head>
@@ -1138,12 +1147,11 @@ const PresupuestosPage = () => {
     </tfoot>
   </table>
 
-  ${showPreview.observaciones ? `
-  <div class="no-break" style="margin-top:14px;font-size:11px;color:#475569;line-height:1.5">
-    <div style="background:#fefce8;padding:10px 12px;border-left:3px solid #ca8a04;border-radius:0 4px 4px 0">
-      <strong style="color:#92400e">Observaciones:</strong><br>${showPreview.observaciones.replace(/\n/g, "<br>")}
-    </div>
-  </div>` : ""}
+  <!-- Observaciones + Condiciones (bloque protegido, fluye a la siguiente página si no entra) -->
+  <div class="no-break" style="margin-top:14px;font-size:10px;color:#475569;line-height:1.6;border-top:1px solid #e2e8f0;padding-top:10px">
+    ${showPreview.observaciones ? `<div style="margin-bottom:8px;background:#fefce8;padding:8px 10px;border-left:3px solid #ca8a04;border-radius:0 4px 4px 0"><strong style="color:#92400e">Observaciones:</strong><br>${showPreview.observaciones.replace(/\n/g, "<br>")}</div>` : ""}
+    ${showPreview.condiciones ? `<div><strong style="color:#374151">Condiciones:</strong><br>${showPreview.condiciones.replace(/\n/g, "<br>")}</div>` : ""}
+  </div>
   </div>
 </body>
 </html>`;
