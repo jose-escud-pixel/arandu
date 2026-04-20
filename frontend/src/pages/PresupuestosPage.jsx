@@ -818,14 +818,10 @@ const PresupuestosPage = () => {
 
   /*
     Logo rasterizado (PNG data URL) generado vía <canvas>.
-    Motivo: los <clipPath> SVG y el recorte por texto son renderizados
-    de forma inconsistente en Chrome/Safari cuando se envía a impresión
-    (las letras tricolores a menudo se muestran como bandas sólidas
-    superpuestas, sin el recorte por texto). Un PNG se renderiza igual
-    en cualquier motor de impresión y cualquier impresora.
-    Se genera en alta resolución (scale=3) para que no pixele al imprimir.
-    Funciona para cualquier slug nuevo (empresa_propia): si no hay config
-    específica, usa un fallback genérico con el nombre de la marca.
+    Versión simplificada: texto de UN SOLO COLOR (blanco) para máxima legibilidad
+    tras imprimir y en cualquier navegador. El ícono mantiene el color de la marca.
+    Como es un PNG, se imprime idéntico en Chrome/Safari/Firefox y cualquier impresora.
+    Funciona para cualquier slug nuevo (empresa_propia) con fallback al nombre de la marca.
   */
   const buildLogoPngDataUrl = (logoTipo, brandName) => {
     try {
@@ -862,7 +858,7 @@ const PresupuestosPage = () => {
       ctx.scale(scale, scale);
       ctx.imageSmoothingEnabled = true;
 
-      // --- Ícono cuadrado redondeado con gradiente ---
+      // --- Ícono cuadrado redondeado con gradiente del color de la marca ---
       const iconX = 0, iconY = 4;
       const radius = 14;
       const grad = ctx.createLinearGradient(iconX, iconY, iconX + iconSz, iconY + iconSz);
@@ -913,37 +909,26 @@ const PresupuestosPage = () => {
         ctx.fill();
       }
 
-      // --- Texto tricolor (bandera PY) dibujado como 3 capas con clip ---
-      const PY = { r: "#cc0001", w: "#ffffff", b: "#1a47af" };
+      // --- Texto de la marca: UN SOLO COLOR BLANCO, bold, con leve sombra para separar del fondo ---
       const textX = iconX + iconSz + gap;
       const textTop = 6;
       const textH = 62;
-      const stripeH = textH / 3;
       ctx.font = `900 ${cfg.fontSize}px Arial, Helvetica, sans-serif`;
       ctx.textBaseline = "top";
-      const drawStripe = (color, yStart, yEnd) => {
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(textX, yStart, contentW - textX, yEnd - yStart);
-        ctx.clip();
-        ctx.fillStyle = color;
-        // Leve contorno negro para contraste sobre cualquier fondo (pero sin dominar)
-        ctx.fillText(cfg.text, textX, textTop);
-        ctx.restore();
-      };
-      drawStripe(PY.r, textTop, textTop + stripeH);
-      drawStripe(PY.w, textTop + stripeH, textTop + 2 * stripeH);
-      drawStripe(PY.b, textTop + 2 * stripeH, textTop + textH);
-
-      // Contorno sutil oscuro para legibilidad sobre cualquier fondo
-      ctx.save();
-      ctx.lineWidth = 1.2;
-      ctx.strokeStyle = "rgba(15,23,42,0.55)";
-      ctx.strokeText(cfg.text, textX, textTop);
-      ctx.restore();
+      ctx.fillStyle = "#ffffff";
+      // sombra sutil para dar un toque de profundidad sobre el fondo oscuro
+      ctx.shadowColor = "rgba(0,0,0,0.35)";
+      ctx.shadowBlur = 2;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 1;
+      ctx.fillText(cfg.text, textX, textTop);
+      // reset de sombra para no afectar el sublabel
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
 
       // --- Sublabel "INFORMÁTICA" ---
-      ctx.fillStyle = "#e2e8f0";
+      ctx.fillStyle = "#cbd5e1";
       ctx.font = "700 11px Arial, Helvetica, sans-serif";
       // letter-spacing manual
       const sub = "INFORMÁTICA";
