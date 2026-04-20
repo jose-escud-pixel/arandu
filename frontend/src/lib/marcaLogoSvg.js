@@ -1,5 +1,7 @@
 /** Bandera PY en tipografía (presupuestos / PDF / impresión) */
 const PY = { r: "#cc0001", w: "#ffffff", b: "#1a47af" };
+/** Colores PY un poco más luminosos para que cada letra contraste sobre fondos oscuros */
+const PY_BRIGHT = { r: "#ef4444", w: "#ffffff", b: "#60a5fa" };
 
 function escapeSvgText(t) {
   return String(t)
@@ -9,27 +11,46 @@ function escapeSvgText(t) {
 }
 
 /**
- * Palabra con franjas horizontales recortadas al texto.
+ * Palabra con COLOR POR LETRA (bandera PY cíclica: rojo → blanco → azul).
+ * Se renderiza con <tspan> de color sólido por letra: es 100% confiable al
+ * imprimir (no usa clipPath, que fallaba en Safari mostrando bandas superpuestas).
+ * Ejemplo: "JAR" → J rojo, A blanco, R azul.
  * @param {string} text
- * @param {string} uid id único para clipPath
- * @param {{ viewBoxWidth?: number, fontSize?: number, letterSpacing?: number, yText?: number }} opt
+ * @param {string} uid id único (no usado, pero mantenido por compatibilidad)
+ * @param {{ viewBoxWidth?: number, fontSize?: number, letterSpacing?: number, yText?: number, enhanceContrast?: boolean, bright?: boolean, skipChars?: string }} opt
  */
 export function svgTriClipText(text, uid, opt = {}) {
   const vbw = opt.viewBoxWidth ?? 190;
   const fs = opt.fontSize ?? 26;
   const ls = opt.letterSpacing ?? 2;
   const yText = opt.yText ?? 26;
-  const id = `tri-${uid}`;
-  const esc = escapeSvgText(text);
+  // Uso PY_BRIGHT sobre fondos oscuros (encabezados de impresión).
+  // Uso PY normal para documentos con fondo claro.
+  const palette = opt.bright === false ? PY : PY_BRIGHT;
+  const colors = [palette.r, palette.w, palette.b];
+  // Caracteres que no deben contar para el ciclo de colores (ej. "&" en "ARANDU&JAR")
+  const skip = opt.skipChars ?? "&";
+
+  // Construir los <tspan> con un color por letra cíclico (R, W, B, R, W, B, …)
+  let colorIdx = 0;
+  let tspans = "";
+  for (const ch of String(text)) {
+    const esc = escapeSvgText(ch);
+    if (skip.includes(ch)) {
+      // carácter "neutro" en blanco para no romper el ritmo visual, pero sin consumir color
+      tspans += `<tspan fill="${palette.w}">${esc}</tspan>`;
+    } else {
+      tspans += `<tspan fill="${colors[colorIdx % 3]}">${esc}</tspan>`;
+      colorIdx++;
+    }
+  }
+
   const wAttr = Math.min(vbw, 340);
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${wAttr}" height="30" viewBox="0 0 ${vbw} 30" style="display:inline-block;vertical-align:middle">
-    <defs><clipPath id="${id}"><text x="1" y="${yText}" font-family="Arial,Helvetica,sans-serif" font-size="${fs}" font-weight="900" letter-spacing="${ls}">${esc}</text></clipPath></defs>
-    <rect x="0" y="0" width="${vbw}" height="10" fill="${PY.r}" clip-path="url(#${id})"/>
-    <rect x="0" y="10" width="${vbw}" height="10" fill="${PY.w}" clip-path="url(#${id})"/>
-    <rect x="0" y="20" width="${vbw}" height="10" fill="${PY.b}" clip-path="url(#${id})"/>
+    <text x="1" y="${yText}" font-family="Arial,Helvetica,sans-serif" font-size="${fs}" font-weight="900" letter-spacing="${ls}">${tspans}</text>
   </svg>`;
   if (opt.enhanceContrast) {
-    svg = `<span style="display:inline-block;filter:drop-shadow(0 0 1.5px #fff)">${svg}</span>`;
+    svg = `<span style="display:inline-block;filter:drop-shadow(0 0 1.5px rgba(0,0,0,0.4))">${svg}</span>`;
   }
   return svg;
 }
