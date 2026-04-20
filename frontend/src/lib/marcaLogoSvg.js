@@ -95,23 +95,93 @@ export function svgMarcaIcon(marca, uid, px = 52) {
   </svg>`;
 }
 
-/** Fila logo para HTML embebido (presupuesto impreso) */
+/**
+ * Colores por letra para cada marca (según pedido del dueño):
+ *  - JAR      : J=rojo, A=blanco, R=azul
+ *  - ARANDU   : A,R,A = rojo;  N = blanco;  D,U = azul
+ *  - ARANDU&JAR: ARANDU = rojo;  & = blanco;  JAR = rojo
+ * Para fondos oscuros uso tonos un poquito más luminosos para contrastar.
+ */
+const BRAND_LETTER_COLORS_BRIGHT = {
+  jar:       ["#ef4444", "#ffffff", "#60a5fa"],
+  arandu:    ["#ef4444", "#ef4444", "#ef4444", "#ffffff", "#60a5fa", "#60a5fa"],
+  arandujar: ["#ef4444", "#ef4444", "#ef4444", "#ef4444", "#ef4444", "#ef4444", "#ffffff", "#ef4444", "#ef4444", "#ef4444"],
+};
+const BRAND_LETTER_COLORS_NORMAL = {
+  jar:       ["#cc0001", "#0f172a", "#1a47af"],
+  arandu:    ["#cc0001", "#cc0001", "#cc0001", "#0f172a", "#1a47af", "#1a47af"],
+  arandujar: ["#cc0001", "#cc0001", "#cc0001", "#cc0001", "#cc0001", "#cc0001", "#0f172a", "#cc0001", "#cc0001", "#cc0001"],
+};
+const BRAND_TEXT = { jar: "JAR", arandu: "ARANDU", arandujar: "ARANDU&JAR" };
+
+/**
+ * Genera un PNG (data URL) con el texto de la marca en el cual CADA LETRA
+ * tiene un color sólido propio (ver BRAND_LETTER_COLORS_*). Usa <canvas> para
+ * obtener un render idéntico en cualquier navegador/impresora (soluciona
+ * problemas en Safari donde el SVG con tspan a veces se imprime como un
+ * rectángulo lleno de color de fondo en vez de mostrar las letras).
+ * @param {"jar"|"arandu"|"arandujar"} marca
+ * @param {{ fontSize?: number, letterSpacing?: number, darkHeader?: boolean, height?: number }} opts
+ * @returns {string} data URL PNG
+ */
+export function pngPrintLogoDataUrl(marca, opts = {}) {
+  const m = normalizeLogoTipo(marca);
+  const text = BRAND_TEXT[m] || "LOGO";
+  const fontSize = opts.fontSize ?? (m === "jar" ? 28 : m === "arandujar" ? 18 : 26);
+  const letterSpacing = opts.letterSpacing ?? (m === "jar" ? 2 : m === "arandujar" ? 0.35 : 2);
+  const dark = opts.darkHeader !== false; // por defecto asumimos fondo oscuro en impresión
+  const palette = dark ? BRAND_LETTER_COLORS_BRIGHT : BRAND_LETTER_COLORS_NORMAL;
+  const colors = palette[m] || [];
+
+  const scale = 3; // alta resolución para impresión sin pixelado
+  // canvas de medición
+  const meas = document.createElement("canvas").getContext("2d");
+  meas.font = `900 ${fontSize}px Arial, Helvetica, sans-serif`;
+  const widths = Array.from(text).map(ch => meas.measureText(ch).width);
+  const totalW = widths.reduce((a, b) => a + b, 0) + letterSpacing * (text.length - 1) + 4;
+  const totalH = Math.ceil(fontSize * 1.15);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(totalW * scale);
+  canvas.height = Math.ceil(totalH * scale);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(scale, scale);
+  ctx.imageSmoothingEnabled = true;
+  ctx.font = `900 ${fontSize}px Arial, Helvetica, sans-serif`;
+  ctx.textBaseline = "alphabetic";
+  // pequeña sombra para despegar letras blancas del fondo claro cuando toca
+  if (dark) {
+    ctx.shadowColor = "rgba(0,0,0,0.30)";
+    ctx.shadowBlur = 1.5;
+    ctx.shadowOffsetY = 0.6;
+  }
+  let x = 2;
+  const y = fontSize;
+  Array.from(text).forEach((ch, i) => {
+    ctx.fillStyle = colors[i] || (dark ? "#ffffff" : "#0f172a");
+    ctx.fillText(ch, x, y);
+    x += widths[i] + letterSpacing;
+  });
+  return canvas.toDataURL("image/png");
+}
+
+/** Fila logo para HTML embebido (presupuesto impreso).
+ *  Ahora devuelve un <img> con PNG (canvas) — imprime idéntico en Chrome/Safari. */
 export function svgPrintLogoName(logoTipo, uid, { darkHeader = false } = {}) {
   const marca = normalizeLogoTipo(logoTipo);
-  const ec = darkHeader ? { enhanceContrast: true } : {};
-  if (marca === "jar") return svgTriClipText("JAR", uid, { viewBoxWidth: 86, fontSize: 28, letterSpacing: 2, ...ec });
-  if (marca === "arandujar") return svgTriClipText("ARANDU&JAR", uid, { viewBoxWidth: 318, fontSize: 18, letterSpacing: 0.35, yText: 24, ...ec });
-  return svgTriClipText("ARANDU", uid, ec);
+  const fontSize = marca === "jar" ? 28 : marca === "arandujar" ? 18 : 26;
+  const dataUrl = pngPrintLogoDataUrl(marca, { darkHeader, fontSize });
+  // Altura CSS = fontSize * 1.15 (coincide con totalH del canvas)
+  const cssH = Math.ceil(fontSize * 1.15);
+  return `<img src="${dataUrl}" alt="${BRAND_TEXT[marca] || ""}" style="display:inline-block;vertical-align:middle;height:${cssH}px;width:auto"/>`;
 }
 
 export function svgLogoMarcaRow(logoTipo) {
   const uid = Math.random().toString(36).slice(2, 11);
   const marca = normalizeLogoTipo(logoTipo);
   const icon = svgMarcaIcon(marca, uid);
-  let nombre;
-  if (marca === "jar") nombre = svgTriClipText("JAR", uid, { viewBoxWidth: 86, fontSize: 28, letterSpacing: 2, yText: 26 });
-  else if (marca === "arandujar") nombre = svgTriClipText("ARANDU&JAR", uid, { viewBoxWidth: 318, fontSize: 18, letterSpacing: 0.35, yText: 24 });
-  else nombre = svgTriClipText("ARANDU", uid, {});
+  // Usa el mismo PNG que svgPrintLogoName — cada letra con su color sólido
+  const nombre = svgPrintLogoName(logoTipo, uid, { darkHeader: true });
   return `<div style="display:flex;align-items:center;gap:8px">
     ${icon}
     <div style="line-height:1">

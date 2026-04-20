@@ -2012,9 +2012,9 @@ function PresupuestoDocModal({
           </tfoot>
         </table>
         ${p.observaciones || p.condiciones ? `
-        <div style="margin-top:12px">
-          ${p.observaciones ? `<div style="background:#fefce8;padding:9px 11px;border-left:4px solid #eab308;border-radius:0 5px 5px 0;margin-bottom:7px"><strong style="color:#92400e;font-size:10.5px">OBSERVACIONES:</strong><br><span style="font-size:10.5px;color:#713f12">${p.observaciones.replace(/\n/g,"<br>")}</span></div>` : ""}
-          ${p.condiciones ? `<div style="background:#f0fdf4;padding:9px 11px;border-left:4px solid #22c55e;border-radius:0 5px 5px 0"><strong style="color:#166534;font-size:10.5px">CONDICIONES:</strong><br><span style="font-size:10.5px;color:#15803d">${p.condiciones.replace(/\n/g,"<br>")}</span></div>` : ""}
+        <div style="margin-top:12px;page-break-inside:avoid;break-inside:avoid">
+          ${p.observaciones ? `<div style="background:#fefce8;padding:9px 11px;border-left:4px solid #eab308;border-radius:0 5px 5px 0;margin-bottom:7px;page-break-inside:avoid;break-inside:avoid"><strong style="color:#92400e;font-size:10.5px">OBSERVACIONES:</strong><br><span style="font-size:10.5px;color:#713f12">${p.observaciones.replace(/\n/g,"<br>")}</span></div>` : ""}
+          ${p.condiciones ? `<div style="background:#f0fdf4;padding:9px 11px;border-left:4px solid #22c55e;border-radius:0 5px 5px 0;page-break-inside:avoid;break-inside:avoid"><strong style="color:#166534;font-size:10.5px">CONDICIONES:</strong><br><span style="font-size:10.5px;color:#15803d">${p.condiciones.replace(/\n/g,"<br>")}</span></div>` : ""}
         </div>` : ""}
       </div>
     </body></html>`);
