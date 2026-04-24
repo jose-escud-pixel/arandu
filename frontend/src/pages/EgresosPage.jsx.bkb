@@ -224,7 +224,7 @@ const EgresosPage = () => {
   // ── Init ────────────────────────────────────────────────────────────────────
   useEffect(() => {
     fetchEmpresasPropias();
-    fetchProveedores(activeEmpresaPropia?.slug);
+    fetchProveedores();
     fetchProductos();
     fetchCuentasDisp();
   }, []);
