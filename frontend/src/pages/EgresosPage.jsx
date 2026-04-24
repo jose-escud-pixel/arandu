@@ -6,7 +6,8 @@ import {
   Plus, Search, Edit, Trash2, Save, X, Check, ChevronDown,
   AlertTriangle, FileText, DollarSign, Building2, Filter,
   CreditCard, Receipt, ExternalLink, Banknote, Package, ToggleLeft, ToggleRight,
-  Wallet, HandCoins, Eye, ChevronRight, ChevronLeft, Loader2
+  Wallet, HandCoins, Eye, ChevronRight, ChevronLeft, Loader2,
+  CheckCircle, AlertCircle, Star, UserCheck, UserX, Pencil
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -144,6 +145,191 @@ function matchChips(chips, inputVal, texto) {
   return allChips.every(chip => t.includes(chip.toLowerCase()));
 }
 
+
+// ── Sueldos helpers (defined outside component to avoid re-creation) ──────────
+const SUELDO_MINIMO = 2899048;
+const LOGO_LABEL_EMP = {
+  arandujar: { label: "Arandu&JAR", chip: "bg-blue-600/20 text-blue-300 border border-blue-600/30" },
+  arandu:    { label: "Arandu",     chip: "bg-emerald-600/20 text-emerald-300 border border-emerald-600/30" },
+  jar:       { label: "JAR",        chip: "bg-red-600/20 text-red-300 border border-red-600/30" },
+};
+function calcularIPS(emp) {
+  if (!emp.aplica_ips) return 0;
+  if (emp.base_calculo_ips === "manual") return Math.round((parseFloat(emp.ips_monto_manual)||0)*0.09);
+  const base = emp.base_calculo_ips === "sueldo" ? (parseFloat(emp.sueldo_base)||0) : (parseFloat(emp.sueldo_minimo_vigente)||SUELDO_MINIMO);
+  return Math.round(base*0.09);
+}
+function calcMontoAPagar(emp, adelantos, extras, descuentos) {
+  const base = parseFloat(emp.sueldo_base)||0;
+  const ips = emp.aplica_ips !== false ? calcularIPS(emp) : 0;
+  const totAd = (adelantos||[]).reduce((s,a)=>s+(a.monto||0),0);
+  const totEx = (extras||[]).reduce((s,e)=>s+(e.monto||0),0);
+  const totDe = (descuentos||[]).reduce((s,d)=>s+(parseFloat(d.monto)||0),0);
+  return Math.max(0, base+totEx-ips-totAd-totDe);
+}
+function fmtSueldo(monto, moneda="PYG") {
+  if (!monto && monto!==0) return "-";
+  if (moneda==="PYG") return `\u20b2 ${Number(monto).toLocaleString("es-PY")}`;
+  return `${moneda} ${Number(monto).toLocaleString("es-PY",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+}
+function estadoBadgeSueldo(estado) {
+  if (estado==="pagado") return React.createElement("span",{className:"flex items-center gap-1 text-emerald-400 text-xs font-medium"},
+    React.createElement(CheckCircle,{className:"w-3.5 h-3.5"}),"Pagado");
+  if (estado==="vencido") return React.createElement("span",{className:"flex items-center gap-1 text-red-400 text-xs font-medium"},
+    React.createElement(AlertCircle,{className:"w-3.5 h-3.5"}),"Vencido");
+  return React.createElement("span",{className:"flex items-center gap-1 text-amber-400 text-xs font-medium"},
+    React.createElement(Clock,{className:"w-3.5 h-3.5"}),"Pendiente");
+}
+
+function SueldosTab({ sueldosVenc, loadingSueldos, adelantosMap, extrasMap, sueldosChips, setSueldosChips,
+  sueldosInput, setSueldosInput, filtroTipo, filtroMes, hasPermission, openSueldo, openAdelanto, openExtra,
+  handleDeleteSueldo, mesLabel }) {
+  const pagados   = sueldosVenc.filter(e => e.estado === "pagado");
+  const pendientes = sueldosVenc.filter(e => e.estado !== "pagado");
+  const montoPagado = pagados.reduce((s,e) => s + (e.sueldo_registrado?.monto_pagado || e.sueldo_base || 0), 0);
+  const vencidos  = sueldosVenc.filter(e => e.estado === "vencido").length;
+  const filtrados = sueldosVenc.filter(e => {
+    const texto = [e.nombre, e.apellido, e.cargo, String(e.sueldo_base||""), e.logo_tipo,
+      LOGO_LABEL_EMP[e.logo_tipo]?.label||"", e.estado].filter(Boolean).join(" ");
+    return matchChips(sueldosChips, sueldosInput, texto);
+  });
+
+  return (
+    <div>
+      <div className="flex flex-col gap-3 mb-4">
+        <ChipSearch
+          chips={sueldosChips} setChips={setSueldosChips}
+          inputVal={sueldosInput} setInputVal={setSueldosInput}
+          placeholder="Buscar por nombre, cargo, empresa, estado… (Enter para filtrar)"
+          accentColor="purple"
+          actionButton={
+            <a href="/admin/empleados">
+              <button className="flex items-center gap-2 border border-white/10 text-slate-300 text-sm px-3 py-2 rounded-lg hover:bg-white/5 whitespace-nowrap">
+                <ExternalLink className="w-4 h-4"/> Gestionar empleados
+              </button>
+            </a>
+          }
+        />
+      </div>
+
+      {filtroTipo === "todos" ? (
+        <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
+          <Users className="w-12 h-12 text-slate-700 mx-auto mb-2"/>
+          <p className="text-slate-400">Seleccioná "Por mes" para ver los sueldos del período</p>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <div className="bg-arandu-dark-light border border-white/5 rounded-xl p-4">
+              <p className="text-slate-400 text-xs mb-1">Empleados</p>
+              <p className="text-white font-bold text-2xl">{sueldosVenc.length}</p>
+            </div>
+            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
+              <p className="text-emerald-400 text-xs mb-1">Pagados</p>
+              <p className="text-emerald-300 font-bold text-2xl">{pagados.length}</p>
+            </div>
+            <div className={`border rounded-xl p-4 ${vencidos>0?"bg-red-500/10 border-red-500/20":"bg-amber-500/10 border-amber-500/20"}`}>
+              <p className={`text-xs mb-1 ${vencidos>0?"text-red-400":"text-amber-400"}`}>Pendientes{vencidos>0?` / ${vencidos} vencido${vencidos>1?"s":""}`:""}</p>
+              <p className={`font-bold text-2xl ${vencidos>0?"text-red-300":"text-amber-300"}`}>{pendientes.length}</p>
+            </div>
+            <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl p-4">
+              <p className="text-violet-400 text-xs mb-1">Total pagado</p>
+              <p className="text-violet-300 font-bold text-lg">{fmtSueldo(montoPagado,"PYG")}</p>
+            </div>
+          </div>
+
+          {loadingSueldos ? (
+            <div className="text-center py-10 text-violet-400 animate-pulse">Cargando sueldos...</div>
+          ) : filtrados.length === 0 ? (
+            <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
+              <Users className="w-12 h-12 text-slate-700 mx-auto mb-2"/>
+              <p className="text-slate-400">Sin empleados para este período</p>
+            </div>
+          ) : (
+            <div className="bg-arandu-dark-light border border-white/5 rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 text-slate-400 text-xs uppercase">
+                    <th className="px-4 py-3 text-left">Empleado</th>
+                    <th className="px-4 py-3 text-left">Empresa</th>
+                    <th className="px-4 py-3 text-left">Cargo</th>
+                    <th className="px-4 py-3 text-right">Sueldo base</th>
+                    <th className="px-4 py-3 text-right">Pagado</th>
+                    <th className="px-4 py-3 text-center">Estado</th>
+                    <th className="px-4 py-3 text-center">Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtrados.map(emp => (
+                    <tr key={emp.id} className={`border-b border-white/5 transition-colors ${emp.estado==="vencido"?"bg-red-500/5 hover:bg-red-500/10":"hover:bg-white/[0.03]"}`}>
+                      <td className="px-4 py-3">
+                        <p className="text-white font-medium">{emp.nombre} {emp.apellido}</p>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {adelantosMap[emp.id] && (
+                            <span className="inline-flex items-center gap-1 bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs px-1.5 py-0.5 rounded-full">
+                              <DollarSign className="w-3 h-3"/> Adelanto: {fmtSueldo(adelantosMap[emp.id].reduce((s,a)=>s+(a.monto||0),0), adelantosMap[emp.id][0]?.moneda||"PYG")}
+                            </span>
+                          )}
+                          {extrasMap[emp.id] && (
+                            <span className="inline-flex items-center gap-1 bg-green-500/15 border border-green-500/30 text-green-300 text-xs px-1.5 py-0.5 rounded-full">
+                              <Star className="w-3 h-3"/> Extra: {fmtSueldo(extrasMap[emp.id].reduce((s,e)=>s+(e.monto||0),0), extrasMap[emp.id][0]?.moneda||"PYG")}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        {emp.logo_tipo && LOGO_LABEL_EMP[emp.logo_tipo] && (
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${LOGO_LABEL_EMP[emp.logo_tipo].chip}`}>
+                            {LOGO_LABEL_EMP[emp.logo_tipo].label}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-slate-400 text-xs">{emp.cargo||"—"}</td>
+                      <td className="px-4 py-3 text-right text-slate-300 text-xs">{fmtSueldo(emp.sueldo_base, emp.moneda)}</td>
+                      <td className="px-4 py-3 text-right text-xs">
+                        {emp.estado==="pagado" && emp.sueldo_registrado?.monto_pagado != null
+                          ? <span className="text-emerald-300 font-medium">{fmtSueldo(emp.sueldo_registrado.monto_pagado, emp.moneda)}</span>
+                          : <span className="text-slate-600">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-center">{estadoBadgeSueldo(emp.estado)}</td>
+                      <td className="px-4 py-3 text-center">
+                        {emp.estado === "pagado" ? (
+                          <div className="flex items-center justify-center gap-2">
+                            <span className="text-slate-500 text-xs">{emp.sueldo_registrado?.fecha_pago||""}</span>
+                            {hasPermission("empleados.editar") && (
+                              <button onClick={() => handleDeleteSueldo(emp.sueldo_registrado?.id)} className="text-slate-500 hover:text-red-400 transition-colors" title="Deshacer pago">
+                                <X className="w-4 h-4"/>
+                              </button>
+                            )}
+                          </div>
+                        ) : hasPermission("empleados.editar") && (
+                          <div className="flex flex-col items-center gap-1.5">
+                            <button onClick={() => openSueldo(emp)} className="flex items-center gap-1.5 mx-auto bg-violet-600/20 hover:bg-violet-600/40 text-violet-300 text-xs px-3 py-1.5 rounded-lg transition-colors">
+                              <DollarSign className="w-3.5 h-3.5"/> Registrar pago
+                            </button>
+                            <div className="flex gap-1.5">
+                              <button onClick={() => openAdelanto(emp)} className="flex items-center gap-1 bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 text-xs px-2 py-1 rounded-lg transition-colors">
+                                <DollarSign className="w-3 h-3"/> Adelanto
+                              </button>
+                              <button onClick={() => openExtra(emp)} className="flex items-center gap-1 bg-green-600/20 hover:bg-green-600/40 text-green-300 text-xs px-2 py-1 rounded-lg transition-colors">
+                                <Star className="w-3 h-3"/> Extra
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 const EgresosPage = () => {
   const { token, user, hasPermission, activeEmpresaPropia } = useContext(AuthContext);
@@ -174,14 +360,51 @@ const EgresosPage = () => {
   // ── Costos Fijos state ──────────────────────────────────────────────────────
   const [costos, setCostos] = useState([]);
   const [loadingCostos, setLoadingCostos] = useState(false);
+  const [vencimientos, setVencimientos] = useState([]);
+  const [loadingVenc, setLoadingVenc] = useState(false);
+  const [costosLogoFilter, setCostosLogoFilter] = useState("todas");
+  const COSTOS_FRECUENCIAS = [
+    { value: "unica", label: "\u00danica vez" }, { value: "mensual", label: "Mensual" },
+    { value: "trimestral", label: "Trimestral" }, { value: "semestral", label: "Semestral" }, { value: "anual", label: "Anual" },
+  ];
+  const COSTOS_CATEGORIAS = [
+    "Hosting / Servidores","Dominios","Software / Licencias","Telef\u00f3n\u00eda / Internet",
+    "Servicios B\u00e1sicos","Impuestos / Tasas","Alquiler","Publicidad","Seguros","Otros",
+  ];
+  const LOGO_LABEL_MAP = { arandujar: "Arandu&JAR", arandu: "Arandu", jar: "JAR" };
+  const emptyCostoForm = () => ({
+    logo_tipo: "arandujar", nombre: "", descripcion: "", categoria: "", monto: "", moneda: "PYG",
+    tipo_cambio: "", frecuencia: "mensual", dia_vencimiento: 1,
+    fecha_inicio: new Date().toISOString().slice(0, 10), fecha_fin: "", activo: true, notas: "",
+  });
+  const [showCostoForm, setShowCostoForm] = useState(false);
+  const [editingCostoId, setEditingCostoId] = useState(null);
+  const [costoFormData, setCostoFormData] = useState(emptyCostoForm());
+  const [showPagoCostoModal, setShowPagoCostoModal] = useState(null);
+  const [pagoCostoForm, setPagoCostoForm] = useState({ monto_pagado: "", fecha_pago: hoy(), notas: "", tiene_factura: false, nro_factura: "" });
 
   // ── Sueldos state ───────────────────────────────────────────────────────────
+  const emptySueldoForm = () => ({ periodo: filtroMes, moneda: "PYG", tipo_cambio: "", fecha_pago: hoy(), descuento_ips: "", notas: "", descuentos_adicionales: [] });
   const [empleados, setEmpleados] = useState([]);
   const [loadingEmpleados, setLoadingEmpleados] = useState(false);
-
-  // ── Pagos pendientes state ──────────────────────────────────────────────────
-  const [pagosPendientes, setPagosPendientes] = useState([]);
-  const [loadingPagos, setLoadingPagos] = useState(false);
+  const [sueldosVenc, setSueldosVenc] = useState([]);
+  const [loadingSueldos, setLoadingSueldos] = useState(false);
+  const [adelantosMap, setAdelantosMap] = useState({});
+  const [extrasMap, setExtrasMap] = useState({});
+  const [showSueldoModal, setShowSueldoModal] = useState(false);
+  const [selectedEmp, setSelectedEmp] = useState(null);
+  const [formSueldo, setFormSueldo] = useState(emptySueldoForm());
+  const [savingSueldo, setSavingSueldo] = useState(false);
+  const [adelantosPeriodo, setAdelantosPeriodo] = useState([]);
+  const [extrasPeriodo, setExtrasPeriodo] = useState([]);
+  const [showAdelantoModal, setShowAdelantoModal] = useState(false);
+  const [adelantoEmp, setAdelantoEmp] = useState(null);
+  const [formAdelanto, setFormAdelanto] = useState({ monto: "", fecha: hoy(), notas: "" });
+  const [savingAdelanto, setSavingAdelanto] = useState(false);
+  const [showExtraModal, setShowExtraModal] = useState(false);
+  const [extraEmp, setExtraEmp] = useState(null);
+  const [formExtra, setFormExtra] = useState({ monto: "", descripcion: "Extra", fecha: hoy(), notas: "" });
+  const [savingExtra, setSavingExtra] = useState(false);
 
   // ── Pagos Proveedores state (lista plana de todos los registros) ────────────
   const [listaProveedores, setListaProveedores] = useState([]);           // para dropdown en form
@@ -231,9 +454,8 @@ const EgresosPage = () => {
 
   useEffect(() => {
     if (tab === "compras") fetchCompras();
-    if (tab === "costos") fetchCostos();
-    if (tab === "sueldos") fetchEmpleados();
-    if (tab === "pagos") fetchPagosPendientes();
+    if (tab === "costos") { fetchCostos(); fetchVencimientos(filtroMes, filtroTipo, filtroAnio); }
+    if (tab === "sueldos") { fetchEmpleados(); fetchSueldosVenc(filtroMes); }
     if (tab === "proveedores-pagos") fetchTodosPagosProveedores();
     if (tab === "pago-iva") fetchIvaData();
   }, [tab]);
@@ -283,13 +505,117 @@ const EgresosPage = () => {
     finally { setLoadingCompras(false); }
   };
 
-  const fetchCostos = async () => {
+  const fetchCostos = async (logoFilter) => {
     setLoadingCostos(true);
     try {
-      const res = await fetch(`${API}/admin/costos-fijos`, { headers: { Authorization: `Bearer ${token}` } });
+      const logo = logoFilter || activeEmpresaPropia?.slug;
+      const q = logo ? `?logo_tipo=${logo}` : "";
+      const res = await fetch(`${API}/admin/costos-fijos${q}`, { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) setCostos(await res.json());
     } catch (e) {}
     finally { setLoadingCostos(false); }
+  };
+
+  const fetchVencimientos = async (periodo, tipo, anio) => {
+    setLoadingVenc(true);
+    const hdrs = { Authorization: `Bearer ${token}` };
+    try {
+      if (tipo === "todos") {
+        // Traer todos los costos (sin filtro de logo, el backend ya aplica permisos del user)
+        const res = await fetch(`${API}/admin/costos-fijos`, { headers: hdrs });
+        if (res.ok) {
+          const todos = await res.json();
+          // Obtener estado del mes actual para cruzar
+          const mesHoy = new Date().toISOString().slice(0, 7);
+          const resVenc = await fetch(`${API}/admin/costos-fijos/vencimientos?periodo=${mesHoy}`, { headers: hdrs });
+          const vencActuales = resVenc.ok ? await resVenc.json() : [];
+          const pagosMap = {};
+          vencActuales.forEach(v => { pagosMap[v.costo_id] = v; });
+          const merged = todos.map(c => ({
+            ...c,
+            costo_id: c.id,
+            estado: pagosMap[c.id]?.estado || (c.activo ? "pendiente" : "inactivo"),
+            pago: pagosMap[c.id]?.pago || null,
+          }));
+          merged.sort((a, b) => (b.fecha_inicio || "").localeCompare(a.fecha_inicio || ""));
+          setVencimientos(merged);
+        }
+      } else if (tipo === "anio") {
+        // 12 meses del año en paralelo
+        const meses = Array.from({length:12}, (_,i) => `${anio}-${String(i+1).padStart(2,"0")}`);
+        const results = await Promise.all(
+          meses.map(m => fetch(`${API}/admin/costos-fijos/vencimientos?periodo=${m}`, { headers: hdrs }).then(r => r.ok ? r.json() : []))
+        );
+        const seen = new Set();
+        const all = results.flat().filter(v => {
+          const key = `${v.costo_id}_${v.periodo}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        all.sort((a, b) => (b.periodo||"").localeCompare(a.periodo||"") || (a.nombre||"").localeCompare(b.nombre||""));
+        setVencimientos(all);
+      } else {
+        // Por mes
+        const res = await fetch(`${API}/admin/costos-fijos/vencimientos?periodo=${periodo}`, { headers: hdrs });
+        if (res.ok) setVencimientos(await res.json());
+        else setVencimientos([]);
+      }
+    } catch (e) { console.error("fetchVencimientos error:", e); setVencimientos([]); }
+    finally { setLoadingVenc(false); }
+  };
+
+  const handleSaveCosto = async (e) => {
+    e.preventDefault();
+    const toFloat = v => (v === "" || v == null) ? null : parseFloat(v) || null;
+    const payload = {
+      ...costoFormData,
+      monto: parseFloat(costoFormData.monto) || 0,
+      tipo_cambio: toFloat(costoFormData.tipo_cambio),
+      dia_vencimiento: parseInt(costoFormData.dia_vencimiento) || 1,
+      fecha_fin: costoFormData.fecha_fin || null,
+      descripcion: costoFormData.descripcion || null,
+      categoria: costoFormData.categoria || null,
+      notas: costoFormData.notas || null,
+    };
+    const url = editingCostoId ? `${API}/admin/costos-fijos/${editingCostoId}` : `${API}/admin/costos-fijos`;
+    const method = editingCostoId ? "PUT" : "POST";
+    const res = await fetch(url, { method, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
+    if (res.ok) {
+      toast.success(editingCostoId ? "Costo actualizado" : "Costo creado");
+      setShowCostoForm(false);
+      fetchCostos();
+      fetchVencimientos(filtroMes, filtroTipo, filtroAnio);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      toast.error(err.detail || "Error al guardar");
+    }
+  };
+
+  const handleToggleCosto = async (c) => {
+    const res = await fetch(`${API}/admin/costos-fijos/${c.id}/toggle`, { method: "PATCH", headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { toast.success(c.activo ? "Desactivado" : "Activado"); fetchCostos(); fetchVencimientos(filtroMes, filtroTipo, filtroAnio); }
+  };
+
+  const handleDeleteCosto = async (c) => {
+    if (!window.confirm(`¿Eliminar "${c.nombre}"? Se eliminarán también todos los pagos.`)) return;
+    const res = await fetch(`${API}/admin/costos-fijos/${c.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { toast.success("Eliminado"); fetchCostos(); fetchVencimientos(filtroMes, filtroTipo, filtroAnio); }
+  };
+
+  const handleRegistrarPagoCosto = async (e) => {
+    e.preventDefault();
+    const v = showPagoCostoModal;
+    const payload = { periodo: v.periodo || filtroMes, monto_pagado: parseFloat(pagoCostoForm.monto_pagado) || v.monto, fecha_pago: pagoCostoForm.fecha_pago, notas: pagoCostoForm.notas || null, tiene_factura: pagoCostoForm.tiene_factura, nro_factura: pagoCostoForm.tiene_factura ? (pagoCostoForm.nro_factura || null) : null };
+    const res = await fetch(`${API}/admin/costos-fijos/${v.costo_id}/pagos`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
+    if (res.ok) { toast.success("Pago registrado"); setShowPagoCostoModal(null); fetchVencimientos(filtroMes, filtroTipo, filtroAnio); }
+    else { const err = await res.json().catch(() => ({})); toast.error(err.detail || "Error al registrar pago"); }
+  };
+
+  const handleAnularPagoCosto = async (v) => {
+    if (!window.confirm("¿Anular este pago?")) return;
+    const res = await fetch(`${API}/admin/pagos-costos/${v.pago.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { toast.success("Pago anulado"); fetchVencimientos(filtroMes, filtroTipo, filtroAnio); }
   };
 
   const fetchEmpleados = async () => {
@@ -301,25 +627,138 @@ const EgresosPage = () => {
     finally { setLoadingEmpleados(false); }
   };
 
-  const fetchPagosPendientes = async () => {
-    setLoadingPagos(true);
+  const fetchSueldosVenc = async (periodo) => {
+    setLoadingSueldos(true);
     try {
-      const [comprasRes, costosRes] = await Promise.all([
-        fetch(`${API}/admin/compras?estado_pago=pendiente`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API}/admin/costos-fijos/vencimientos?periodo=${mesActual()}`, { headers: { Authorization: `Bearer ${token}` } }),
-      ]);
-      const pendCompras = comprasRes.ok ? await comprasRes.json() : [];
-      const pendCostos = costosRes.ok ? await costosRes.json() : [];
-      const vencidos = await fetch(`${API}/admin/compras?estado_pago=vencido`, { headers: { Authorization: `Bearer ${token}` } });
-      const vencCompras = vencidos.ok ? await vencidos.json() : [];
-      setPagosPendientes([
-        ...pendCompras.map(c => ({ ...c, _tipo: "compra" })),
-        ...vencCompras.map(c => ({ ...c, _tipo: "compra" })),
-        ...pendCostos.filter(c => c.estado !== "pagado").map(c => ({ ...c, _tipo: "costo" })),
-      ]);
-    } catch (e) {}
-    finally { setLoadingPagos(false); }
+      const hdrs = { Authorization: `Bearer ${token}` };
+      const res = await fetch(`${API}/admin/empleados/sueldos?periodo=${periodo}`, { headers: hdrs });
+      if (res.ok) {
+        const data = await res.json();
+        setSueldosVenc(data);
+        const adMap = {}, exMap = {};
+        await Promise.all(data.map(async (emp) => {
+          try {
+            const [rAd, rEx] = await Promise.all([
+              fetch(`${API}/admin/empleados/${emp.id}/adelantos?periodo=${periodo}`, { headers: hdrs }),
+              fetch(`${API}/admin/empleados/${emp.id}/extras?periodo=${periodo}`, { headers: hdrs }),
+            ]);
+            if (rAd.ok) { const ads = await rAd.json(); if (ads.length) adMap[emp.id] = ads; }
+            if (rEx.ok) { const exs = await rEx.json(); if (exs.length) exMap[emp.id] = exs; }
+          } catch {}
+        }));
+        setAdelantosMap(adMap);
+        setExtrasMap(exMap);
+      }
+    } catch {}
+    finally { setLoadingSueldos(false); }
   };
+
+  const openSueldo = async (emp) => {
+    setSelectedEmp(emp);
+    const hdrs = { Authorization: `Bearer ${token}` };
+    let adelantos = [], extras = [];
+    try {
+      const [rAd, rEx] = await Promise.all([
+        fetch(`${API}/admin/empleados/${emp.id}/adelantos?periodo=${filtroMes}`, { headers: hdrs }),
+        fetch(`${API}/admin/empleados/${emp.id}/extras?periodo=${filtroMes}`, { headers: hdrs }),
+      ]);
+      if (rAd.ok) adelantos = await rAd.json();
+      if (rEx.ok) extras = await rEx.json();
+    } catch {}
+    setAdelantosPeriodo(adelantos);
+    setExtrasPeriodo(extras);
+    setFormSueldo({ periodo: filtroMes, moneda: emp.moneda||"PYG", tipo_cambio: emp.tipo_cambio||"", fecha_pago: hoy(), descuento_ips: String(emp.aplica_ips!==false ? calcularIPS(emp) : 0), notas: "", descuentos_adicionales: [] });
+    setShowSueldoModal(true);
+  };
+
+  const handleSaveSueldo = async () => {
+    if (!formSueldo.fecha_pago) { toast.error("Fecha de pago requerida"); return; }
+    setSavingSueldo(true);
+    try {
+      const montoPagado = calcMontoAPagar(selectedEmp, adelantosPeriodo, extrasPeriodo, formSueldo.descuentos_adicionales);
+      const payload = {
+        periodo: formSueldo.periodo, monto_pagado: montoPagado, moneda: formSueldo.moneda,
+        tipo_cambio: parseFloat(formSueldo.tipo_cambio)||null, fecha_pago: formSueldo.fecha_pago,
+        descuento_ips: parseFloat(formSueldo.descuento_ips)||0,
+        horas_extra: 0, monto_horas_extra: 0,
+        descuentos_adicionales: formSueldo.descuentos_adicionales.reduce((s,d)=>s+(parseFloat(d.monto)||0),0)||null,
+        notas: formSueldo.notas||null,
+      };
+      const res = await fetch(`${API}/admin/empleados/${selectedEmp.id}/sueldos`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail||"Error"); }
+      toast.success("Sueldo registrado");
+      setShowSueldoModal(false);
+      fetchSueldosVenc(filtroMes);
+    } catch (e) { toast.error(e.message); }
+    finally { setSavingSueldo(false); }
+  };
+
+  const handleDeleteSueldo = async (sueldoId) => {
+    if (!window.confirm("¿Eliminar este registro de sueldo?")) return;
+    try {
+      const res = await fetch(`${API}/admin/sueldos/${sueldoId}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error();
+      toast.success("Registro eliminado");
+      fetchSueldosVenc(filtroMes);
+    } catch { toast.error("Error al eliminar"); }
+  };
+
+  const openAdelanto = (emp) => { setAdelantoEmp(emp); setFormAdelanto({ monto: "", fecha: hoy(), notas: "" }); setShowAdelantoModal(true); };
+  const handleSaveAdelanto = async () => {
+    if (!formAdelanto.monto) { toast.error("Monto requerido"); return; }
+    setSavingAdelanto(true);
+    try {
+      const payload = { periodo: filtroMes, monto: parseFloat(formAdelanto.monto)||0, moneda: adelantoEmp.moneda||"PYG", tipo_cambio: adelantoEmp.tipo_cambio||null, fecha: formAdelanto.fecha, notas: formAdelanto.notas||null };
+      const res = await fetch(`${API}/admin/empleados/${adelantoEmp.id}/adelantos`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail||"Error"); }
+      toast.success("Adelanto registrado");
+      setShowAdelantoModal(false);
+      fetchSueldosVenc(filtroMes);
+    } catch (e) { toast.error(e.message); }
+    finally { setSavingAdelanto(false); }
+  };
+  const handleDeleteAdelanto = async (id) => {
+    if (!window.confirm("¿Eliminar adelanto?")) return;
+    try {
+      await fetch(`${API}/admin/adelantos/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      setAdelantosPeriodo(prev => prev.filter(a => a.id !== id));
+      toast.success("Adelanto eliminado");
+    } catch { toast.error("Error"); }
+  };
+
+  const openExtra = (emp) => { setExtraEmp(emp); setFormExtra({ monto: "", descripcion: "Extra", fecha: hoy(), notas: "" }); setShowExtraModal(true); };
+  const handleSaveExtra = async () => {
+    if (!formExtra.monto) { toast.error("Monto requerido"); return; }
+    setSavingExtra(true);
+    try {
+      const payload = { periodo: filtroMes, monto: parseFloat(formExtra.monto)||0, moneda: extraEmp.moneda||"PYG", tipo_cambio: extraEmp.tipo_cambio||null, fecha: formExtra.fecha, descripcion: formExtra.descripcion||"Extra", notas: formExtra.notas||null };
+      const res = await fetch(`${API}/admin/empleados/${extraEmp.id}/extras`, {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail||"Error"); }
+      toast.success("Extra registrado");
+      setShowExtraModal(false);
+      fetchSueldosVenc(filtroMes);
+    } catch (e) { toast.error(e.message); }
+    finally { setSavingExtra(false); }
+  };
+  const handleDeleteExtra = async (id) => {
+    if (!window.confirm("¿Eliminar extra?")) return;
+    try {
+      await fetch(`${API}/admin/extras/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      setExtrasPeriodo(prev => prev.filter(e => e.id !== id));
+      toast.success("Extra eliminado");
+    } catch { toast.error("Error"); }
+  };
+
+
 
   const fetchTodosPagosProveedores = async () => {
     setLoadingTodosPagos(true);
@@ -531,6 +970,8 @@ const EgresosPage = () => {
 
   useEffect(() => {
     if (tab === "compras") fetchCompras();
+    if (tab === "costos") fetchVencimientos(filtroMes, filtroTipo, filtroAnio);
+    if (tab === "sueldos") fetchSueldosVenc(filtroMes);
   }, [filtroMes, filtroTipo, filtroAnio]); // eslint-disable-line
 
   useEffect(() => {
@@ -738,7 +1179,7 @@ const EgresosPage = () => {
             { label: "Compras este mes", value: fmt(totalComprasMes), icon: ShoppingCart, color: "text-orange-400" },
             { label: "Deuda proveedores", value: fmt(totalDeuda), icon: CreditCard, color: "text-red-400" },
             { label: "Sueldos mensuales", value: fmt(totalSueldos), icon: Users, color: "text-blue-400" },
-            { label: "Pagos pendientes", value: pagosPendientes.length || "−", icon: Clock, color: "text-amber-400", isCount: true },
+            { label: "Pagos pendientes", value: "−", icon: Clock, color: "text-amber-400", isCount: true },
           ].map(({ label, value, icon: Icon, color, isCount }) => (
             <div key={label} className="bg-arandu-dark-light border border-white/5 rounded-xl p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -756,7 +1197,6 @@ const EgresosPage = () => {
             { id: "compras", label: "Compras", icon: ShoppingCart, color: "bg-orange-500" },
             { id: "costos", label: "Costos Fijos", icon: Calendar, color: "bg-blue-600" },
             { id: "sueldos", label: "Sueldos", icon: Users, color: "bg-purple-600" },
-            { id: "pagos", label: "Pagos Pendientes", icon: AlertTriangle, color: "bg-red-600" },
             { id: "proveedores-pagos", label: "Pag. Proveedores", icon: Wallet, color: "bg-violet-600" },
             { id: "pago-iva", label: "IVA", icon: Receipt, color: "bg-amber-600" },
           ].map(t => (
@@ -769,11 +1209,6 @@ const EgresosPage = () => {
             >
               <t.icon className="w-4 h-4" />
               {t.label}
-              {t.id === "pagos" && pagosPendientes.length > 0 && (
-                <span className="bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5 min-w-[20px] text-center">
-                  {pagosPendientes.length}
-                </span>
-              )}
             </button>
           ))}
         </div>
@@ -894,181 +1329,564 @@ const EgresosPage = () => {
         )}
 
         {/* ═══════════════ TAB: COSTOS FIJOS ══════════════════════════════════ */}
-        {tab === "costos" && (
-          <div>
-            {/* Buscador chips + acción */}
-            <div className="flex flex-col md:flex-row gap-3 mb-5">
-              <ChipSearch
-                chips={costosChips} setChips={setCostosChips}
-                inputVal={costosInput} setInputVal={setCostosInput}
-                placeholder="Buscar por nombre, monto, moneda, frecuencia, activo… (Enter para agregar filtro)"
-                accentColor="blue"
-                actionButton={
-                  <Link to="/admin/costos-fijos">
-                    <Button variant="outline" className="border-white/10 text-slate-300 gap-2 whitespace-nowrap">
-                      <ExternalLink className="w-4 h-4" /> Gestionar completo
+        {tab === "costos" && (() => {
+          const vencFiltradas = vencimientos.filter(v => {
+            const texto = [v.nombre, v.logo_tipo, LOGO_LABEL_MAP[v.logo_tipo]||"", v.categoria, String(v.monto||""), v.moneda, v.estado, v.frecuencia].filter(Boolean).join(" ");
+            return matchChips(costosChips, costosInput, texto);
+          });
+          let totalPYG=0, totalUSD=0, pagadoPYG=0, pagadoUSD=0;
+          vencimientos.forEach(v => {
+            if (v.moneda==="USD") { totalUSD+=v.monto; if(v.estado==="pagado") pagadoUSD+=v.pago?.monto_pagado||0; }
+            else { totalPYG+=v.monto; if(v.estado==="pagado") pagadoPYG+=v.pago?.monto_pagado||0; }
+          });
+          const vencidos = vencimientos.filter(v => v.estado==="vencido").length;
+          return (
+            <div>
+              {/* Buscador + botón nuevo */}
+              <div className="flex flex-col gap-3 mb-4">
+                <ChipSearch
+                  chips={costosChips} setChips={setCostosChips}
+                  inputVal={costosInput} setInputVal={setCostosInput}
+                  placeholder="Buscar por nombre, categoría, empresa, monto, estado… (Enter para filtrar)"
+                  accentColor="blue"
+                  actionButton={hasPermission("costos_fijos.crear") ? (
+                    <Button onClick={() => { setEditingCostoId(null); setCostoFormData({ logo_tipo: activeEmpresaPropia?.slug || "arandujar", nombre: "", descripcion: "", categoria: "", monto: "", moneda: "PYG", tipo_cambio: "", frecuencia: "mensual", dia_vencimiento: 1, fecha_inicio: new Date().toISOString().slice(0,10), fecha_fin: "", activo: true, notas: "" }); setShowCostoForm(true); }}
+                      className="bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap">
+                      <Plus className="w-4 h-4 mr-2" /> Nuevo Costo
                     </Button>
-                  </Link>
-                }
-              />
-            </div>
-            {costosChips.length === 0 && !costosInput && <p className="text-slate-500 text-xs mb-3">{costos.length} costos fijos registrados</p>}
-            {loadingCostos ? (
-              <div className="text-center py-12 text-blue-400 animate-pulse">Cargando...</div>
-            ) : (
-              <div className="space-y-2">
-                {costos.filter(c => {
-                  const texto = [c.nombre, String(c.monto||""), c.moneda, c.frecuencia, c.activo ? "activo" : "inactivo"].filter(Boolean).join(" ");
-                  return matchChips(costosChips, costosInput, texto);
-                }).map(c => (
-                  <div key={c.id} className="bg-arandu-dark-light border border-white/5 rounded-xl p-4 flex items-center justify-between">
-                    <div>
-                      <h3 className="text-white font-medium">{c.nombre}</h3>
-                      <p className="text-slate-500 text-xs capitalize">{c.frecuencia} · vence día {c.dia_vencimiento}</p>
+                  ) : null}
+                />
+              </div>
+
+              {(() => {
+              return (
+                  <>
+                  {/* Summary cards */}
+                  <div className="grid grid-cols-3 gap-3 mb-4">
+                    <div className="bg-arandu-dark-light border border-white/5 rounded-xl p-4">
+                      <p className="text-slate-500 text-xs mb-1">Total del período</p>
+                      {totalPYG > 0 && <p className="font-bold text-white">{fmt(totalPYG)}</p>}
+                      {totalUSD > 0 && <p className="font-bold text-white">{fmt(totalUSD, "USD")}</p>}
+                      {totalPYG === 0 && totalUSD === 0 && <p className="font-bold text-white">₲ 0</p>}
                     </div>
-                    <div className="text-right">
-                      <p className="text-white font-bold">{fmt(c.monto, c.moneda)}</p>
-                      <span className={`text-xs px-2 py-0.5 rounded-full border ${c.activo ? "border-emerald-500/30 text-emerald-400 bg-emerald-500/10" : "border-white/10 text-slate-500"}`}>
-                        {c.activo ? "Activo" : "Inactivo"}
-                      </span>
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
+                      <p className="text-emerald-400 text-xs mb-1">Pagado</p>
+                      {pagadoPYG > 0 && <p className="font-bold text-emerald-400">{fmt(pagadoPYG)}</p>}
+                      {pagadoUSD > 0 && <p className="font-bold text-emerald-400">{fmt(pagadoUSD, "USD")}</p>}
+                      {pagadoPYG === 0 && pagadoUSD === 0 && <p className="font-bold text-emerald-400">$ 0</p>}
+                    </div>
+                    <div className={`border rounded-xl p-4 ${vencidos > 0 ? "bg-red-500/10 border-red-500/20" : "bg-arandu-dark-light border-white/5"}`}>
+                      <p className={`text-xs mb-1 ${vencidos > 0 ? "text-red-400" : "text-slate-500"}`}>
+                        Pendiente{vencidos > 0 ? ` / ${vencidos} vencido${vencidos !== 1 ? "s" : ""}` : " / Vencido"}
+                      </p>
+                      {(totalPYG - pagadoPYG) > 0 && <p className={`font-bold ${vencidos > 0 ? "text-red-400" : "text-white"}`}>{fmt(totalPYG - pagadoPYG)}</p>}
+                      {(totalUSD - pagadoUSD) > 0 && <p className={`font-bold ${vencidos > 0 ? "text-red-400" : "text-white"}`}>{fmt(totalUSD - pagadoUSD, "USD")}</p>}
+                      {(totalPYG - pagadoPYG) === 0 && (totalUSD - pagadoUSD) === 0 && <p className={`font-bold ${vencidos > 0 ? "text-red-400" : "text-white"}`}>₲ 0</p>}
                     </div>
                   </div>
-                ))}
-                {costos.length === 0 && (
-                  <div className="text-center py-12 text-slate-500">No hay costos fijos. <Link to="/admin/costos-fijos" className="text-arandu-blue hover:underline">Ir a Costos Fijos</Link></div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+
+                  {/* Tabla */}
+                  {loadingVenc ? (
+                    <div className="text-center py-10 text-blue-400 animate-pulse">Cargando vencimientos...</div>
+                  ) : vencFiltradas.length === 0 ? (
+                    <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
+                      <Calendar className="w-12 h-12 text-slate-700 mx-auto mb-2" />
+                      <p className="text-slate-400">Sin vencimientos para este período</p>
+                    </div>
+                  ) : (
+                    <div className="bg-arandu-dark-light border border-white/5 rounded-xl overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-white/10 text-slate-400 text-xs uppercase">
+                            {filtroTipo === "anio" && <th className="px-4 py-3 text-left text-xs">Período</th>}
+                            <th className="px-4 py-3 text-left">Costo</th>
+                            <th className="px-4 py-3 text-left">Empresa</th>
+                            <th className="px-4 py-3 text-left">Categoría</th>
+                            <th className="px-4 py-3 text-right">Monto</th>
+                            <th className="px-4 py-3 text-center">Día Vcto.</th>
+                            <th className="px-4 py-3 text-center">Estado</th>
+                            <th className="px-4 py-3 text-center">Pago</th>
+                            <th className="px-4 py-3 text-center">Editar</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {vencFiltradas.map((v, i) => (
+                            <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                              {filtroTipo === "anio" && <td className="px-4 py-3 text-slate-500 text-xs">{v.periodo || v.fecha_inicio?.slice(0,7) || "—"}</td>}
+                              <td className="px-4 py-3">
+                                <p className="text-white font-medium">{v.nombre}</p>
+                                {v.descripcion && <p className="text-slate-500 text-xs">{v.descripcion}</p>}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-slate-300">{LOGO_LABEL_MAP[v.logo_tipo] || v.logo_tipo}</span>
+                              </td>
+                              <td className="px-4 py-3 text-slate-400 text-xs">{v.categoria || "—"}</td>
+                              <td className="px-4 py-3 text-right font-bold text-white">{fmt(v.monto, v.moneda)}</td>
+                              <td className="px-4 py-3 text-center text-slate-400 text-xs">{v.dia_vencimiento}</td>
+                              <td className="px-4 py-3 text-center">
+                                {v.estado === "pagado" ? (
+                                  <span className="flex items-center justify-center gap-1 text-emerald-400 text-xs font-semibold">
+                                    <Check className="w-3.5 h-3.5" /> Pagado
+                                  </span>
+                                ) : v.estado === "vencido" ? (
+                                  <span className="flex items-center justify-center gap-1 text-red-400 text-xs font-semibold">
+                                    <AlertTriangle className="w-3.5 h-3.5" /> Vencido
+                                  </span>
+                                ) : (
+                                  <span className="flex items-center justify-center gap-1 text-amber-400 text-xs font-semibold">
+                                    <Clock className="w-3.5 h-3.5" /> Pendiente
+                                  </span>
+                                )}
+                                {v.estado === "pagado" && v.pago?.fecha_pago && (
+                                  <p className="text-slate-500 text-xs mt-0.5">{v.pago.fecha_pago}</p>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                {v.estado === "pagado" ? (
+                                  hasPermission("costos_fijos.editar") && (
+                                    <button onClick={() => handleAnularPagoCosto(v)}
+                                      className="flex items-center gap-1 mx-auto px-3 py-1 bg-red-600/20 text-red-400 rounded-lg hover:bg-red-600/40 transition-colors text-xs">
+                                      <X className="w-3.5 h-3.5" /> Anular
+                                    </button>
+                                  )
+                                ) : (
+                                  hasPermission("costos_fijos.editar") && (
+                                    <button onClick={() => { setPagoCostoForm({ monto_pagado: v.monto, fecha_pago: hoy(), notas: "", tiene_factura: false, nro_factura: "" }); setShowPagoCostoModal(v); }}
+                                      className="flex items-center gap-1 mx-auto px-3 py-1 bg-emerald-600/30 text-emerald-300 rounded-lg hover:bg-emerald-600/50 transition-colors text-xs">
+                                      <Check className="w-3.5 h-3.5" /> Pagar
+                                    </button>
+                                  )
+                                )}
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex items-center justify-center gap-2">
+                                  {hasPermission("costos_fijos.editar") && (
+                                    <button onClick={() => { const src=costos.find(c=>c.id===v.costo_id)||v; if(src){ setEditingCostoId(src.id||src.costo_id); setCostoFormData({logo_tipo:src.logo_tipo||"arandujar",nombre:src.nombre||"",descripcion:src.descripcion||"",categoria:src.categoria||"",monto:src.monto||"",moneda:src.moneda||"PYG",tipo_cambio:src.tipo_cambio||"",frecuencia:src.frecuencia||"mensual",dia_vencimiento:src.dia_vencimiento||1,fecha_inicio:src.fecha_inicio||new Date().toISOString().slice(0,10),fecha_fin:src.fecha_fin||"",activo:src.activo!==false,notas:src.notas||""}); setShowCostoForm(true); } }}
+                                      className="text-slate-400 hover:text-blue-400 transition-colors"><Edit className="w-4 h-4" /></button>
+                                  )}
+                                  {hasPermission("costos_fijos.eliminar") && (
+                                    <button onClick={() => { const src=costos.find(c=>c.id===v.costo_id)||v; if(src) handleDeleteCosto({...src, id: src.id||src.costo_id}); }}
+                                      className="text-slate-400 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  </>
+                );
+              })()}
+            </div>
+          );
+        })()}
+
+        {/* MODAL: Nuevo/Editar Costo Fijo */}
+        <AnimatePresence>
+          {showCostoForm && (
+            <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+              className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4"
+              onClick={e => e.target===e.currentTarget && setShowCostoForm(false)}>
+              <motion.div initial={{scale:0.95,opacity:0}} animate={{scale:1,opacity:1}} exit={{scale:0.95,opacity:0}}
+                className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between p-5 border-b border-white/10">
+                  <h2 className="font-heading text-lg text-white">{editingCostoId ? "Editar costo fijo" : "Nuevo costo fijo"}</h2>
+                  <button onClick={() => setShowCostoForm(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
+                </div>
+                <form onSubmit={handleSaveCosto} className="p-5 space-y-4">
+                  <div>
+                    <label className="text-slate-400 text-xs mb-2 block">Empresa *</label>
+                    <div className="flex gap-2">
+                      {[["arandujar","Arandu&JAR"],["arandu","Arandu"],["jar","JAR"]].map(([v,l]) => (
+                        <button key={v} type="button" onClick={() => setCostoFormData(f=>({...f,logo_tipo:v}))}
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${costoFormData.logo_tipo===v?"bg-blue-600 border-blue-600 text-white":"border-white/10 text-slate-400 hover:text-white bg-white/5"}`}>{l}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs mb-1 block">Nombre *</label>
+                    <input required type="text" value={costoFormData.nombre} onChange={e=>setCostoFormData(f=>({...f,nombre:e.target.value}))}
+                      placeholder="Ej: Hosting VPS, Internet, IPS..."
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/60"/>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-slate-400 text-xs mb-1 block">Categoría</label>
+                      <input type="text" list="costos-cat-list" value={costoFormData.categoria} onChange={e=>setCostoFormData(f=>({...f,categoria:e.target.value}))}
+                        placeholder="Seleccioná o escribí..."
+                        className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/60"/>
+                      <datalist id="costos-cat-list">
+                        {["Hosting / Servidores","Dominios","Software / Licencias","Telefonía / Internet","Servicios Básicos","Impuestos / Tasas","Alquiler","Publicidad","Seguros","Otros"].map(c=><option key={c} value={c}/>)}
+                      </datalist>
+                    </div>
+                    <div>
+                      <label className="text-slate-400 text-xs mb-1 block">Descripción</label>
+                      <input type="text" value={costoFormData.descripcion} onChange={e=>setCostoFormData(f=>({...f,descripcion:e.target.value}))}
+                        className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/60"/>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-slate-400 text-xs mb-1 block">Monto *</label>
+                      <input required type="number" min="0" step="any" value={costoFormData.monto} onChange={e=>setCostoFormData(f=>({...f,monto:e.target.value}))}
+                        className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/60"/>
+                    </div>
+                    <div>
+                      <label className="text-slate-400 text-xs mb-1 block">Moneda</label>
+                      <select value={costoFormData.moneda} onChange={e=>setCostoFormData(f=>({...f,moneda:e.target.value}))}
+                        className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/60">
+                        <option value="PYG">₲ Guaraníes</option>
+                        <option value="USD">$ Dólares</option>
+                      </select>
+                    </div>
+                  </div>
+                  {costoFormData.moneda === "USD" && (
+                    <div>
+                      <label className="text-slate-400 text-xs mb-1 block">Tipo de cambio (opcional)</label>
+                      <input type="number" min="0" step="any" value={costoFormData.tipo_cambio} onChange={e=>setCostoFormData(f=>({...f,tipo_cambio:e.target.value}))}
+                        placeholder="Ej: 7600" className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/60"/>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-slate-400 text-xs mb-1 block">Frecuencia</label>
+                      <select value={costoFormData.frecuencia} onChange={e=>setCostoFormData(f=>({...f,frecuencia:e.target.value}))}
+                        className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/60">
+                        {[["unica","Única vez"],["mensual","Mensual"],["trimestral","Trimestral"],["semestral","Semestral"],["anual","Anual"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </div>
+                    {costoFormData.frecuencia !== "unica" && (
+                      <div>
+                        <label className="text-slate-400 text-xs mb-1 block">Día de vencimiento</label>
+                        <input type="number" min="1" max="31" value={costoFormData.dia_vencimiento} onChange={e=>setCostoFormData(f=>({...f,dia_vencimiento:e.target.value}))}
+                          className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/60"/>
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-slate-400 text-xs mb-1 block">Fecha inicio *</label>
+                      <input required type="date" value={costoFormData.fecha_inicio} onChange={e=>setCostoFormData(f=>({...f,fecha_inicio:e.target.value}))}
+                        className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/60"/>
+                    </div>
+                    <div>
+                      <label className="text-slate-400 text-xs mb-1 block">Fecha fin (opcional)</label>
+                      <input type="date" value={costoFormData.fecha_fin} onChange={e=>setCostoFormData(f=>({...f,fecha_fin:e.target.value}))}
+                        className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/60"/>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs mb-1 block">Notas</label>
+                    <textarea value={costoFormData.notas} onChange={e=>setCostoFormData(f=>({...f,notas:e.target.value}))} rows={2}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/60 resize-none"/>
+                  </div>
+                  <div className="flex gap-3 pt-1">
+                    <button type="button" onClick={() => setShowCostoForm(false)}
+                      className="flex-1 py-2.5 rounded-lg border border-white/10 text-slate-400 text-sm hover:text-white transition-all">Cancelar</button>
+                    <button type="submit"
+                      className="flex-1 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-all flex items-center justify-center gap-2">
+                      <Save className="w-4 h-4"/> {editingCostoId ? "Actualizar" : "Guardar"}
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* MODAL: Registrar Pago de Costo Fijo */}
+        <AnimatePresence>
+          {showPagoCostoModal && (
+            <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+              className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4"
+              onClick={e => e.target===e.currentTarget && setShowPagoCostoModal(null)}>
+              <motion.div initial={{scale:0.95,opacity:0}} animate={{scale:1,opacity:1}} exit={{scale:0.95,opacity:0}}
+                className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-sm p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="font-heading text-lg text-white">Registrar pago</h2>
+                  <button onClick={() => setShowPagoCostoModal(null)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
+                </div>
+                <div className="bg-arandu-dark/60 border border-white/5 rounded-xl p-3 mb-4 text-sm space-y-1">
+                  <p className="text-slate-400">Costo: <span className="text-white">{showPagoCostoModal.nombre}</span></p>
+                  <p className="text-slate-400">Período: <span className="text-white">{showPagoCostoModal.periodo || mesLabel(filtroMes)}</span></p>
+                </div>
+                <form onSubmit={handleRegistrarPagoCosto} className="space-y-3">
+                  <div>
+                    <label className="text-slate-400 text-xs mb-1 block">Monto pagado ({showPagoCostoModal.moneda === "USD" ? "$" : "₲"})</label>
+                    <input required type="number" min="0" step="any" value={pagoCostoForm.monto_pagado} onChange={e=>setPagoCostoForm(f=>({...f,monto_pagado:e.target.value}))}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/60"/>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs mb-1 block">Fecha de pago</label>
+                    <input required type="date" value={pagoCostoForm.fecha_pago} onChange={e=>setPagoCostoForm(f=>({...f,fecha_pago:e.target.value}))}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/60"/>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs mb-1 block">Notas</label>
+                    <input type="text" value={pagoCostoForm.notas} onChange={e=>setPagoCostoForm(f=>({...f,notas:e.target.value}))}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/60"/>
+                  </div>
+                  <div className="bg-arandu-dark/40 border border-white/5 rounded-xl p-3 space-y-3">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <div onClick={() => setPagoCostoForm(f=>({...f, tiene_factura: !f.tiene_factura, nro_factura: ""}))}
+                        className={`w-10 h-6 rounded-full transition-colors flex-shrink-0 flex items-center ${pagoCostoForm.tiene_factura ? "bg-emerald-500" : "bg-slate-600"}`}>
+                        <div className={`w-4 h-4 bg-white rounded-full shadow transition-transform mx-1 ${pagoCostoForm.tiene_factura ? "translate-x-4" : "translate-x-0"}`}/>
+                      </div>
+                      <div>
+                        <p className="text-white text-sm font-medium">Tiene factura</p>
+                        <p className="text-slate-500 text-xs">IVA crédito fiscal aplicable</p>
+                      </div>
+                    </label>
+                    {pagoCostoForm.tiene_factura && (
+                      <div>
+                        <label className="text-slate-400 text-xs mb-1 block">Número de factura *</label>
+                        <input required type="text" value={pagoCostoForm.nro_factura} onChange={e=>setPagoCostoForm(f=>({...f,nro_factura:e.target.value}))}
+                          placeholder="Ej: 001-001-0000123"
+                          className="w-full bg-arandu-dark border border-emerald-500/30 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/60"/>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-3 pt-1">
+                    <button type="button" onClick={() => setShowPagoCostoModal(null)}
+                      className="flex-1 py-2.5 rounded-lg border border-white/10 text-slate-400 text-sm hover:text-white transition-all">Cancelar</button>
+                    <button type="submit"
+                      className="flex-1 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-all flex items-center justify-center gap-2">
+                      <Check className="w-4 h-4"/> Confirmar pago
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* ═══════════════ TAB: SUELDOS ════════════════════════════════════════ */}
         {tab === "sueldos" && (
-          <div>
-            {/* Buscador chips + acción */}
-            <div className="flex flex-col md:flex-row gap-3 mb-5">
-              <ChipSearch
-                chips={sueldosChips} setChips={setSueldosChips}
-                inputVal={sueldosInput} setInputVal={setSueldosInput}
-                placeholder="Buscar por nombre, apellido, cargo, sueldo, activo… (Enter para agregar filtro)"
-                accentColor="purple"
-                actionButton={
-                  <Link to="/admin/empleados">
-                    <Button variant="outline" className="border-white/10 text-slate-300 gap-2 whitespace-nowrap">
-                      <ExternalLink className="w-4 h-4" /> Gestionar empleados
-                    </Button>
-                  </Link>
-                }
-              />
-            </div>
-            {sueldosChips.length === 0 && !sueldosInput && <p className="text-slate-500 text-xs mb-3">{empleados.filter(e => e.activo).length} empleados activos</p>}
-            {loadingEmpleados ? (
-              <div className="text-center py-12 text-purple-400 animate-pulse">Cargando...</div>
-            ) : (
-              <div className="space-y-2">
-                {empleados.filter(e => {
-                  const texto = [e.nombre, e.apellido, e.cargo, String(e.sueldo_base||""), e.activo ? "activo" : "inactivo"].filter(Boolean).join(" ");
-                  return matchChips(sueldosChips, sueldosInput, texto);
-                }).map(e => (
-                  <div key={e.id} className={`bg-arandu-dark-light border rounded-xl p-4 flex items-center justify-between ${e.activo ? "border-white/5" : "border-white/5 opacity-50"}`}>
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-purple-500/15 rounded-full flex items-center justify-center">
-                        <Users className="w-5 h-5 text-purple-400" />
-                      </div>
-                      <div>
-                        <h3 className="text-white font-medium">{e.nombre} {e.apellido}</h3>
-                        <p className="text-slate-500 text-xs">{e.cargo || "Sin cargo"} · {e.aplica_ips ? "Con IPS" : "Sin IPS"}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-white font-bold">{fmt(e.sueldo_base, e.moneda)}</p>
-                      <span className={`text-xs ${e.activo ? "text-emerald-400" : "text-slate-500"}`}>
-                        {e.activo ? "Activo" : "Inactivo"}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-                {empleados.length === 0 && (
-                  <div className="text-center py-12 text-slate-500">No hay empleados. <Link to="/admin/empleados" className="text-arandu-blue hover:underline">Ir a Empleados</Link></div>
-                )}
+          <SueldosTab
+            sueldosVenc={sueldosVenc}
+            loadingSueldos={loadingSueldos}
+            adelantosMap={adelantosMap}
+            extrasMap={extrasMap}
+            sueldosChips={sueldosChips}
+            setSueldosChips={setSueldosChips}
+            sueldosInput={sueldosInput}
+            setSueldosInput={setSueldosInput}
+            filtroTipo={filtroTipo}
+            filtroMes={filtroMes}
+            hasPermission={hasPermission}
+            openSueldo={openSueldo}
+            openAdelanto={openAdelanto}
+            openExtra={openExtra}
+            handleDeleteSueldo={handleDeleteSueldo}
+            fmtSueldo={fmtSueldo}
+            estadoBadgeSueldo={estadoBadgeSueldo}
+            LOGO_LABEL_EMP={LOGO_LABEL_EMP}
+            matchChips={matchChips}
+            mesLabel={mesLabel}
+          />
+        )}
+
+        {/* MODAL: Registrar Sueldo */}
+        {showSueldoModal && selectedEmp && (
+          <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4"
+            onClick={e => e.target===e.currentTarget && setShowSueldoModal(false)}>
+            <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between p-5 border-b border-white/10">
+                <div>
+                  <h2 className="text-white font-heading text-lg">Registrar sueldo</h2>
+                  <p className="text-slate-400 text-sm">{selectedEmp.nombre} {selectedEmp.apellido} — {mesLabel(filtroMes)}</p>
+                </div>
+                <button onClick={() => setShowSueldoModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
               </div>
-            )}
+              <div className="p-5 space-y-4">
+                {/* Desglose */}
+                <div className="bg-white/5 border border-white/10 rounded-lg p-3 space-y-2 text-sm">
+                  <p className="text-slate-400 text-xs font-medium mb-1">Desglose del pago</p>
+                  <div className="flex justify-between text-slate-300"><span>Sueldo base</span><span>{fmtSueldo(parseFloat(selectedEmp.sueldo_base)||0, selectedEmp.moneda)}</span></div>
+                  {extrasPeriodo.length > 0 && <div className="flex justify-between text-green-300"><span>+ Extras ({extrasPeriodo.length})</span><span>+ {fmtSueldo(extrasPeriodo.reduce((s,e)=>s+(e.monto||0),0), selectedEmp.moneda)}</span></div>}
+                  {selectedEmp.aplica_ips !== false && <div className="flex justify-between text-blue-300"><span>− IPS</span><span>− {fmtSueldo(parseFloat(formSueldo.descuento_ips)||0, "PYG")}</span></div>}
+                  {adelantosPeriodo.length > 0 && <div className="flex justify-between text-amber-300"><span>− Adelantos ({adelantosPeriodo.length})</span><span>− {fmtSueldo(adelantosPeriodo.reduce((s,a)=>s+(a.monto||0),0), selectedEmp.moneda)}</span></div>}
+                  {formSueldo.descuentos_adicionales.length > 0 && <div className="flex justify-between text-red-300"><span>− Descuentos adicionales</span><span>− {fmtSueldo(formSueldo.descuentos_adicionales.reduce((s,d)=>s+(parseFloat(d.monto)||0),0), "PYG")}</span></div>}
+                  <div className="border-t border-white/10 pt-2 flex justify-between font-semibold">
+                    <span className="text-white">Total a pagar</span>
+                    <span className="text-emerald-300">{fmtSueldo(calcMontoAPagar(selectedEmp, adelantosPeriodo, extrasPeriodo, formSueldo.descuentos_adicionales), selectedEmp.moneda)}</span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-slate-400 text-xs mb-1 block">Moneda</label>
+                    <select value={formSueldo.moneda} onChange={e=>setFormSueldo(f=>({...f,moneda:e.target.value}))}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500/60">
+                      {["PYG","USD","BRL","ARS"].map(m=><option key={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs mb-1 block">Fecha de pago *</label>
+                    <input type="date" value={formSueldo.fecha_pago} onChange={e=>setFormSueldo(f=>({...f,fecha_pago:e.target.value}))}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500/60"/>
+                  </div>
+                </div>
+                {selectedEmp.aplica_ips !== false && (
+                  <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-3">
+                    <label className="text-blue-300 text-xs mb-1 block">Descuento IPS</label>
+                    <input type="number" value={formSueldo.descuento_ips} onChange={e=>setFormSueldo(f=>({...f,descuento_ips:e.target.value}))}
+                      className="w-full bg-white/5 border border-blue-500/30 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"/>
+                  </div>
+                )}
+                {extrasPeriodo.length > 0 && (
+                  <div className="bg-green-900/20 border border-green-500/30 rounded-lg p-3 space-y-2">
+                    <p className="text-green-300 text-xs font-medium">Extras este período</p>
+                    {extrasPeriodo.map(e => (
+                      <div key={e.id} className="flex items-center justify-between text-xs">
+                        <span className="text-slate-300">{e.fecha} — {e.descripcion||"Extra"}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-green-300 font-medium">{fmtSueldo(e.monto, e.moneda)}</span>
+                          <button onClick={() => handleDeleteExtra(e.id)} className="text-red-400 hover:text-red-300"><X className="w-3 h-3"/></button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {adelantosPeriodo.length > 0 && (
+                  <div className="bg-amber-900/20 border border-amber-500/30 rounded-lg p-3 space-y-2">
+                    <p className="text-amber-300 text-xs font-medium">Adelantos este período</p>
+                    {adelantosPeriodo.map(a => (
+                      <div key={a.id} className="flex items-center justify-between text-xs">
+                        <span className="text-slate-300">{a.fecha}{a.notas?` — ${a.notas}`:""}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-amber-300 font-medium">{fmtSueldo(a.monto, a.moneda)}</span>
+                          <button onClick={() => handleDeleteAdelanto(a.id)} className="text-red-400 hover:text-red-300"><X className="w-3 h-3"/></button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="bg-red-900/20 border border-red-500/30 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-red-300 text-xs font-medium">Descuentos adicionales</p>
+                    <button type="button" onClick={() => setFormSueldo(f=>({...f,descuentos_adicionales:[...f.descuentos_adicionales,{descripcion:"",monto:""}]}))}
+                      className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1"><Plus className="w-3 h-3"/> Agregar</button>
+                  </div>
+                  {formSueldo.descuentos_adicionales.length === 0 && <p className="text-slate-600 text-xs">Sin descuentos adicionales</p>}
+                  {formSueldo.descuentos_adicionales.map((d,idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <input type="text" value={d.descripcion}
+                        onChange={e=>setFormSueldo(f=>{const a=[...f.descuentos_adicionales];a[idx]={...a[idx],descripcion:e.target.value};return{...f,descuentos_adicionales:a};})}
+                        placeholder="Descripción" className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none"/>
+                      <input type="number" value={d.monto}
+                        onChange={e=>setFormSueldo(f=>{const a=[...f.descuentos_adicionales];a[idx]={...a[idx],monto:e.target.value};return{...f,descuentos_adicionales:a};})}
+                        placeholder="Monto" className="w-28 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-white text-xs focus:outline-none"/>
+                      <button onClick={()=>setFormSueldo(f=>({...f,descuentos_adicionales:f.descuentos_adicionales.filter((_,i)=>i!==idx)}))} className="text-red-400 hover:text-red-300"><X className="w-3.5 h-3.5"/></button>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Notas</label>
+                  <textarea value={formSueldo.notas} onChange={e=>setFormSueldo(f=>({...f,notas:e.target.value}))} rows={2}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none resize-none"/>
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button onClick={() => setShowSueldoModal(false)} className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm">Cancelar</button>
+                  <button onClick={handleSaveSueldo} disabled={savingSueldo}
+                    className="flex-1 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+                    {savingSueldo ? "Guardando..." : `Confirmar — ${fmtSueldo(calcMontoAPagar(selectedEmp, adelantosPeriodo, extrasPeriodo, formSueldo.descuentos_adicionales), formSueldo.moneda)}`}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* ═══════════════ TAB: PAGOS PENDIENTES ══════════════════════════════ */}
-        {tab === "pagos" && (
-          <div>
-            {/* Buscador chips */}
-            <div className="mb-5">
-              <ChipSearch
-                chips={pagPendChips} setChips={setPagPendChips}
-                inputVal={pagPendInput} setInputVal={setPagPendInput}
-                placeholder="Buscar por proveedor, monto, fecha, vencido, pendiente… (Enter para agregar filtro)"
-                accentColor="red"
-              />
+        {/* MODAL: Adelanto */}
+        {showAdelantoModal && adelantoEmp && (
+          <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4"
+            onClick={e => e.target===e.currentTarget && setShowAdelantoModal(false)}>
+            <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-sm p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-white font-heading text-lg">Registrar adelanto</h2>
+                  <p className="text-slate-400 text-sm">{adelantoEmp.nombre} {adelantoEmp.apellido} — {mesLabel(filtroMes)}</p>
+                </div>
+                <button onClick={() => setShowAdelantoModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
+              </div>
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-300 mb-4">
+                Sueldo neto: <strong>{fmtSueldo((parseFloat(adelantoEmp.sueldo_base)||0) - calcularIPS(adelantoEmp), adelantoEmp.moneda||"PYG")}</strong>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Monto *</label>
+                  <input type="number" min="0" step="any" autoFocus value={formAdelanto.monto} onChange={e=>setFormAdelanto(f=>({...f,monto:e.target.value}))}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500/60"/>
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Fecha *</label>
+                  <input type="date" value={formAdelanto.fecha} onChange={e=>setFormAdelanto(f=>({...f,fecha:e.target.value}))}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500/60"/>
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Notas (opcional)</label>
+                  <input type="text" value={formAdelanto.notas} onChange={e=>setFormAdelanto(f=>({...f,notas:e.target.value}))}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500/60"/>
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button onClick={() => setShowAdelantoModal(false)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm">Cancelar</button>
+                  <button onClick={handleSaveAdelanto} disabled={savingAdelanto}
+                    className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+                    {savingAdelanto ? "Guardando..." : "Registrar adelanto"}
+                  </button>
+                </div>
+              </div>
             </div>
-            {loadingPagos ? (
-              <div className="text-center py-12 text-red-400 animate-pulse">Cargando...</div>
-            ) : pagosPendientes.length === 0 ? (
-              <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
-                <Check className="w-14 h-14 text-emerald-600 mx-auto mb-3" />
-                <p className="text-slate-400">Todo al día, sin pagos pendientes</p>
+          </div>
+        )}
+
+        {/* MODAL: Extra */}
+        {showExtraModal && extraEmp && (
+          <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4"
+            onClick={e => e.target===e.currentTarget && setShowExtraModal(false)}>
+            <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-sm p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-white font-heading text-lg">Registrar extra</h2>
+                  <p className="text-slate-400 text-sm">{extraEmp.nombre} {extraEmp.apellido} — {mesLabel(filtroMes)}</p>
+                </div>
+                <button onClick={() => setShowExtraModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
               </div>
-            ) : (
-              <div className="space-y-2">
-                {pagosPendientes.filter(item => {
-                  const texto = [
-                    item.proveedor_nombre, item.nombre,
-                    String(item.saldo_pendiente||item.monto||""),
-                    item.fecha, item.estado_pago, item.estado, item._tipo
-                  ].filter(Boolean).join(" ");
-                  return matchChips(pagPendChips, pagPendInput, texto);
-                }).map((item, i) => (
-                  <div key={i} className={`bg-arandu-dark-light border rounded-xl p-4 flex items-center justify-between ${item.estado_pago === "vencido" || item.estado === "vencido" ? "border-red-500/30" : "border-white/5"}`}>
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${item._tipo === "compra" ? "bg-orange-500/15" : "bg-blue-500/15"}`}>
-                        {item._tipo === "compra" ? <ShoppingCart className="w-5 h-5 text-orange-400" /> : <Calendar className="w-5 h-5 text-blue-400" />}
-                      </div>
-                      <div>
-                        <h3 className="text-white font-medium">
-                          {item._tipo === "compra" ? item.proveedor_nombre : item.nombre}
-                        </h3>
-                        <p className="text-slate-500 text-xs">
-                          {item._tipo === "compra" ? `Compra · ${item.fecha}` : `Costo fijo · vence día ${item.dia_vencimiento}`}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-right">
-                        <p className="text-white font-bold">
-                          {item._tipo === "compra" ? fmt(item.saldo_pendiente, item.moneda) : fmt(item.monto, item.moneda)}
-                        </p>
-                        <span className={`text-xs px-2 py-0.5 rounded-full border ${ESTADO_STYLES[item.estado_pago || (item.estado === "vencido" ? "vencido" : "pendiente")]}`}>
-                          {ESTADO_LABELS[item.estado_pago] || item.estado}
-                        </span>
-                      </div>
-                      {item._tipo === "compra" && (
-                        <Button
-                          onClick={() => { setShowPagoModal(item); setTab("compras"); fetchCompras(); setTimeout(() => setShowPagoModal(item), 100); }}
-                          variant="ghost"
-                          className="text-emerald-400 hover:bg-emerald-500/10 text-xs px-2"
-                        >
-                          <Banknote className="w-4 h-4 mr-1" /> Pagar
-                        </Button>
-                      )}
-                      {item._tipo === "costo" && (
-                        <Link to="/admin/costos-fijos">
-                          <Button variant="ghost" className="text-blue-400 hover:bg-blue-500/10 text-xs px-2">
-                            <ExternalLink className="w-4 h-4 mr-1" /> Ver
-                          </Button>
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                ))}
+              <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-xs text-green-300 mb-4">
+                Los extras se <strong>suman</strong> al sueldo base al momento del registro de pago.
               </div>
-            )}
+              <div className="space-y-3">
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Descripción</label>
+                  <input type="text" value={formExtra.descripcion} onChange={e=>setFormExtra(f=>({...f,descripcion:e.target.value}))}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-green-500/60"/>
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Monto *</label>
+                  <input type="number" min="0" step="any" autoFocus value={formExtra.monto} onChange={e=>setFormExtra(f=>({...f,monto:e.target.value}))}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-green-500/60"/>
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Fecha *</label>
+                  <input type="date" value={formExtra.fecha} onChange={e=>setFormExtra(f=>({...f,fecha:e.target.value}))}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-green-500/60"/>
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Notas (opcional)</label>
+                  <input type="text" value={formExtra.notas} onChange={e=>setFormExtra(f=>({...f,notas:e.target.value}))}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-green-500/60"/>
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button onClick={() => setShowExtraModal(false)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm">Cancelar</button>
+                  <button onClick={handleSaveExtra} disabled={savingExtra}
+                    className="flex-1 py-2.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+                    {savingExtra ? "Guardando..." : "Registrar extra"}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

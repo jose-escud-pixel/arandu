@@ -396,6 +396,8 @@ class PagoCostoFijoCreate(BaseModel):
     monto_pagado: float
     fecha_pago: str
     notas: Optional[str] = None
+    tiene_factura: bool = False
+    nro_factura: Optional[str] = None   # Nro. de factura para IVA crédito fiscal
 
 class PagoCostoFijoResponse(BaseModel):
     id: str
@@ -404,6 +406,8 @@ class PagoCostoFijoResponse(BaseModel):
     monto_pagado: float
     fecha_pago: str
     notas: Optional[str] = None
+    tiene_factura: bool = False
+    nro_factura: Optional[str] = None
     created_at: str
 
 

@@ -18,6 +18,7 @@ class CompraItemCreate(BaseModel):
     precio_unitario: float
     subtotal: float = 0
     producto_id: Optional[str] = None   # referencia al catálogo de productos
+    iva: Optional[int] = 10             # tasa IVA del ítem: 0, 5 ó 10
 
 class CompraCreate(BaseModel):
     logo_tipo: str = "arandujar"

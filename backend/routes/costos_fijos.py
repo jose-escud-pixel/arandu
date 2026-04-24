@@ -208,6 +208,8 @@ async def registrar_pago_costo(costo_id: str, data: PagoCostoFijoCreate, user: d
         "monto_pagado": data.monto_pagado,
         "fecha_pago": data.fecha_pago,
         "notas": data.notas,
+        "tiene_factura": data.tiene_factura,
+        "nro_factura": data.nro_factura if data.tiene_factura else None,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.pagos_costos_fijos.insert_one(doc)
