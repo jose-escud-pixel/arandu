@@ -1,3 +1,8 @@
+// ⚠️  DEPRECATED — Esta página ya no se usa.
+// Toda la funcionalidad fue migrada a EgresosPage.jsx (tab "Costos Fijos" / "Sueldos").
+// Mantener este archivo solo como referencia histórica. NO modificar.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import React, { useState, useEffect, useContext } from "react";
 import { Link } from "react-router-dom";
 import { AuthContext } from "../App";

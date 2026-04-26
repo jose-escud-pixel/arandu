@@ -181,155 +181,257 @@ function estadoBadgeSueldo(estado) {
     React.createElement(Clock,{className:"w-3.5 h-3.5"}),"Pendiente");
 }
 
-function SueldosTab({ sueldosVenc, loadingSueldos, adelantosMap, extrasMap, sueldosChips, setSueldosChips,
-  sueldosInput, setSueldosInput, filtroTipo, filtroMes, hasPermission, openSueldo, openAdelanto, openExtra,
-  handleDeleteSueldo, mesLabel }) {
-  const pagados   = sueldosVenc.filter(e => e.estado === "pagado");
+function SueldosTab({ sueldosVenc, loadingSueldos, empleados, loadingEmpleados,
+  adelantosMap, extrasMap, sueldosChips, setSueldosChips, sueldosInput, setSueldosInput,
+  sueldosSubTab, setSueldosSubTab, filtroTipo, filtroMes, hasPermission,
+  openSueldo, openAdelanto, openExtra, handleDeleteSueldo,
+  openCreateEmpleado, openEditEmpleado, handleToggleEmpleado, handleDeleteEmpleado, mesLabel }) {
+  const pagados    = sueldosVenc.filter(e => e.estado === "pagado");
   const pendientes = sueldosVenc.filter(e => e.estado !== "pagado");
   const montoPagado = pagados.reduce((s,e) => s + (e.sueldo_registrado?.monto_pagado || e.sueldo_base || 0), 0);
-  const vencidos  = sueldosVenc.filter(e => e.estado === "vencido").length;
-  const filtrados = sueldosVenc.filter(e => {
+  const vencidos   = sueldosVenc.filter(e => e.estado === "vencido").length;
+  const filtradosSueldos = sueldosVenc.filter(e => {
     const texto = [e.nombre, e.apellido, e.cargo, String(e.sueldo_base||""), e.logo_tipo,
       LOGO_LABEL_EMP[e.logo_tipo]?.label||"", e.estado].filter(Boolean).join(" ");
+    return matchChips(sueldosChips, sueldosInput, texto);
+  });
+  const filtradosEmp = empleados.filter(e => {
+    const texto = [e.nombre, e.apellido, e.cargo, e.logo_tipo, LOGO_LABEL_EMP[e.logo_tipo]?.label||"",
+      String(e.sueldo_base||""), e.activo?"activo":"inactivo"].filter(Boolean).join(" ");
     return matchChips(sueldosChips, sueldosInput, texto);
   });
 
   return (
     <div>
+      {/* Sub-tabs + buscador + botón nuevo */}
       <div className="flex flex-col gap-3 mb-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex gap-1 bg-arandu-dark-light border border-white/5 rounded-xl p-1">
+            {[["sueldos","Sueldos del período"],["empleados","Empleados"]].map(([v,l]) => (
+              <button key={v} onClick={() => setSueldosSubTab(v)}
+                className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-all ${sueldosSubTab===v?"bg-violet-600 text-white shadow":"text-slate-400 hover:text-white"}`}>
+                {l}
+              </button>
+            ))}
+          </div>
+          {sueldosSubTab === "empleados" && hasPermission("empleados.crear") && (
+            <button onClick={openCreateEmpleado}
+              className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium px-4 py-2 rounded-lg whitespace-nowrap">
+              <Plus className="w-4 h-4"/> Nuevo empleado
+            </button>
+          )}
+        </div>
         <ChipSearch
           chips={sueldosChips} setChips={setSueldosChips}
           inputVal={sueldosInput} setInputVal={setSueldosInput}
-          placeholder="Buscar por nombre, cargo, empresa, estado… (Enter para filtrar)"
+          placeholder={sueldosSubTab==="sueldos" ? "Buscar por nombre, cargo, empresa, estado…" : "Buscar por nombre, cargo, empresa, activo…"}
           accentColor="purple"
-          actionButton={
-            <a href="/admin/empleados">
-              <button className="flex items-center gap-2 border border-white/10 text-slate-300 text-sm px-3 py-2 rounded-lg hover:bg-white/5 whitespace-nowrap">
-                <ExternalLink className="w-4 h-4"/> Gestionar empleados
-              </button>
-            </a>
-          }
         />
       </div>
 
-      {filtroTipo === "todos" ? (
-        <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
-          <Users className="w-12 h-12 text-slate-700 mx-auto mb-2"/>
-          <p className="text-slate-400">Seleccioná "Por mes" para ver los sueldos del período</p>
-        </div>
-      ) : (
-        <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <div className="bg-arandu-dark-light border border-white/5 rounded-xl p-4">
-              <p className="text-slate-400 text-xs mb-1">Empleados</p>
-              <p className="text-white font-bold text-2xl">{sueldosVenc.length}</p>
-            </div>
-            <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
-              <p className="text-emerald-400 text-xs mb-1">Pagados</p>
-              <p className="text-emerald-300 font-bold text-2xl">{pagados.length}</p>
-            </div>
-            <div className={`border rounded-xl p-4 ${vencidos>0?"bg-red-500/10 border-red-500/20":"bg-amber-500/10 border-amber-500/20"}`}>
-              <p className={`text-xs mb-1 ${vencidos>0?"text-red-400":"text-amber-400"}`}>Pendientes{vencidos>0?` / ${vencidos} vencido${vencidos>1?"s":""}`:""}</p>
-              <p className={`font-bold text-2xl ${vencidos>0?"text-red-300":"text-amber-300"}`}>{pendientes.length}</p>
-            </div>
-            <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl p-4">
-              <p className="text-violet-400 text-xs mb-1">Total pagado</p>
-              <p className="text-violet-300 font-bold text-lg">{fmtSueldo(montoPagado,"PYG")}</p>
-            </div>
+      {/* ── Sub-tab: SUELDOS DEL PERÍODO ── */}
+      {sueldosSubTab === "sueldos" && (
+        filtroTipo === "todos" ? (
+          <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
+            <Users className="w-12 h-12 text-slate-700 mx-auto mb-2"/>
+            <p className="text-slate-400">Seleccioná "Por mes" para ver los sueldos del período</p>
           </div>
-
-          {loadingSueldos ? (
-            <div className="text-center py-10 text-violet-400 animate-pulse">Cargando sueldos...</div>
-          ) : filtrados.length === 0 ? (
-            <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
-              <Users className="w-12 h-12 text-slate-700 mx-auto mb-2"/>
-              <p className="text-slate-400">Sin empleados para este período</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              <div className="bg-arandu-dark-light border border-white/5 rounded-xl p-4">
+                <p className="text-slate-400 text-xs mb-1">Empleados</p>
+                <p className="text-white font-bold text-2xl">{sueldosVenc.length}</p>
+              </div>
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
+                <p className="text-emerald-400 text-xs mb-1">Pagados</p>
+                <p className="text-emerald-300 font-bold text-2xl">{pagados.length}</p>
+              </div>
+              <div className={`border rounded-xl p-4 ${vencidos>0?"bg-red-500/10 border-red-500/20":"bg-amber-500/10 border-amber-500/20"}`}>
+                <p className={`text-xs mb-1 ${vencidos>0?"text-red-400":"text-amber-400"}`}>Pendientes{vencidos>0?` / ${vencidos} vencido${vencidos>1?"s":""}`:""}</p>
+                <p className={`font-bold text-2xl ${vencidos>0?"text-red-300":"text-amber-300"}`}>{pendientes.length}</p>
+              </div>
+              <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl p-4">
+                <p className="text-violet-400 text-xs mb-1">Total pagado</p>
+                <p className="text-violet-300 font-bold text-lg">{fmtSueldo(montoPagado,"PYG")}</p>
+              </div>
             </div>
-          ) : (
-            <div className="bg-arandu-dark-light border border-white/5 rounded-xl overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-white/10 text-slate-400 text-xs uppercase">
-                    <th className="px-4 py-3 text-left">Empleado</th>
-                    <th className="px-4 py-3 text-left">Empresa</th>
-                    <th className="px-4 py-3 text-left">Cargo</th>
-                    <th className="px-4 py-3 text-right">Sueldo base</th>
-                    <th className="px-4 py-3 text-right">Pagado</th>
-                    <th className="px-4 py-3 text-center">Estado</th>
-                    <th className="px-4 py-3 text-center">Acción</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtrados.map(emp => (
-                    <tr key={emp.id} className={`border-b border-white/5 transition-colors ${emp.estado==="vencido"?"bg-red-500/5 hover:bg-red-500/10":"hover:bg-white/[0.03]"}`}>
-                      <td className="px-4 py-3">
-                        <p className="text-white font-medium">{emp.nombre} {emp.apellido}</p>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {adelantosMap[emp.id] && (
-                            <span className="inline-flex items-center gap-1 bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs px-1.5 py-0.5 rounded-full">
-                              <DollarSign className="w-3 h-3"/> Adelanto: {fmtSueldo(adelantosMap[emp.id].reduce((s,a)=>s+(a.monto||0),0), adelantosMap[emp.id][0]?.moneda||"PYG")}
-                            </span>
-                          )}
-                          {extrasMap[emp.id] && (
-                            <span className="inline-flex items-center gap-1 bg-green-500/15 border border-green-500/30 text-green-300 text-xs px-1.5 py-0.5 rounded-full">
-                              <Star className="w-3 h-3"/> Extra: {fmtSueldo(extrasMap[emp.id].reduce((s,e)=>s+(e.monto||0),0), extrasMap[emp.id][0]?.moneda||"PYG")}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        {emp.logo_tipo && LOGO_LABEL_EMP[emp.logo_tipo] && (
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${LOGO_LABEL_EMP[emp.logo_tipo].chip}`}>
-                            {LOGO_LABEL_EMP[emp.logo_tipo].label}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-slate-400 text-xs">{emp.cargo||"—"}</td>
-                      <td className="px-4 py-3 text-right text-slate-300 text-xs">{fmtSueldo(emp.sueldo_base, emp.moneda)}</td>
-                      <td className="px-4 py-3 text-right text-xs">
-                        {emp.estado==="pagado" && emp.sueldo_registrado?.monto_pagado != null
-                          ? <span className="text-emerald-300 font-medium">{fmtSueldo(emp.sueldo_registrado.monto_pagado, emp.moneda)}</span>
-                          : <span className="text-slate-600">—</span>}
-                      </td>
-                      <td className="px-4 py-3 text-center">{estadoBadgeSueldo(emp.estado)}</td>
-                      <td className="px-4 py-3 text-center">
-                        {emp.estado === "pagado" ? (
-                          <div className="flex items-center justify-center gap-2">
-                            <span className="text-slate-500 text-xs">{emp.sueldo_registrado?.fecha_pago||""}</span>
-                            {hasPermission("empleados.editar") && (
-                              <button onClick={() => handleDeleteSueldo(emp.sueldo_registrado?.id)} className="text-slate-500 hover:text-red-400 transition-colors" title="Deshacer pago">
-                                <X className="w-4 h-4"/>
-                              </button>
+            {loadingSueldos ? (
+              <div className="text-center py-10 text-violet-400 animate-pulse">Cargando sueldos...</div>
+            ) : filtradosSueldos.length === 0 ? (
+              <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
+                <Users className="w-12 h-12 text-slate-700 mx-auto mb-2"/>
+                <p className="text-slate-400">Sin empleados para este período</p>
+              </div>
+            ) : (
+              <div className="bg-arandu-dark-light border border-white/5 rounded-xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10 text-slate-400 text-xs uppercase">
+                      <th className="px-4 py-3 text-left">Empleado</th>
+                      <th className="px-4 py-3 text-left">Empresa</th>
+                      <th className="px-4 py-3 text-left">Cargo</th>
+                      <th className="px-4 py-3 text-right">Sueldo base</th>
+                      <th className="px-4 py-3 text-right">Pagado</th>
+                      <th className="px-4 py-3 text-center">Estado</th>
+                      <th className="px-4 py-3 text-center">Acción</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtradosSueldos.map(emp => (
+                      <tr key={emp.id} className={`border-b border-white/5 transition-colors ${emp.estado==="vencido"?"bg-red-500/5 hover:bg-red-500/10":"hover:bg-white/[0.03]"}`}>
+                        <td className="px-4 py-3">
+                          <p className="text-white font-medium">{emp.nombre} {emp.apellido}</p>
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {adelantosMap[emp.id] && (
+                              <span className="inline-flex items-center gap-1 bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs px-1.5 py-0.5 rounded-full">
+                                <DollarSign className="w-3 h-3"/> Adelanto: {fmtSueldo(adelantosMap[emp.id].reduce((s,a)=>s+(a.monto||0),0), adelantosMap[emp.id][0]?.moneda||"PYG")}
+                              </span>
+                            )}
+                            {extrasMap[emp.id] && (
+                              <span className="inline-flex items-center gap-1 bg-green-500/15 border border-green-500/30 text-green-300 text-xs px-1.5 py-0.5 rounded-full">
+                                <Star className="w-3 h-3"/> Extra: {fmtSueldo(extrasMap[emp.id].reduce((s,e)=>s+(e.monto||0),0), extrasMap[emp.id][0]?.moneda||"PYG")}
+                              </span>
                             )}
                           </div>
-                        ) : hasPermission("empleados.editar") && (
-                          <div className="flex flex-col items-center gap-1.5">
-                            <button onClick={() => openSueldo(emp)} className="flex items-center gap-1.5 mx-auto bg-violet-600/20 hover:bg-violet-600/40 text-violet-300 text-xs px-3 py-1.5 rounded-lg transition-colors">
-                              <DollarSign className="w-3.5 h-3.5"/> Registrar pago
-                            </button>
-                            <div className="flex gap-1.5">
-                              <button onClick={() => openAdelanto(emp)} className="flex items-center gap-1 bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 text-xs px-2 py-1 rounded-lg transition-colors">
-                                <DollarSign className="w-3 h-3"/> Adelanto
-                              </button>
-                              <button onClick={() => openExtra(emp)} className="flex items-center gap-1 bg-green-600/20 hover:bg-green-600/40 text-green-300 text-xs px-2 py-1 rounded-lg transition-colors">
-                                <Star className="w-3 h-3"/> Extra
-                              </button>
+                        </td>
+                        <td className="px-4 py-3">
+                          {emp.logo_tipo && LOGO_LABEL_EMP[emp.logo_tipo] && (
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${LOGO_LABEL_EMP[emp.logo_tipo].chip}`}>
+                              {LOGO_LABEL_EMP[emp.logo_tipo].label}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-400 text-xs">{emp.cargo||"—"}</td>
+                        <td className="px-4 py-3 text-right text-slate-300 text-xs">{fmtSueldo(emp.sueldo_base, emp.moneda)}</td>
+                        <td className="px-4 py-3 text-right text-xs">
+                          {emp.estado==="pagado" && emp.sueldo_registrado?.monto_pagado != null
+                            ? <span className="text-emerald-300 font-medium">{fmtSueldo(emp.sueldo_registrado.monto_pagado, emp.moneda)}</span>
+                            : <span className="text-slate-600">—</span>}
+                        </td>
+                        <td className="px-4 py-3 text-center">{estadoBadgeSueldo(emp.estado)}</td>
+                        <td className="px-4 py-3 text-center">
+                          {emp.estado === "pagado" ? (
+                            <div className="flex items-center justify-center gap-2">
+                              <span className="text-slate-500 text-xs">{emp.sueldo_registrado?.fecha_pago||""}</span>
+                              {hasPermission("empleados.editar") && (
+                                <button onClick={() => handleDeleteSueldo(emp.sueldo_registrado?.id)} className="text-slate-500 hover:text-red-400 transition-colors" title="Deshacer pago">
+                                  <X className="w-4 h-4"/>
+                                </button>
+                              )}
                             </div>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
+                          ) : hasPermission("empleados.editar") && (
+                            <div className="flex flex-col items-center gap-1.5">
+                              <button onClick={() => openSueldo(emp)} className="flex items-center gap-1.5 mx-auto bg-violet-600/20 hover:bg-violet-600/40 text-violet-300 text-xs px-3 py-1.5 rounded-lg transition-colors">
+                                <DollarSign className="w-3.5 h-3.5"/> Registrar pago
+                              </button>
+                              <div className="flex gap-1.5">
+                                <button onClick={() => openAdelanto(emp)} className="flex items-center gap-1 bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 text-xs px-2 py-1 rounded-lg transition-colors">
+                                  <DollarSign className="w-3 h-3"/> Adelanto
+                                </button>
+                                <button onClick={() => openExtra(emp)} className="flex items-center gap-1 bg-green-600/20 hover:bg-green-600/40 text-green-300 text-xs px-2 py-1 rounded-lg transition-colors">
+                                  <Star className="w-3 h-3"/> Extra
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )
+      )}
+
+      {/* ── Sub-tab: GESTIONAR EMPLEADOS ── */}
+      {sueldosSubTab === "empleados" && (
+        loadingEmpleados ? (
+          <div className="text-center py-10 text-violet-400 animate-pulse">Cargando empleados...</div>
+        ) : filtradosEmp.length === 0 ? (
+          <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
+            <Users className="w-12 h-12 text-slate-700 mx-auto mb-2"/>
+            <p className="text-slate-400 mb-2">No hay empleados registrados</p>
+            {hasPermission("empleados.crear") && (
+              <button onClick={openCreateEmpleado} className="text-sm text-violet-400 hover:text-violet-300">+ Agregar el primero</button>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filtradosEmp.map(emp => {
+              const ipsAmt = emp.aplica_ips !== false ? calcularIPS(emp) : 0;
+              return (
+                <div key={emp.id} className={`bg-arandu-dark-light border rounded-xl p-4 transition-all ${emp.activo?"border-white/10 hover:border-violet-500/30":"border-white/5 opacity-60"}`}>
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm ${emp.activo?"bg-violet-600/30 text-violet-300":"bg-slate-700 text-slate-500"}`}>
+                        {emp.nombre?.[0]}{emp.apellido?.[0]}
+                      </div>
+                      <div>
+                        <p className="text-white font-medium text-sm">{emp.nombre} {emp.apellido}</p>
+                        <p className="text-slate-500 text-xs">{emp.cargo||"Sin cargo"}</p>
+                      </div>
+                    </div>
+                    {!emp.activo && <span className="text-xs text-slate-500 bg-white/5 px-2 py-0.5 rounded">Inactivo</span>}
+                  </div>
+                  {emp.logo_tipo && LOGO_LABEL_EMP[emp.logo_tipo] && (
+                    <span className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium mb-2 ${LOGO_LABEL_EMP[emp.logo_tipo].chip}`}>
+                      {LOGO_LABEL_EMP[emp.logo_tipo].label}
+                    </span>
+                  )}
+                  <div className="space-y-0.5 text-xs text-slate-400 mb-3">
+                    {emp.email && <p>✉ {emp.email}</p>}
+                    {emp.telefono && <p>📞 {emp.telefono}</p>}
+                    <p>Ingreso: {emp.fecha_ingreso}</p>
+                    {emp.fecha_egreso && <p className="text-red-400">Egreso: {emp.fecha_egreso}</p>}
+                    {emp.aplica_ips !== false && (
+                      <p className="text-blue-400/70">IPS: {fmtSueldo(ipsAmt, "PYG")}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between border-t border-white/10 pt-3">
+                    <span className="text-violet-300 text-sm font-semibold">
+                      {fmtSueldo(emp.sueldo_base, emp.moneda)}<span className="text-slate-500 font-normal text-xs">/mes</span>
+                    </span>
+                    <div className="flex items-center gap-1">
+                      {hasPermission("empleados.editar") && (
+                        <>
+                          <button onClick={() => handleToggleEmpleado(emp)} className="p-1.5 text-slate-500 hover:text-slate-300 rounded transition-colors" title={emp.activo?"Desactivar":"Activar"}>
+                            {emp.activo ? <UserX className="w-4 h-4"/> : <UserCheck className="w-4 h-4"/>}
+                          </button>
+                          <button onClick={() => openEditEmpleado(emp)} className="p-1.5 text-slate-500 hover:text-blue-400 rounded transition-colors">
+                            <Pencil className="w-4 h-4"/>
+                          </button>
+                        </>
+                      )}
+                      {hasPermission("empleados.eliminar") && (
+                        <button onClick={() => handleDeleteEmpleado(emp)} className="p-1.5 text-slate-500 hover:text-red-400 rounded transition-colors">
+                          <Trash2 className="w-4 h-4"/>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )
       )}
     </div>
   );
 }
 
+
+const CARGOS_EMP = ["Técnico IT","Desarrollador","Soporte","Administrador","Gerente","Contador","Recepcionista","Ventas","Otro"];
+const MONEDAS_EMP = ["PYG","USD","BRL","ARS"];
+const emptyEmpleado = {
+  logo_tipo: "arandujar", nombre: "", apellido: "", cargo: "", email: "", telefono: "",
+  fecha_ingreso: "", fecha_egreso: "", activo: true, sueldo_base: "", moneda: "PYG",
+  tipo_cambio: "", aplica_ips: true, base_calculo_ips: "minimo",
+  sueldo_minimo_vigente: 2899048, ips_monto_manual: "", notas: "",
+};
+function toFloatEmp(v) { const n = parseFloat(v); return isNaN(n) ? null : n; }
 // ─────────────────────────────────────────────────────────────────────────────
 const EgresosPage = () => {
   const { token, user, hasPermission, activeEmpresaPropia } = useContext(AuthContext);
@@ -385,12 +487,17 @@ const EgresosPage = () => {
 
   // ── Sueldos state ───────────────────────────────────────────────────────────
   const emptySueldoForm = () => ({ periodo: filtroMes, moneda: "PYG", tipo_cambio: "", fecha_pago: hoy(), descuento_ips: "", notas: "", descuentos_adicionales: [] });
+  const [sueldosSubTab, setSueldosSubTab] = useState("sueldos"); // "sueldos" | "empleados"
   const [empleados, setEmpleados] = useState([]);
   const [loadingEmpleados, setLoadingEmpleados] = useState(false);
   const [sueldosVenc, setSueldosVenc] = useState([]);
   const [loadingSueldos, setLoadingSueldos] = useState(false);
   const [adelantosMap, setAdelantosMap] = useState({});
   const [extrasMap, setExtrasMap] = useState({});
+  const [showEmpleadoModal, setShowEmpleadoModal] = useState(false);
+  const [editingEmpleado, setEditingEmpleado] = useState(null);
+  const [formEmp, setFormEmp] = useState({...emptyEmpleado});
+  const [savingEmp, setSavingEmp] = useState(false);
   const [showSueldoModal, setShowSueldoModal] = useState(false);
   const [selectedEmp, setSelectedEmp] = useState(null);
   const [formSueldo, setFormSueldo] = useState(emptySueldoForm());
@@ -704,6 +811,49 @@ const EgresosPage = () => {
       toast.success("Registro eliminado");
       fetchSueldosVenc(filtroMes);
     } catch { toast.error("Error al eliminar"); }
+  };
+
+
+  // ── Empleado CRUD handlers ─────────────────────────────────────────────────
+  const openCreateEmpleado = () => { setEditingEmpleado(null); setFormEmp({...emptyEmpleado, logo_tipo: activeEmpresaPropia?.slug || "arandujar"}); setShowEmpleadoModal(true); };
+  const openEditEmpleado = (emp) => {
+    setEditingEmpleado(emp);
+    setFormEmp({ logo_tipo: emp.logo_tipo||"arandujar", nombre: emp.nombre||"", apellido: emp.apellido||"",
+      cargo: emp.cargo||"", email: emp.email||"", telefono: emp.telefono||"", fecha_ingreso: emp.fecha_ingreso||"",
+      fecha_egreso: emp.fecha_egreso||"", activo: emp.activo!==false, sueldo_base: emp.sueldo_base??"",
+      moneda: emp.moneda||"PYG", tipo_cambio: emp.tipo_cambio??"", aplica_ips: emp.aplica_ips!==false,
+      base_calculo_ips: emp.base_calculo_ips||"minimo", sueldo_minimo_vigente: emp.sueldo_minimo_vigente??2899048,
+      ips_monto_manual: emp.ips_monto_manual??"", notas: emp.notas||"",
+    });
+    setShowEmpleadoModal(true);
+  };
+  const handleSaveEmpleado = async () => {
+    if (!formEmp.nombre.trim() || !formEmp.apellido.trim()) { toast.error("Nombre y apellido son obligatorios"); return; }
+    if (!formEmp.fecha_ingreso) { toast.error("Fecha de ingreso requerida"); return; }
+    if (!formEmp.sueldo_base) { toast.error("Sueldo base requerido"); return; }
+    setSavingEmp(true);
+    try {
+      const payload = { ...formEmp, sueldo_base: parseFloat(formEmp.sueldo_base)||0,
+        tipo_cambio: toFloatEmp(formEmp.tipo_cambio), fecha_egreso: formEmp.fecha_egreso||null,
+        cargo: formEmp.cargo||null, email: formEmp.email||null, telefono: formEmp.telefono||null, notas: formEmp.notas||null };
+      const url = editingEmpleado ? `${API}/admin/empleados/${editingEmpleado.id}` : `${API}/admin/empleados`;
+      const method = editingEmpleado ? "PUT" : "POST";
+      const res = await fetch(url, { method, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail||"Error"); }
+      toast.success(editingEmpleado ? "Empleado actualizado" : "Empleado creado");
+      setShowEmpleadoModal(false);
+      fetchEmpleados();
+    } catch (e) { toast.error(e.message); }
+    finally { setSavingEmp(false); }
+  };
+  const handleToggleEmpleado = async (emp) => {
+    const res = await fetch(`${API}/admin/empleados/${emp.id}/toggle`, { method: "PATCH", headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { toast.success(emp.activo ? "Desactivado" : "Activado"); fetchEmpleados(); }
+  };
+  const handleDeleteEmpleado = async (emp) => {
+    if (!window.confirm(`¿Eliminar a ${emp.nombre} ${emp.apellido}? También se eliminarán todos sus registros.`)) return;
+    const res = await fetch(`${API}/admin/empleados/${emp.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) { toast.success("Empleado eliminado"); fetchEmpleados(); } else toast.error("Error al eliminar");
   };
 
   const openAdelanto = (emp) => { setAdelantoEmp(emp); setFormAdelanto({ monto: "", fecha: hoy(), notas: "" }); setShowAdelantoModal(true); };
@@ -1665,27 +1815,163 @@ const EgresosPage = () => {
         {/* ═══════════════ TAB: SUELDOS ════════════════════════════════════════ */}
         {tab === "sueldos" && (
           <SueldosTab
-            sueldosVenc={sueldosVenc}
-            loadingSueldos={loadingSueldos}
-            adelantosMap={adelantosMap}
-            extrasMap={extrasMap}
-            sueldosChips={sueldosChips}
-            setSueldosChips={setSueldosChips}
-            sueldosInput={sueldosInput}
-            setSueldosInput={setSueldosInput}
-            filtroTipo={filtroTipo}
-            filtroMes={filtroMes}
+            sueldosVenc={sueldosVenc} loadingSueldos={loadingSueldos}
+            empleados={empleados} loadingEmpleados={loadingEmpleados}
+            adelantosMap={adelantosMap} extrasMap={extrasMap}
+            sueldosChips={sueldosChips} setSueldosChips={setSueldosChips}
+            sueldosInput={sueldosInput} setSueldosInput={setSueldosInput}
+            sueldosSubTab={sueldosSubTab} setSueldosSubTab={setSueldosSubTab}
+            filtroTipo={filtroTipo} filtroMes={filtroMes}
             hasPermission={hasPermission}
-            openSueldo={openSueldo}
-            openAdelanto={openAdelanto}
-            openExtra={openExtra}
+            openSueldo={openSueldo} openAdelanto={openAdelanto} openExtra={openExtra}
             handleDeleteSueldo={handleDeleteSueldo}
-            fmtSueldo={fmtSueldo}
-            estadoBadgeSueldo={estadoBadgeSueldo}
-            LOGO_LABEL_EMP={LOGO_LABEL_EMP}
-            matchChips={matchChips}
+            openCreateEmpleado={openCreateEmpleado} openEditEmpleado={openEditEmpleado}
+            handleToggleEmpleado={handleToggleEmpleado} handleDeleteEmpleado={handleDeleteEmpleado}
             mesLabel={mesLabel}
           />
+        )}
+
+        {/* MODAL: Nuevo/Editar Empleado */}
+        {showEmpleadoModal && (
+          <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4"
+            onClick={e => e.target===e.currentTarget && setShowEmpleadoModal(false)}>
+            <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between p-6 border-b border-white/10">
+                <h2 className="text-white font-heading font-bold text-lg">{editingEmpleado?"Editar empleado":"Nuevo empleado"}</h2>
+                <button onClick={() => setShowEmpleadoModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
+              </div>
+              <div className="p-6 space-y-4">
+                {/* Empresa */}
+                <div>
+                  <label className="text-slate-400 text-xs block mb-2">Empresa</label>
+                  <div className="flex gap-2 flex-wrap">
+                    {[["arandujar","Arandu&JAR","bg-blue-600"],["arandu","Arandu","bg-emerald-600"],["jar","JAR","bg-red-600"]].map(([v,l,c]) => (
+                      <button key={v} type="button" onClick={() => setFormEmp(f=>({...f,logo_tipo:v}))}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${formEmp.logo_tipo===v?`${c} text-white border-transparent`:"border-white/10 text-slate-400 hover:text-white"}`}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-slate-400 text-xs block mb-1">Nombre *</label>
+                    <input value={formEmp.nombre} onChange={e=>setFormEmp(f=>({...f,nombre:e.target.value}))} placeholder="Juan"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500/60"/>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs block mb-1">Apellido *</label>
+                    <input value={formEmp.apellido} onChange={e=>setFormEmp(f=>({...f,apellido:e.target.value}))} placeholder="Pérez"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500/60"/>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs block mb-1">Cargo</label>
+                  <select value={formEmp.cargo} onChange={e=>setFormEmp(f=>({...f,cargo:e.target.value}))}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500/60">
+                    <option value="">— Sin cargo —</option>
+                    {CARGOS_EMP.map(c=><option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-slate-400 text-xs block mb-1">Email</label>
+                    <input type="email" value={formEmp.email} onChange={e=>setFormEmp(f=>({...f,email:e.target.value}))}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500/60"/>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs block mb-1">Teléfono</label>
+                    <input value={formEmp.telefono} onChange={e=>setFormEmp(f=>({...f,telefono:e.target.value}))}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500/60"/>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-slate-400 text-xs block mb-1">Fecha de ingreso *</label>
+                    <input type="date" value={formEmp.fecha_ingreso} onChange={e=>setFormEmp(f=>({...f,fecha_ingreso:e.target.value}))}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500/60"/>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs block mb-1">Fecha de egreso</label>
+                    <input type="date" value={formEmp.fecha_egreso} onChange={e=>setFormEmp(f=>({...f,fecha_egreso:e.target.value}))}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500/60"/>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="col-span-2">
+                    <label className="text-slate-400 text-xs block mb-1">Sueldo base *</label>
+                    <input type="number" value={formEmp.sueldo_base} onChange={e=>setFormEmp(f=>({...f,sueldo_base:e.target.value}))} placeholder="0"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500/60"/>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs block mb-1">Moneda</label>
+                    <select value={formEmp.moneda} onChange={e=>setFormEmp(f=>({...f,moneda:e.target.value}))}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500/60">
+                      {MONEDAS_EMP.map(m=><option key={m}>{m}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {formEmp.moneda !== "PYG" && (
+                  <div>
+                    <label className="text-slate-400 text-xs block mb-1">Tipo de cambio (a PYG)</label>
+                    <input type="number" value={formEmp.tipo_cambio} onChange={e=>setFormEmp(f=>({...f,tipo_cambio:e.target.value}))} placeholder="7500"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500/60"/>
+                  </div>
+                )}
+                {/* IPS */}
+                <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-blue-300 text-xs font-medium">Configuración IPS</span>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <span className="text-slate-400 text-xs">Aplica IPS</span>
+                      <input type="checkbox" checked={formEmp.aplica_ips} onChange={e=>setFormEmp(f=>({...f,aplica_ips:e.target.checked}))} className="w-4 h-4 accent-blue-500"/>
+                    </label>
+                  </div>
+                  {formEmp.aplica_ips && (
+                    <>
+                      <div>
+                        <label className="text-slate-400 text-xs block mb-1">Base de cálculo IPS</label>
+                        <div className="flex gap-1.5">
+                          {[["minimo","Mín. vigente"],["sueldo","Sueldo (9%)"],["manual","Base manual"]].map(([v,l]) => (
+                            <button key={v} type="button" onClick={() => setFormEmp(f=>({...f,base_calculo_ips:v}))}
+                              className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${formEmp.base_calculo_ips===v?"bg-blue-600 border-blue-600 text-white":"border-white/10 text-slate-400 hover:text-white bg-white/5"}`}>
+                              {l}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      {formEmp.base_calculo_ips === "minimo" && (
+                        <div>
+                          <label className="text-slate-400 text-xs block mb-1">Salario mínimo vigente</label>
+                          <input type="number" value={formEmp.sueldo_minimo_vigente} onChange={e=>setFormEmp(f=>({...f,sueldo_minimo_vigente:parseFloat(e.target.value)||2899048}))}
+                            className="w-full bg-white/5 border border-blue-500/30 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"/>
+                        </div>
+                      )}
+                      {formEmp.base_calculo_ips === "manual" && (
+                        <div>
+                          <label className="text-slate-400 text-xs block mb-1">Base manual para calcular 9%</label>
+                          <input type="number" value={formEmp.ips_monto_manual} onChange={e=>setFormEmp(f=>({...f,ips_monto_manual:e.target.value}))} placeholder="0"
+                            className="w-full bg-white/5 border border-blue-500/30 rounded-lg px-3 py-2 text-white text-sm focus:outline-none"/>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs block mb-1">Notas</label>
+                  <textarea value={formEmp.notas} onChange={e=>setFormEmp(f=>({...f,notas:e.target.value}))} rows={2}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none resize-none"/>
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button onClick={() => setShowEmpleadoModal(false)} className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm">Cancelar</button>
+                  <button onClick={handleSaveEmpleado} disabled={savingEmp}
+                    className="flex-1 px-4 py-2.5 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+                    {savingEmp?"Guardando...":editingEmpleado?"Actualizar":"Guardar empleado"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* MODAL: Registrar Sueldo */}
