@@ -150,6 +150,7 @@ async def create_empresa(data: EmpresaCreate, admin: dict = Depends(require_auth
         "aplica_retencion": data.aplica_retencion,
         "porcentaje_retencion": data.porcentaje_retencion,
         "notas": data.notas,
+        "logo_tipo": data.logo_tipo or "arandujar",
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.empresas.insert_one(empresa_doc)
@@ -199,7 +200,8 @@ async def update_empresa(empresa_id: str, data: EmpresaCreate, user: dict = Depe
         {"$set": {"nombre": data.nombre, "razon_social": data.razon_social, "ruc": data.ruc,
                   "direccion": data.direccion, "telefono": data.telefono, "email": data.email,
                   "contacto": data.contacto, "aplica_retencion": data.aplica_retencion,
-                  "porcentaje_retencion": data.porcentaje_retencion, "notas": data.notas}}
+                  "porcentaje_retencion": data.porcentaje_retencion, "notas": data.notas,
+                  "logo_tipo": data.logo_tipo or "arandujar"}}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Empresa no encontrada")

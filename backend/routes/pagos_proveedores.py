@@ -104,6 +104,8 @@ async def get_pagos_proveedores(
     logo_tipo: Optional[str] = None,
     proveedor_id: Optional[str] = None,
     estado: Optional[str] = None,   # pendiente | pagado | vencido
+    mes: Optional[str] = None,      # YYYY-MM
+    anio: Optional[str] = None,     # YYYY
     user: dict = Depends(require_authenticated)
 ):
     if not has_permission(user, "pagos_proveedores.ver"):
@@ -117,6 +119,17 @@ async def get_pagos_proveedores(
         query["logo_tipo"] = logo_tipo
     if proveedor_id:
         query["proveedor_id"] = proveedor_id
+    # Filtro por período (sobre fecha_pago para pagados, fecha_vencimiento para pendientes)
+    if mes:
+        query["$or"] = [
+            {"fecha_pago": {"$regex": f"^{mes}"}},
+            {"fecha_vencimiento": {"$regex": f"^{mes}"}},
+        ]
+    elif anio:
+        query["$or"] = [
+            {"fecha_pago": {"$regex": f"^{anio}"}},
+            {"fecha_vencimiento": {"$regex": f"^{anio}"}},
+        ]
 
     pagos = await db.pagos_proveedores.find(query, {"_id": 0}).sort("fecha_vencimiento", -1).to_list(1000)
 

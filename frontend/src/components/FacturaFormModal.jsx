@@ -10,7 +10,6 @@ const FacturaFormModal = ({
   API,
   empresas,          // lista de clientes/empresas
   presupuestosDisp,  // todos los presupuestos disponibles
-  contratosDisp,     // todos los contratos disponibles
   activeEmpresaPropia,
   hasPermission,
 }) => {
@@ -31,7 +30,6 @@ const FacturaFormModal = ({
     estado: "pendiente",
     fecha_vencimiento: "",
     presupuesto_ids: [],
-    contrato_id: "",
     notas: "",
     conceptos: [defaultConcepto()],
     // internal — no se envía al backend
@@ -45,216 +43,32 @@ const FacturaFormModal = ({
   // Populate form when editing
   useEffect(() => {
     if (isEdit && factura) {
-      // Try to find empresa_id from the linked presupuesto
       let empresaId = "";
       if (factura.presupuesto_ids?.length > 0) {
         const pres = presupuestosDisp.find(p => factura.presupuesto_ids.includes(p.id));
         if (pres) empresaId = String(pres.empresa_id || "");
-      } else if (factura.contrato_id) {
-        const cont = contratosDisp.find(c => c.id === factura.contrato_id);
-        if (cont) empresaId = String(cont.empresa_id || "");
       }
-      if (!empresaId && factura.razon_social) {
-        const emp = empresas.find(e =>
-          (e.razon_social || e.nombre) === factura.razon_social
-        );
-        if (emp) empresaId = String(emp.id || "");
-      }
-
-      // Conceptos: intentar reconstruir desde concepto string si no hay array
-      let conceptos = [defaultConcepto()];
-      if (factura.conceptos?.length > 0) {
-        conceptos = factura.conceptos.map(c => ({
-          descripcion: c.descripcion || "",
-          cantidad: c.cantidad || 1,
-          precio_unitario: c.precio_unitario || 0,
-          subtotal: c.subtotal || c.monto || (c.cantidad * c.precio_unitario) || 0,
-        }));
-      } else if (factura.concepto) {
-        conceptos = [{
-          descripcion: factura.concepto,
-          cantidad: 1,
-          precio_unitario: factura.monto || 0,
-          subtotal: factura.monto || 0,
-        }];
-      }
-
       setForm({
-        numero: factura.numero || "",
-        fecha: factura.fecha ? factura.fecha.slice(0, 10) : new Date().toISOString().slice(0, 10),
-        forma_pago: factura.forma_pago || "contado",
-        razon_social: factura.razon_social || "",
-        ruc: factura.ruc || "",
-        moneda: factura.moneda || "PYG",
-        tipo_cambio: factura.tipo_cambio || "",
-        estado: factura.estado || "pendiente",
-        fecha_vencimiento: factura.fecha_vencimiento ? factura.fecha_vencimiento.slice(0, 10) : "",
-        presupuesto_ids: factura.presupuesto_ids?.length > 0
-          ? factura.presupuesto_ids
-          : (factura.presupuesto_id ? [factura.presupuesto_id] : []),
-        contrato_id: factura.contrato_id || "",
-        notas: factura.notas || "",
-        conceptos,
-        _empresa_id: empresaId,
-        _razon_social_locked: !!empresaId,
+        logo_tipo:          factura.logo_tipo || "arandujar",
+        tipo:               factura.tipo || "emitida",
+        forma_pago:         factura.forma_pago || "contado",
+        numero:             factura.numero || "",
+        fecha:              factura.fecha ? factura.fecha.slice(0, 10) : "",
+        fecha_vencimiento:  factura.fecha_vencimiento ? factura.fecha_vencimiento.slice(0, 10) : "",
+        razon_social:       factura.razon_social || "",
+        ruc:                factura.ruc || "",
+        concepto:           factura.concepto || "",
+        conceptos:          factura.conceptos || [],
+        monto:              factura.monto ?? "",
+        moneda:             factura.moneda || "PYG",
+        tipo_cambio:        factura.tipo_cambio ?? "",
+        estado:             factura.estado || "pendiente",
+        notas:              factura.notas || "",
+        presupuesto_ids:    factura.presupuesto_ids || (factura.presupuesto_id ? [factura.presupuesto_id] : []),
+        _empresa_id:        empresaId,
       });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEdit]);
-
-  // Escape key closes
-  useEffect(() => {
-    const esc = (e) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", esc);
-    return () => document.removeEventListener("keydown", esc);
-  }, [onClose]);
-
-  // ── Client filter ──────────────────────────────────────────────
-  const presupuestosFiltrados = useMemo(() => {
-    if (!form._empresa_id) return presupuestosDisp;
-    return presupuestosDisp.filter(
-      (p) => String(p.empresa_id) === String(form._empresa_id) || !p.empresa_id
-    );
-  }, [presupuestosDisp, form._empresa_id]);
-
-  const contratosFiltrados = useMemo(() => {
-    if (!form._empresa_id) return contratosDisp;
-    return contratosDisp.filter(
-      (c) => String(c.empresa_id) === String(form._empresa_id) || !c.empresa_id
-    );
-  }, [contratosDisp, form._empresa_id]);
-
-  // ── Helpers ────────────────────────────────────────────────────
-  const set = (field, val) => setForm((f) => ({ ...f, [field]: val }));
-
-  const handleEmpresaChange = (empresaId) => {
-    if (!empresaId) {
-      // Deseleccionar — liberar razon_social y ruc para edición manual
-      setForm(f => ({
-        ...f,
-        _empresa_id: "",
-        _razon_social_locked: false,
-        presupuesto_ids: [],
-        contrato_id: "",
-      }));
-      return;
-    }
-    const emp = empresas.find((e) => String(e.id) === String(empresaId));
-    setForm((f) => ({
-      ...f,
-      _empresa_id: empresaId,
-      _razon_social_locked: true,
-      razon_social: emp ? (emp.razon_social || emp.nombre || f.razon_social) : f.razon_social,
-      ruc: emp ? (emp.ruc || f.ruc) : f.ruc,
-      presupuesto_ids: [],
-      contrato_id: "",
-    }));
-  };
-
-  const handleConceptoChange = (idx, field, val) => {
-    setForm((f) => {
-      const conceptos = f.conceptos.map((c, i) => {
-        if (i !== idx) return c;
-        const updated = { ...c, [field]: val };
-        if (field === "cantidad" || field === "precio_unitario") {
-          const qty = field === "cantidad" ? parseFloat(val) || 0 : parseFloat(updated.cantidad) || 0;
-          const price = field === "precio_unitario" ? parseFloat(val) || 0 : parseFloat(updated.precio_unitario) || 0;
-          updated.subtotal = qty * price;
-        }
-        return updated;
-      });
-      return { ...f, conceptos };
-    });
-  };
-
-  const addConcepto = () =>
-    setForm((f) => ({ ...f, conceptos: [...f.conceptos, defaultConcepto()] }));
-
-  const removeConcepto = (idx) =>
-    setForm((f) => ({ ...f, conceptos: f.conceptos.filter((_, i) => i !== idx) }));
-
-  const togglePresupuesto = (id) => {
-    setForm((f) => {
-      const ids = f.presupuesto_ids.includes(id)
-        ? f.presupuesto_ids.filter((x) => x !== id)
-        : [...f.presupuesto_ids, id];
-      return { ...f, presupuesto_ids: ids, contrato_id: ids.length > 0 ? "" : f.contrato_id };
-    });
-  };
-
-  const totalMonto = form.conceptos.reduce((s, c) => s + (parseFloat(c.subtotal) || 0), 0);
-
-  const fmtMonto = (n, moneda = form.moneda) => {
-    if (!n && n !== 0) return "-";
-    if (moneda === "USD") return `USD ${Number(n).toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    return `₲ ${Math.round(n).toLocaleString("es-PY")}`;
-  };
-
-  // ── Save ───────────────────────────────────────────────────────
-  const handleSave = async () => {
-    if (!form.razon_social.trim()) {
-      toast.error("La razón social es requerida");
-      return;
-    }
-    if (!form.numero.trim()) {
-      toast.error("El número de factura es requerido");
-      return;
-    }
-    if (form.conceptos.length === 0 || !form.conceptos[0].descripcion.trim()) {
-      toast.error("Debe agregar al menos un concepto con descripción");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      // Build payload
-      const { _empresa_id, _razon_social_locked, conceptos, ...rest } = form;
-
-      // concepto (string requerido por el backend) y monto total
-      const concepto = conceptos.map(c => c.descripcion).filter(Boolean).join("; ") || "Servicio";
-      const monto = totalMonto;
-
-      const payload = {
-        ...rest,
-        logo_tipo: logoTipo,
-        tipo: "emitida",
-        concepto,
-        monto,
-        presupuesto_ids: form.presupuesto_ids,
-        presupuesto_id: form.presupuesto_ids.length === 1 ? form.presupuesto_ids[0] : null,
-      };
-
-      // Clean optional fields
-      if (!payload.contrato_id) delete payload.contrato_id;
-      if (!payload.tipo_cambio) delete payload.tipo_cambio;
-      if (!payload.fecha_vencimiento) delete payload.fecha_vencimiento;
-      if (!payload.notas) delete payload.notas;
-      if (!payload.ruc) delete payload.ruc;
-
-      const url = isEdit
-        ? `${API}/admin/facturas/${factura.id}`
-        : `${API}/admin/facturas`;
-      const method = isEdit ? "PUT" : "POST";
-
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || err.message || "Error al guardar");
-      }
-
-      toast.success(isEdit ? "Factura actualizada" : "Factura creada");
-      onSaved();
-    } catch (e) {
-      toast.error(e.message);
-    } finally {
-      setSaving(false);
-    }
-  };
+  }, [isEdit, factura, presupuestosDisp]);
 
   // ── Render ─────────────────────────────────────────────────────
   const inputCls =
@@ -405,7 +219,7 @@ const FacturaFormModal = ({
               </select>
               {form._empresa_id && (
                 <p className="text-xs text-blue-500 mt-1">
-                  Datos de empresa cargados. Presupuestos y contratos filtrados.
+                  Datos de empresa cargados. Presupuestos filtrados.
                 </p>
               )}
             </div>
@@ -578,35 +392,6 @@ const FacturaFormModal = ({
             </div>
           )}
 
-          {/* Vincular Contrato (XOR con presupuestos) */}
-          {contratosFiltrados.length > 0 && form.presupuesto_ids.length === 0 && (
-            <div className="border-t border-dashed border-gray-200 pt-4">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-                Vincular Contrato
-                {form._empresa_id && <span className="ml-1 text-blue-400 normal-case font-normal">(filtrado por empresa)</span>}
-              </p>
-              <select
-                className={inputCls}
-                value={form.contrato_id}
-                onChange={(e) => set("contrato_id", e.target.value)}
-              >
-                <option value="">— Sin contrato —</option>
-                {contratosFiltrados.map((c) => {
-                  const monto = c.monto_mensual || c.monto || 0;
-                  const monFmt = c.moneda === "USD"
-                    ? `USD ${Number(monto).toLocaleString("es-PY", { minimumFractionDigits: 2 })}`
-                    : `₲ ${Math.round(monto).toLocaleString("es-PY")}`;
-                  return (
-                    <option key={c.id} value={c.id}>
-                      {c.numero || `#${c.id.slice(-6)}`}
-                      {c.descripcion ? ` · ${c.descripcion.slice(0, 30)}` : ""}
-                      {monto ? ` · ${monFmt}` : ""}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-          )}
 
           {/* Notas */}
           <div className="border-t border-dashed border-gray-200 pt-4">

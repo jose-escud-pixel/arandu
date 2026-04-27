@@ -41,32 +41,6 @@ async def get_facturas(
     return facturas
 
 
-async def _registrar_cobro_contrato(fac: dict, monto_pagado: float = None, fecha_pago: str = None):
-    """
-    Crea un cobro_contrato si la factura está vinculada a un contrato y no existe
-    un cobro para ese periodo. Esto mantiene sincronizado el estado del contrato
-    y el cálculo del balance.
-    """
-    contrato_id = fac.get("contrato_id")
-    if not contrato_id:
-        return
-    fecha = fac.get("fecha_pago") or fecha_pago or fac.get("fecha", "")
-    periodo = fecha[:7] if fecha else datetime.now(timezone.utc).strftime("%Y-%m")
-    monto = monto_pagado or fac.get("monto_pagado") or fac.get("monto", 0)
-    # Solo crear si no existe ya un cobro para este contrato en este periodo
-    existing = await db.cobros_contratos.find_one({"contrato_id": contrato_id, "periodo": periodo})
-    if not existing:
-        cobro = {
-            "id": str(uuid.uuid4()),
-            "contrato_id": contrato_id,
-            "periodo": periodo,
-            "monto_pagado": float(monto),
-            "fecha": fecha[:10] if fecha else datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-            "notas": f"Cobro auto-registrado desde factura {fac.get('numero', '')}",
-            "from_factura_id": fac.get("id", ""),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        await db.cobros_contratos.insert_one(cobro)
 
 
 def _normalizar_presupuesto_ids(data_dict: dict) -> dict:
@@ -120,14 +94,6 @@ async def update_factura(factura_id: str, data: FacturaCreate, user: dict = Depe
     await log_auditoria(user, "facturas", "editar_factura",
                         f"Factura {factura_id} actualizada")
     fac_actualizada = {**fac, **updates}
-    # Si la factura está pagada y tiene contrato: solo marcar contrato como cobrado
-    # (el balance lee las facturas con contrato_id en su propia sección, sin cobros duplicados)
-    if fac_actualizada.get("estado") == "pagada" and fac_actualizada.get("tipo") == "emitida":
-        if fac_actualizada.get("contrato_id"):
-            await db.contratos.update_one(
-                {"id": fac_actualizada["contrato_id"]},
-                {"$set": {"estado": "cobrado"}}
-            )
     return fac_actualizada
 
 
@@ -152,24 +118,15 @@ async def update_estado_factura(
         updates["pagos"] = []        # limpiar historial de pagos al revertir
     await db.facturas.update_one({"id": factura_id}, {"$set": updates})
 
-    # Si la factura es emitida y se marca como pagada, auto-cobrar presupuestos y contratos vinculados
-    if estado == "pagada" and fac.get("tipo") == "emitida":
-        # Presupuestos vinculados
-        pids = list(fac.get("presupuesto_ids") or [])
-        if fac.get("presupuesto_id") and fac["presupuesto_id"] not in pids:
-            pids.append(fac["presupuesto_id"])
-        for pid in pids:
-            await db.presupuestos.update_one(
-                {"id": pid},
-                {"$set": {"estado": "cobrado"}}
-            )
-        # Contrato vinculado: solo marcar como cobrado (el balance lo lee desde la factura directamente)
-        if fac.get("contrato_id"):
-            await db.contratos.update_one(
-                {"id": fac["contrato_id"]},
-                {"$set": {"estado": "cobrado"}}
-            )
-
+    # Presupuestos vinculados
+    pids = list(fac.get("presupuesto_ids") or [])
+    if fac.get("presupuesto_id") and fac["presupuesto_id"] not in pids:
+        pids.append(fac["presupuesto_id"])
+    for pid in pids:
+        await db.presupuestos.update_one(
+            {"id": pid},
+            {"$set": {"estado": "cobrado"}}
+        )
     return {"estado": estado, "fecha_pago": updates.get("fecha_pago")}
 
 
@@ -212,46 +169,54 @@ async def pago_parcial_factura(
         # o factura en PYG pagada a cuenta USD → convertir a USD
         monto_cuenta = round(monto_nuevo / tipo_cambio, 2)
 
-    # ── Auto-generar número de recibo ────────────────────────────
-    if numero_recibo_manual:
-        recibo_numero = numero_recibo_manual
-    else:
-        ultimo_rec = await db.recibos.find_one(
-            {}, {"numero": 1, "_id": 0}, sort=[("created_at", -1)]
-        )
-        if ultimo_rec and ultimo_rec.get("numero"):
-            try:
-                n = int(ultimo_rec["numero"].split("-")[-1]) + 1
-            except Exception:
-                n = 1
+    # ── Auto-generar número de recibo (solo para crédito) ────────
+    forma_pago = fac.get("forma_pago", "contado")
+    recibo_doc = None
+    recibo_numero = None
+
+    if forma_pago != "contado":
+        if numero_recibo_manual:
+            recibo_numero = numero_recibo_manual
         else:
-            n = (await db.recibos.count_documents({})) + 1
-        recibo_numero = f"REC-{n:04d}"
+            ultimo_rec = await db.recibos.find_one(
+                {}, {"numero": 1, "_id": 0}, sort=[("created_at", -1)]
+            )
+            if ultimo_rec and ultimo_rec.get("numero"):
+                try:
+                    n = int(ultimo_rec["numero"].split("-")[-1]) + 1
+                except Exception:
+                    n = 1
+            else:
+                n = (await db.recibos.count_documents({})) + 1
+            recibo_numero = f"REC-{n:04d}"
 
-    pago_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+        pago_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
 
-    # ── Crear recibo en colección ────────────────────────────────
-    recibo_doc = {
-        "id": str(uuid.uuid4()),
-        "numero": recibo_numero,
-        "factura_id": factura_id,
-        "factura_numero": fac.get("numero", ""),
-        "razon_social": fac.get("razon_social", ""),
-        "ruc": fac.get("ruc"),
-        "monto": monto_nuevo,
-        "moneda": fac.get("moneda", "PYG"),
-        "fecha_pago": fecha_pago,
-        "logo_tipo": fac.get("logo_tipo", "arandujar"),
-        "cuenta_id": cuenta_id,
-        "cuenta_nombre": cuenta_nombre,
-        "tipo_cambio": tipo_cambio,
-        "monto_cuenta": monto_cuenta,
-        "pago_id": pago_id,
-        "notas": None,
-        "created_at": now,
-    }
-    await db.recibos.insert_one(recibo_doc)
+        # ── Crear recibo en colección ────────────────────────────────
+        recibo_doc = {
+            "id": str(uuid.uuid4()),
+            "numero": recibo_numero,
+            "factura_id": factura_id,
+            "factura_numero": fac.get("numero", ""),
+            "razon_social": fac.get("razon_social", ""),
+            "ruc": fac.get("ruc"),
+            "monto": monto_nuevo,
+            "moneda": fac.get("moneda", "PYG"),
+            "fecha_pago": fecha_pago,
+            "logo_tipo": fac.get("logo_tipo", "arandujar"),
+            "cuenta_id": cuenta_id,
+            "cuenta_nombre": cuenta_nombre,
+            "tipo_cambio": tipo_cambio,
+            "monto_cuenta": monto_cuenta,
+            "pago_id": pago_id,
+            "notas": None,
+            "created_at": now,
+        }
+        await db.recibos.insert_one(recibo_doc)
+    else:
+        pago_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
 
     # ── Acumular pagos en array ──────────────────────────────────
     pagos_previos = fac.get("pagos") or []
@@ -260,7 +225,7 @@ async def pago_parcial_factura(
         "monto": monto_nuevo,
         "fecha": fecha_pago,
         "registrado_por": user.get("name", ""),
-        "recibo_id": recibo_doc["id"],
+        "recibo_id": recibo_doc["id"] if recibo_doc else None,
         "recibo_numero": recibo_numero,
         "cuenta_id": cuenta_id,
         "cuenta_nombre": cuenta_nombre,
@@ -287,7 +252,7 @@ async def pago_parcial_factura(
     }
     await db.facturas.update_one({"id": factura_id}, {"$set": updates})
     await log_auditoria(user, "facturas", "pago_parcial",
-                        f"Pago de {monto_nuevo} en factura {factura_id} · recibo {recibo_numero}")
+                        f"Pago de {monto_nuevo} en factura {factura_id}" + (f" · recibo {recibo_numero}" if recibo_numero else ""))
 
     # ── Si pagó completo, marcar presupuestos y contrato ─────────
     if nuevo_estado == "pagada":
@@ -298,11 +263,7 @@ async def pago_parcial_factura(
             await db.presupuestos.update_one(
                 {"id": pid}, {"$set": {"estado": "cobrado"}}
             )
-        if fac.get("contrato_id"):
-            await db.contratos.update_one(
-                {"id": fac["contrato_id"]}, {"$set": {"estado": "cobrado"}}
-            )
-    return {**updates, "recibo": {"id": recibo_doc["id"], "numero": recibo_numero}}
+    return {**updates, "recibo": {"id": recibo_doc["id"], "numero": recibo_numero} if recibo_doc else None}
 
 
 @router.patch("/admin/facturas/{factura_id}/pago/{pago_id}")
@@ -439,6 +400,10 @@ async def delete_factura(factura_id: str, user: dict = Depends(require_authentic
     fac = await db.facturas.find_one({"id": factura_id}, {"_id": 0})
     if not fac:
         raise HTTPException(status_code=404, detail="Factura no encontrada")
+    # Limpiar recibos vinculados a pagos de esta factura
+    for pago in (fac.get("pagos") or []):
+        if pago.get("recibo_id"):
+            await db.recibos.delete_one({"id": pago["recibo_id"]})
     await db.facturas.delete_one({"id": factura_id})
     await log_auditoria(user, "facturas", "eliminar_factura",
                         f"Factura {factura_id} eliminada")

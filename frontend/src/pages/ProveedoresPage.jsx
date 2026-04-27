@@ -35,10 +35,13 @@ function fmt(n, moneda = "PYG") {
   return `₲ ${Math.round(n).toLocaleString("es-PY")}`;
 }
 
-function fmtCompact(n) {
-  if (!n) return "₲ 0";
-  if (n >= 1_000_000) return `₲ ${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `₲ ${Math.round(n / 1_000)}K`;
+function fmtCompact(n, moneda = "PYG", nUsd = 0) {
+  // Si hay monto en USD, mostrar en USD
+  if (moneda === "USD" || nUsd > 0) {
+    const usdVal = nUsd > 0 ? nUsd : n;
+    return `$ ${Number(usdVal).toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  if (!n && n !== 0) return "-";
   return `₲ ${Math.round(n).toLocaleString("es-PY")}`;
 }
 
@@ -100,22 +103,23 @@ export default function ProveedoresPage() {
   const fetchPagosProvResumen = async () => {
     try {
       const params = new URLSearchParams();
+      if (filtroTipo === "mes" && mes) params.set("mes", mes);
+      if (filtroTipo === "anio" && anio) params.set("anio", anio);
       if (activeEmpresaPropia?.slug) params.set("logo_tipo", activeEmpresaPropia.slug);
       const res = await fetch(`${API}/admin/pagos-proveedores?${params}`, { headers });
       if (res.ok) {
         const data = await res.json();
-        // Sumar montos pagados (fecha_pago set = pagado) por proveedor_id
         const map = {};
         data.forEach(p => {
-          if (!p.fecha_pago) return; // solo pagados
+          if (!p.fecha_pago) return;
           const key = p.proveedor_id || p.proveedor_nombre;
           if (!key) return;
-          // Convertir a PYG si es USD
-          let montoGs = p.monto || 0;
+          if (!map[key]) map[key] = { pyg: 0, usd: 0 };
           if (p.moneda === "USD") {
-            montoGs = p.monto_gs || (p.monto * (p.tipo_cambio || 1));
+            map[key].usd += p.monto || 0;
+          } else {
+            map[key].pyg += p.monto || 0;
           }
-          map[key] = (map[key] || 0) + montoGs;
         });
         setPagosProvMap(map);
       }
@@ -130,6 +134,7 @@ export default function ProveedoresPage() {
 
   useEffect(() => {
     fetchComprasResumen();
+    fetchPagosProvResumen();
   }, [filtroTipo, mes, anio]); // eslint-disable-line
 
   const filtered = proveedores.filter(p => {
@@ -335,10 +340,12 @@ export default function ProveedoresPage() {
               <tbody>
                 {filtered.map(p => {
                   const cr = comprasResumen[p.id] || comprasResumen[p.nombre];
-                  // Total pagado = pagos de compras (contado + créditos saldados) + pagos directos registrados
-                  const comprasPagado = cr ? (cr.total_comprado || 0) - (cr.deuda_actual || 0) : 0;
-                  const directPagado = (pagosProvMap[p.id] || pagosProvMap[p.nombre]) || 0;
-                  const totalPagado = (cr != null || directPagado > 0) ? comprasPagado + directPagado : null;
+                  const provMap = pagosProvMap[p.id] || pagosProvMap[p.nombre] || { pyg: 0, usd: 0 };
+                  const esUSD = cr?.moneda_principal === "USD";
+                  // Total pagado = total_comprado - deuda_actual (incluye contado + créditos saldados)
+                  const totalPagadoUSD = cr ? (cr.total_comprado_usd || 0) - (cr.deuda_actual_usd || 0) : provMap.usd;
+                  const totalPagadoPYG = cr ? (cr.total_comprado || 0) - (cr.deuda_actual || 0) : provMap.pyg;
+                  const hasPagado = totalPagadoUSD > 0 || totalPagadoPYG > 0;
                   return (
                     <tr key={p.id} className={`border-b border-white/5 hover:bg-white/3 transition-colors ${!p.activo ? "opacity-40" : ""}`}>
 
@@ -382,7 +389,7 @@ export default function ProveedoresPage() {
                       {/* Total comprado */}
                       <td className="px-4 py-3 text-right">
                         {cr ? (
-                          <span className="text-slate-200 font-medium">{fmtCompact(cr.total_comprado)}</span>
+                          <span className="text-slate-200 font-medium">{fmtCompact(cr.total_comprado, cr.moneda_principal, cr.total_comprado_usd)}</span>
                         ) : <span className="text-slate-600 text-xs">-</span>}
                       </td>
 
@@ -390,7 +397,7 @@ export default function ProveedoresPage() {
                       <td className="px-4 py-3 text-right">
                         {cr ? (
                           cr.deuda_actual > 0 ? (
-                            <span className="text-orange-300 font-semibold">{fmtCompact(cr.deuda_actual)}</span>
+                            <span className="text-orange-300 font-semibold">{fmtCompact(cr.deuda_actual, cr.moneda_principal, cr.deuda_actual_usd)}</span>
                           ) : (
                             <span className="text-green-400 text-xs flex items-center justify-end gap-1">
                               <CheckCircle className="w-3 h-3" /> Al día
@@ -401,8 +408,14 @@ export default function ProveedoresPage() {
 
                       {/* Total pagado */}
                       <td className="px-4 py-3 text-right">
-                        {totalPagado != null ? (
-                          <span className="text-emerald-300 font-medium text-xs">{fmt(totalPagado)}</span>
+                        {hasPagado ? (
+                          <span className="text-emerald-300 font-medium text-xs">
+                            {esUSD && totalPagadoUSD > 0
+                              ? fmt(totalPagadoUSD, "USD")
+                              : totalPagadoPYG > 0
+                                ? fmt(totalPagadoPYG, "PYG")
+                                : "-"}
+                          </span>
                         ) : <span className="text-slate-600 text-xs">-</span>}
                       </td>
 

@@ -122,50 +122,11 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
         if e.get("nombre"):
             retencion_map[e["nombre"]] = pct
 
-    # ── COBROS DE CONTRATOS ──────────────────────────────────────
-    cobros = await db.cobros_contratos.find({"periodo": periodo}, {"_id": 0}).to_list(1000)
-    if cobros:
-        contrato_ids = list({c["contrato_id"] for c in cobros})
-        contratos = await db.contratos.find(
-            {"id": {"$in": contrato_ids}},
-            {"_id": 0, "id": 1, "logo_tipo": 1, "moneda": 1, "tipo_cambio": 1, "empresa_id": 1}
-        ).to_list(500)
-        ct_map = {c["id"]: c for c in contratos}
-
-        # Retención por empresa-cliente del contrato (empresa_id → % retención IVA)
-        empresa_ids_ct = list({c["empresa_id"] for c in contratos if c.get("empresa_id")})
-        if empresa_ids_ct:
-            empresas_ct = await db.empresas.find(
-                {"id": {"$in": empresa_ids_ct}, "aplica_retencion": True},
-                {"_id": 0, "id": 1, "porcentaje_retencion": 1}
-            ).to_list(200)
-            empresa_ret_map = {e["id"]: (e.get("porcentaje_retencion") or 0) for e in empresas_ct}
-        else:
-            empresa_ret_map = {}
-
-        for cobro in cobros:
-            ct = ct_map.get(cobro["contrato_id"], {})
-            if logo_tipo and logo_tipo != "todas" and ct.get("logo_tipo") != logo_tipo:
-                continue
-            moneda_ct = ct.get("moneda", "PYG")
-            monto_base = cobro["monto_pagado"]
-            # Retención IVA: busca por empresa_id del contrato (empresa cliente)
-            pct_retencion = empresa_ret_map.get(ct.get("empresa_id", ""), 0)
-            if pct_retencion and monto_base:
-                iva = monto_base / 11.0
-                monto_efectivo = monto_base - iva * (pct_retencion / 100.0)
-            else:
-                monto_efectivo = monto_base
-            monto_pyg = to_pyg(monto_efectivo, moneda_ct, ct.get("tipo_cambio"))
-            ingresos.append({"fuente": "Contratos", "descripcion": cobro.get("notas", ""), "monto_pyg": monto_pyg})
-            if moneda_ct == "USD":
-                ingresos_usd.append({"fuente": "Contratos", "monto_usd": monto_efectivo})
 
     # ── FACTURAS EMITIDAS COBRADAS (cash-basis) ──────────────────────────────
     # Cada cobro se cuenta en el MES en que se recibió el dinero, no cuando se emitió.
     # - Facturas con pagos[]: usamos cada entrada del array (soporta pagos múltiples/parciales)
     # - Facturas sin pagos[] (pago único / datos legacy): usamos fecha_pago directamente
-    # Las facturas vinculadas a contratos se descartan; su ingreso ya está en cobros_contratos.
 
     def _registrar_ingreso_fac(fac, monto_base, fuente, tiene_recibo=False):
         """Aplica retención si corresponde y agrega el ingreso a la lista.
@@ -190,8 +151,6 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
         {"_id": 0}
     ).to_list(1000)
     for fac in fac_con_pagos:
-        if fac.get("contrato_id"):
-            continue  # excluir facturas de contratos
         for pago in (fac.get("pagos") or []):
             if not (pago.get("fecha") or "").startswith(periodo):
                 continue  # solo los pagos de este mes
@@ -220,8 +179,6 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
         {"_id": 0}
     ).to_list(1000)
     for fac in fac_legacy:
-        if fac.get("contrato_id"):
-            continue  # excluir facturas de contratos
         if fac.get("estado") == "parcial" and fac.get("monto_pagado") is not None:
             monto_base = fac["monto_pagado"]
         else:
@@ -283,6 +240,20 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
             egresos.append({"fuente": "Adelantos sueldo", "descripcion": nombre, "monto_pyg": monto_pyg})
             if moneda_a == "USD":
                 egresos_usd.append({"fuente": "Adelantos sueldo", "monto_usd": adelanto["monto"]})
+
+    # ── COMPRAS ──────────────────────────────────────────────────
+    compras_bal = await db.compras.find(
+        {"fecha": {"$regex": mes_range(periodo)}}, {"_id": 0}
+    ).to_list(1000)
+    for c in compras_bal:
+        if logo_tipo and logo_tipo != "todas" and c.get("logo_tipo") != logo_tipo:
+            continue
+        moneda_c = c.get("moneda", "PYG")
+        monto_pyg_c = to_pyg(c.get("monto_total") or c.get("monto", 0), moneda_c, c.get("tipo_cambio"))
+        proveedor = c.get("proveedor_nombre") or c.get("proveedor_id", "Compra")
+        egresos.append({"fuente": "Compras", "descripcion": proveedor, "monto_pyg": monto_pyg_c})
+        if moneda_c == "USD":
+            egresos_usd.append({"fuente": "Compras", "monto_usd": c.get("monto_total") or c.get("monto", 0)})
 
     # ── FACTURAS RECIBIDAS PAGADAS ───────────────────────────────
     fac_recibidas = await db.facturas.find(
@@ -415,6 +386,7 @@ async def get_balance(
     superavit_inicial = sum(
         to_pyg(b.get("saldo_inicial") or 0, b.get("moneda", "PYG"), b.get("tipo_cambio"))
         for b in bancos
+        if b.get("moneda", "PYG") == "PYG" or b.get("tipo_cambio")  # solo convierte USD si tiene tipo_cambio
     )
     superavit_inicial_usd = sum(
         b.get("saldo_inicial") or 0 for b in bancos if b.get("moneda") == "USD"
@@ -539,6 +511,7 @@ async def get_balance_anual(
     superavit_inicial = sum(
         to_pyg(b.get("saldo_inicial") or 0, b.get("moneda", "PYG"), b.get("tipo_cambio"))
         for b in bancos_a
+        if b.get("moneda", "PYG") == "PYG" or b.get("tipo_cambio")
     )
     acumulado = superavit_inicial
 

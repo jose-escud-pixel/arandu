@@ -17,7 +17,6 @@ import ProveedoresPage from "./pages/ProveedoresPage";
 import CostosFijosPage from "./pages/CostosFijosPage";
 import PagosProveedoresPage from "./pages/PagosProveedoresPage";
 import EmpleadosPage from "./pages/EmpleadosPage";
-import FacturasPage from "./pages/FacturasPage";
 import BalancePage from "./pages/BalancePage";
 import IngresoVarioPage from "./pages/IngresoVarioPage";
 import EgresosPage from "./pages/EgresosPage";
@@ -319,9 +318,6 @@ function App() {
             } />
             <Route path="/admin/empleados" element={
               <ProtectedRoute requiredPermission="empleados.ver"><EmpleadosPage /></ProtectedRoute>
-            } />
-            <Route path="/admin/facturas" element={
-              <ProtectedRoute requiredPermission="facturas.ver"><FacturasPage /></ProtectedRoute>
             } />
             <Route path="/admin/balance" element={
               <ProtectedRoute requiredPermission="estadisticas.ver"><BalancePage /></ProtectedRoute>

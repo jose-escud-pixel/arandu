@@ -1,3 +1,9 @@
+// ⚠️  DEPRECATED — Esta página ya no se usa.
+// Toda la funcionalidad de contratos fue migrada a VentasPage.jsx (tab "Contratos").
+// Los cambios de limpiarCobrosHuerfanos fueron aplicados directamente en VentasPage.
+// Mantener este archivo solo como referencia histórica. NO modificar.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import React, { useState, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../App";
@@ -56,7 +62,8 @@ const emptyForm = {
 };
 
 export default function ContratosPage() {
-  const { token, hasPermission, activeEmpresaPropia } = useContext(AuthContext);
+  const { token, hasPermission, activeEmpresaPropia, user } = useContext(AuthContext);
+  const isAdmin = user?.role === "admin";
   const navigate = useNavigate();
   const [contratos, setContratos] = useState([]);
   const [empresas, setEmpresas] = useState([]);
@@ -123,6 +130,17 @@ export default function ContratosPage() {
     init();
     // eslint-disable-next-line
   }, [activeEmpresaPropia]);
+
+  const limpiarCobrosHuerfanos = async () => {
+    if (!window.confirm("¿Limpiar cobros de contratos sin pago válido? Esto corrige el balance para contratos cuyos pagos fueron eliminados.")) return;
+    const res = await fetch(`${API}/admin/contratos/limpiar-cobros-huerfanos`, { method: "DELETE", headers });
+    if (res.ok) {
+      const d = await res.json();
+      alert(`Limpieza completada: ${d.eliminados} cobro(s) eliminado(s). El balance ahora estará correcto.`);
+      fetchCobros(periodo);
+    }
+  };
+
 
   useEffect(() => {
     fetchCobros(periodo, searchTerm);
@@ -317,6 +335,17 @@ export default function ContratosPage() {
               </button>
             </div>
 
+            {isAdmin && (
+              <div className="flex justify-end mb-2">
+                <button onClick={limpiarCobrosHuerfanos}
+                  className="text-xs text-red-400 hover:text-red-300 border border-red-500/30 hover:bg-red-500/10 px-3 py-1 rounded-lg transition-colors">
+                  🧹 Limpiar cobros huérfanos
+                </button>
+              </div>
+            )}
+            {isAdmin && (
+              <div className="flex justify-end mb-2"><button onClick={limpiarCobrosHuerfanos} className="text-xs text-red-400 border border-red-500/30 hover:bg-red-500/10 px-3 py-1 rounded-lg">🧹 Limpiar cobros huérfanos</button></div>
+            )}
             {!vistaAnual && (
               <>
                 {/* Period navigator */}

@@ -295,6 +295,8 @@ async def eliminar_pago_compra(compra_id: str, pago_id: str, user: dict = Depend
 @router.get("/admin/compras/resumen/por-proveedor")
 async def resumen_compras_por_proveedor(
     logo_tipo: Optional[str] = None,
+    mes: Optional[str] = None,   # YYYY-MM
+    anio: Optional[str] = None,  # YYYY
     user: dict = Depends(require_authenticated)
 ):
     """Devuelve totales por proveedor: total_comprado, deuda_actual, cantidad_compras."""
@@ -307,6 +309,10 @@ async def resumen_compras_por_proveedor(
     if is_forbidden(logo_q):
         return []
     query.update(logo_q)
+    if mes:
+        query["fecha"] = {"$regex": f"^{mes}"}
+    elif anio:
+        query["fecha"] = {"$regex": f"^{anio}"}
 
     compras = await db.compras.find(query, {"_id": 0}).to_list(5000)
 
@@ -318,12 +324,21 @@ async def resumen_compras_por_proveedor(
                 "proveedor_id": c.get("proveedor_id"),
                 "proveedor_nombre": c.get("proveedor_nombre"),
                 "total_comprado": 0,
+                "total_comprado_usd": 0,
                 "deuda_actual": 0,
+                "deuda_actual_usd": 0,
                 "cantidad_compras": 0,
                 "ultima_compra": None,
+                "moneda_principal": c.get("moneda", "PYG"),
             }
         r = resumen[pid]
-        r["total_comprado"] += c.get("monto_total", 0)
+        moneda = c.get("moneda", "PYG")
+        monto = c.get("monto_total", 0)
+        if moneda == "USD":
+            r["total_comprado_usd"] += monto
+            r["moneda_principal"] = "USD"
+        else:
+            r["total_comprado"] += monto
         r["cantidad_compras"] += 1
         fc = c.get("fecha", "")
         if not r["ultima_compra"] or fc > r["ultima_compra"]:
@@ -331,6 +346,9 @@ async def resumen_compras_por_proveedor(
         # Deuda: compras a crédito no totalmente pagadas
         cf = _fmt(c)
         if cf["estado_pago"] in ("pendiente", "parcial", "vencido"):
-            r["deuda_actual"] += cf["saldo_pendiente"]
+            if moneda == "USD":
+                r["deuda_actual_usd"] += cf["saldo_pendiente"]
+            else:
+                r["deuda_actual"] += cf["saldo_pendiente"]
 
     return list(resumen.values())

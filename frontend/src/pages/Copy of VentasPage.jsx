@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AuthContext } from "../App";
 import { toast } from "sonner";
 import {
@@ -7,12 +7,14 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, ExternalLink,
   CheckCircle, Clock, X, AlertCircle, Search,
   DollarSign, BarChart3, ShoppingCart, ClipboardList,
-  Edit, Trash2, Copy, Wallet, Printer, Server, Cpu, Banknote, Save
+  Edit, Trash2, Copy, Wallet, Printer, Banknote, Save
 } from "lucide-react";
 import EmpresaSwitcher from "../components/EmpresaSwitcher";
 import PresupuestoFormModal from "../components/PresupuestoFormModal";
 import PresupuestoCostosModal from "../components/PresupuestoCostosModal";
 import FacturaFormModal from "../components/FacturaFormModal";
+import { LogoMarcaArandu, LogoMarcaJar, LogoMarcaAranduJar } from "../components/MarcaLogos";
+import { normalizeLogoTipo, svgMarcaIcon, svgPrintLogoName, svgLogoMarcaRow, svgDocumentHeaderLogoHtml } from "../lib/marcaLogoSvg";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -36,10 +38,6 @@ function mesLabel(m) {
 }
 function fmtPYG(n) {
   if (n == null || isNaN(n)) return "-";
-  if (Math.abs(n) >= 1_000_000)
-    return `₲ ${(n / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(n) >= 1_000)
-    return `₲ ${Math.round(n / 1_000)}K`;
   return `₲ ${Math.round(n).toLocaleString("es-PY")}`;
 }
 function fmtMonto(monto, moneda = "PYG") {
@@ -144,8 +142,13 @@ const TABS = [
 
 export default function VentasPage() {
   const { token, user, hasPermission, empresasPropias, activeEmpresaPropia } = useContext(AuthContext);
+  const isAdmin = user?.role === "admin";
   const navigate = useNavigate();
-  const [tab, setTab] = useState("presupuestos");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => {
+    const t = searchParams.get("tab");
+    return t && ["presupuestos", "facturas", "contratos", "ingresos", "recibos"].includes(t) ? t : "presupuestos";
+  });
   // Filtro temporal: "todos" | "mes" | "anio"
   const [filtroTipo, setFiltroTipo] = useState("todos");
   const [mes, setMes] = useState(getMesActual());
@@ -318,16 +321,16 @@ export default function VentasPage() {
       const logoQc = logoFilter !== "todas" ? `?logo_tipo=${logoFilter}` : "";
       const mesParam = filtroTipo === "mes" ? mes : "";
       const buildQ = (params) => { const p = Object.entries(params).filter(([,v]) => v != null && v !== "").map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join("&"); return p ? `?${p}` : ""; };
-      const [rPres, rFac, rIng, rCon, rEmp, rProv, rProd, rCuentas, rRecibos] = await Promise.all([
+      const [rPres, rFac, rIng, rEmp, rProv, rProd, rCuentas, rRecibos] = await Promise.all([
         fetch(`${API}/admin/presupuestos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
         fetch(`${API}/admin/facturas${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
         fetch(`${API}/admin/ingresos-varios${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
-        fetch(`${API}/admin/contratos${logoQc}`, { headers }),
-        fetch(`${API}/admin/empresas`, { headers }),
+        fetch(`${API}/admin/contratos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
+        fetch(`${API}/admin/empresas${logoQc}`, { headers }),
         fetch(`${API}/admin/proveedores?activo=true`, { headers }),
         fetch(`${API}/admin/productos`, { headers }),
         fetch(`${API}/admin/cuentas-bancarias${logoQc}`, { headers }),
-        fetch(`${API}/admin/recibos${logoQc}`, { headers }),
+        fetch(`${API}/admin/recibos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
       ]);
       if (rPres.ok) setPresupuestos(await rPres.json());
       if (rFac.ok) {
@@ -341,7 +344,6 @@ export default function VentasPage() {
         })));
       }
       if (rIng.ok) { const dIng = await rIng.json(); setIngresos(Array.isArray(dIng) ? dIng : []); }
-      if (rCon.ok)  { const d = await rCon.json(); setContratos(d.contratos || d || []); }
       if (rEmp.ok) setEmpresas(await rEmp.json());
       if (rProv.ok) setProveedores(await rProv.json());
       if (rProd.ok) setProductos(await rProd.json());
@@ -354,6 +356,32 @@ export default function VentasPage() {
   };
 
   useEffect(() => { fetchAll(); }, [mes, filtroTipo, activeEmpresaPropia]); // eslint-disable-line
+
+
+  const limpiarCobrosHuerfanos = async () => {
+    if (!window.confirm("¿Limpiar cobros de contratos sin pago válido? Esto corrige el balance.")) return;
+    const res = await fetch(`${API}/admin/contratos/limpiar-cobros-huerfanos`, { method: "DELETE", headers });
+    if (res.ok) { const d = await res.json(); toast.success(`Limpieza: ${d.eliminados} cobro(s) eliminado(s).`); fetchAll(); }
+    else toast.error("Error al limpiar");
+  };
+
+  // ── Al entrar con ?empresa=<id> desde Clientes, pre-llenar el buscador chip ──
+  // (ruta vieja era /admin/presupuestos?empresa=X; ahora es /admin/ventas?tab=presupuestos&empresa=X
+  //  y también /admin/presupuestos?empresa=X sigue funcionando porque apunta a este mismo componente)
+  useEffect(() => {
+    const empresaId = searchParams.get("empresa");
+    if (!empresaId || empresas.length === 0) return;
+    const emp = empresas.find(e => e.id === empresaId);
+    if (!emp) return;
+    // Colocar el nombre del cliente como chip de búsqueda si no está ya
+    setPresChips(prev => (prev.includes(emp.nombre) ? prev : [...prev, emp.nombre]));
+    setTab("presupuestos");
+    // Limpiar el param para que recargas manuales no lo vuelvan a poner dos veces
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete("empresa");
+    setSearchParams(nextParams, { replace: true });
+    // eslint-disable-next-line
+  }, [empresas]);
 
   // ── Cambiar estado de presupuesto/factura inline ──
   const PRESUP_ESTADOS = ["aprobado", "rechazado"];
@@ -731,9 +759,9 @@ export default function VentasPage() {
       {/* Header */}
       <div className="border-b border-white/10 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <button onClick={() => navigate(-1)} className="text-slate-400 hover:text-white transition-colors" data-testid="back-btn" title="Volver">
+          <Link to="/admin" className="text-slate-400 hover:text-white transition-colors" data-testid="back-btn" title="Volver al Dashboard">
             <ArrowLeft className="w-5 h-5" />
-          </button>
+          </Link>
           <div>
             <h1 className="font-heading text-2xl text-white flex items-center gap-2">
               <BarChart3 className="w-6 h-6 text-emerald-400" />
@@ -744,16 +772,6 @@ export default function VentasPage() {
           <EmpresaSwitcher compact />
         </div>
 
-        {/* + Nuevo Presupuesto */}
-        {hasPermission("presupuestos.crear") && (
-          <button
-            onClick={() => { setPresFormItem({ presupuesto: null, mode: "create" }); setTab("presupuestos"); }}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-body text-sm"
-          >
-            <Plus className="w-4 h-4" />
-            Nuevo presupuesto
-          </button>
-        )}
       </div>
 
       <div className="p-6 space-y-5">
@@ -1177,10 +1195,7 @@ export default function VentasPage() {
                           {(f.presupuesto_ids?.length > 0 || f.presupuesto_id) && (
                             <span className="ml-1 text-[10px] bg-blue-500/15 text-blue-300 border border-blue-500/20 px-1.5 py-0.5 rounded-full">📄 pres.</span>
                           )}
-                          {f.contrato_id && (
-                            <span className="ml-1 text-[10px] bg-violet-500/15 text-violet-300 border border-violet-500/20 px-1.5 py-0.5 rounded-full">📎 contr.</span>
-                          )}
-                        </td>
+</td>
                         <td className="px-4 py-3 max-w-[160px]">
                           <p className="text-slate-300 truncate">{f.razon_social || "-"}</p>
                           {f.ruc && <p className="text-slate-500 text-xs">RUC: {f.ruc}</p>}
@@ -1203,12 +1218,7 @@ export default function VentasPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
-                          <StateDropdown
-                            estado={f.estado}
-                            options={FACT_ESTADOS}
-                            onChange={(nuevo) => cambiarEstadoFactura(f.id, nuevo)}
-                            disabled={!hasPermission("facturas.editar")}
-                          />
+                          <StateBadge estado={f.estado} />
                           {/* Historial de pagos si hay varios */}
                           {(f.pagos || []).length > 1 && (
                             <div className="mt-1 space-y-0.5">
@@ -1319,6 +1329,9 @@ export default function VentasPage() {
               )}
             </div>
 
+            {isAdmin && (
+              <button onClick={limpiarCobrosHuerfanos} className="text-xs text-red-400 border border-red-500/30 hover:bg-red-500/10 px-3 py-1.5 rounded-lg transition-colors mb-2">🧹 Limpiar cobros huérfanos</button>
+            )}
             <div className="flex items-center justify-between mb-2">
               <span className="text-slate-500 text-xs font-body">{filteredCon.length} contrato{filteredCon.length !== 1 ? "s" : ""}</span>
             </div>
@@ -1453,7 +1466,7 @@ export default function VentasPage() {
                           <div className="flex items-center justify-end gap-2">
                             <button onClick={() => { setIngFormItem(i); setShowIngForm(true); }}
                               className="text-slate-400 hover:text-blue-400 transition-colors" title="Editar">
-                              <Pencil className="w-4 h-4" />
+                              <Edit className="w-4 h-4" />
                             </button>
                             <button onClick={async () => {
                               if (!window.confirm("¿Eliminar este ingreso?")) return;
@@ -1479,6 +1492,32 @@ export default function VentasPage() {
           <div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-slate-500 text-xs font-body">{filteredRecibos.length} recibo{filteredRecibos.length !== 1 ? "s" : ""}</span>
+              {isAdmin && (
+                <button
+                  onClick={async () => {
+                    if (!window.confirm("¿Eliminar recibos sin pago vinculado? Esto limpia recibos de migración.")) return;
+                    const res = await fetch(`${API}/admin/recibos/limpiar-huerfanos`, { method: "DELETE", headers });
+                    if (res.ok) { const d = await res.json(); toast.success(`Eliminados ${d.eliminados} recibos huérfanos`); fetchAll(); }
+                    else toast.error("Error al limpiar");
+                  }}
+                  className="text-xs text-red-400 hover:text-red-300 border border-red-500/30 hover:bg-red-500/10 px-2 py-1 rounded-lg transition-colors ml-2"
+                >
+                  🧹 Limpiar huérfanos
+                </button>
+              )}
+              {isAdmin && (
+                <button
+                  onClick={async () => {
+                    if (!window.confirm("¿Eliminar recibos huérfanos (sin pago vinculado)? Esto limpia recibos de migración.")) return;
+                    const res = await fetch(`${API}/admin/recibos/limpiar-huerfanos`, { method: "DELETE", headers });
+                    if (res.ok) { const d = await res.json(); toast.success(`Eliminados ${d.eliminados} recibos huérfanos`); fetchAll(); }
+                    else toast.error("Error al limpiar");
+                  }}
+                  className="text-xs text-red-400 hover:text-red-300 border border-red-500/30 hover:bg-red-500/10 px-2 py-1 rounded-lg transition-colors"
+                >
+                  🧹 Limpiar huérfanos
+                </button>
+              )}
             </div>
             {loading ? (
               <div className="text-center py-10 text-slate-500 animate-pulse font-body">Cargando...</div>
@@ -1541,10 +1580,10 @@ export default function VentasPage() {
         <PresupuestoDocModal
           presupuesto={presDoc}
           onClose={() => setPresDoc(null)}
-          onEdit={() => { setPresDoc(null); navigate(`/admin/presupuestos?edit=${presDoc.id}`); }}
+          onEdit={() => { setPresDoc(null); setPresFormItem({ presupuesto: presDoc, mode: "edit" }); }}
           onDelete={() => deletePresupuesto(presDoc.id)}
           onDuplicate={() => duplicatePresupuesto(presDoc)}
-          onCostos={() => { setPresDoc(null); navigate(`/admin/presupuestos?costos=${presDoc.id}`); }}
+          onCostos={() => { setPresDoc(null); setPresCostosItem(presDoc); }}
           onEstadoChange={(nuevo) => { cambiarEstadoPresupuesto(presDoc.id, nuevo); setPresDoc(p => ({ ...p, estado: nuevo })); }}
           canEdit={hasPermission("presupuestos.editar")}
           canDelete={hasPermission("presupuestos.eliminar")}
@@ -1577,6 +1616,7 @@ export default function VentasPage() {
           navigate={navigate}
           token={token}
           onUpdated={() => { closePreview(); fetchAll(); }}
+          cuentasDisp={cuentasDisp}
         />
       )}
 
@@ -1682,6 +1722,7 @@ export default function VentasPage() {
           onPresClick={(presId) => { setFacDoc(null); openPresDoc(presId); }}
           onEditPago={(fac, pago) => setEditPagoCtx({ factura: fac, pago })}
           onDeletePago={handleDeletePago}
+          cuentasDisp={cuentasDisp}
         />
       )}
 
@@ -1695,7 +1736,6 @@ export default function VentasPage() {
           API={API}
           empresas={empresas}
           presupuestosDisp={presupuestos}
-          contratosDisp={contratos}
           activeEmpresaPropia={activeEmpresaPropia}
           hasPermission={hasPermission}
         />
@@ -1767,49 +1807,17 @@ export default function VentasPage() {
           recibo={reciboDoc}
           onClose={() => setReciboDoc(null)}
           fmtMonto={fmtMonto}
+          cuentasDisp={cuentasDisp}
         />
       )}
     </div>
   );
 }
 
-// ═══ Logos para documento de presupuesto ════════════════════════════════
-const LogoArandu = () => (
-  <div className="flex items-center gap-2">
-    <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center">
-      <Cpu className="w-6 h-6 text-white" />
-    </div>
-    <div className="flex flex-col">
-      <span className="font-bold text-xl text-blue-600">ARANDU</span>
-      <span className="text-[10px] text-gray-500 tracking-wider">INFORMÁTICA</span>
-    </div>
-  </div>
-);
-const LogoJar = () => (
-  <div className="flex items-center gap-2">
-    <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-red-700 rounded-lg flex items-center justify-center">
-      <Server className="w-6 h-6 text-white" />
-    </div>
-    <div className="flex flex-col">
-      <span className="font-bold text-xl text-red-600">JAR</span>
-      <span className="text-[10px] text-gray-500 tracking-wider">INFORMÁTICA</span>
-    </div>
-  </div>
-);
-const LogoAranduJarDoc = () => (
-  <div className="flex items-center gap-2">
-    <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-red-500 rounded-lg flex items-center justify-center">
-      <Server className="w-6 h-6 text-white" />
-    </div>
-    <div className="flex flex-col">
-      <span className="font-bold text-xl">
-        <span className="text-blue-600">ARANDU</span>
-        <span className="text-red-600">&JAR</span>
-      </span>
-      <span className="text-[10px] text-gray-500 tracking-wider">INFORMÁTICA</span>
-    </div>
-  </div>
-);
+// ═══ Logos (letras tricolor PY; cuadrado sólido por marca) ════════════════
+const LogoArandu = () => <LogoMarcaArandu />;
+const LogoJar = () => <LogoMarcaJar />;
+const LogoAranduJarDoc = () => <LogoMarcaAranduJar />;
 
 // ═══ Documento completo de presupuesto ══════════════════════════════════
 function PresupuestoDocModal({
@@ -1831,19 +1839,7 @@ function PresupuestoDocModal({
   const sym = getCurrencySymbol(p.moneda);
   const accentColor = p.logo_tipo === "jar" ? "#dc2626" : "#2563eb";
 
-  // ── Helpers para generar HTML de logo (igual al viejo PresupuestosPage) ──
-  const buildLogoHTML = (logoTipo) => {
-    const blue = "background:linear-gradient(135deg,#3b82f6,#1d4ed8)";
-    const red  = "background:linear-gradient(135deg,#ef4444,#b91c1c)";
-    const both = "background:linear-gradient(135deg,#3b82f6,#ef4444)";
-    const box  = `width:44px;height:44px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;margin-right:8px;vertical-align:middle`;
-    const icon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M8 12h8M12 8v8"/></svg>`;
-    if (logoTipo === "arandu")
-      return `<div style="display:flex;align-items:center"><div style="${box};${blue}">${icon}</div><div><div style="font-weight:800;font-size:18px;color:#2563eb;line-height:1">ARANDU</div><div style="font-size:9px;color:#6b7280;letter-spacing:2px">INFORMÁTICA</div></div></div>`;
-    if (logoTipo === "jar")
-      return `<div style="display:flex;align-items:center"><div style="${box};${red}">${icon}</div><div><div style="font-weight:800;font-size:18px;color:#dc2626;line-height:1">JAR</div><div style="font-size:9px;color:#6b7280;letter-spacing:2px">INFORMÁTICA</div></div></div>`;
-    return `<div style="display:flex;align-items:center"><div style="${box};${both}">${icon}</div><div><div style="font-weight:800;font-size:18px;line-height:1"><span style="color:#2563eb">ARANDU</span><span style="color:#dc2626">&amp;JAR</span></div><div style="font-size:9px;color:#6b7280;letter-spacing:2px">INFORMÁTICA</div></div></div>`;
-  };
+  const buildLogoHTML = (logoTipo) => svgLogoMarcaRow(logoTipo);
 
   // ── Imprimir por partes: máx 15 ítems por hoja (diseño colorido) ─────────
   const handlePrintPorPartes = () => {
@@ -1858,21 +1854,13 @@ function PresupuestoDocModal({
       : [[]];
     const totalHojas = chunks.length;
 
-    // Colores por empresa
     const isJar = p.logo_tipo === "jar";
-    const isArandu = p.logo_tipo === "arandu";
     const headerBg = isJar ? "#7f1d1d" : "#1e3a5f";
     const headerAccent = isJar ? "#ef4444" : "#3b82f6";
-    const blue = "background:linear-gradient(135deg,#3b82f6,#1d4ed8)";
-    const red  = "background:linear-gradient(135deg,#ef4444,#b91c1c)";
-    const both = "background:linear-gradient(135deg,#3b82f6,#ef4444)";
-    const boxStyle = `width:44px;height:44px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;margin-right:8px;flex-shrink:0;${isJar ? red : isArandu ? blue : both}`;
-    const icon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M8 12h8M12 8v8"/></svg>`;
-    const logoName = isJar
-      ? `<div style="font-weight:800;font-size:17px;color:white;line-height:1">JAR</div>`
-      : isArandu
-      ? `<div style="font-weight:800;font-size:17px;color:white;line-height:1">ARANDU</div>`
-      : `<div style="font-weight:800;font-size:17px;line-height:1"><span style="color:#93c5fd">ARANDU</span><span style="color:#fca5a5">&amp;JAR</span></div>`;
+    const printUid = Math.random().toString(36).slice(2, 11);
+    const marca = normalizeLogoTipo(p.logo_tipo);
+    const iconBox = `<div style="width:44px;height:44px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;margin-right:8px">${svgMarcaIcon(marca, printUid, 44)}</div>`;
+    const logoName = `<div style="line-height:1">${svgPrintLogoName(p.logo_tipo, printUid, { darkHeader: true })}</div>`;
 
     const pagesHTML = chunks.map((chunkItems, idx) => {
       const partNum = idx + 1;
@@ -1905,7 +1893,7 @@ function PresupuestoDocModal({
           <!-- ENCABEZADO OSCURO -->
           <div style="background:${headerBg};border-radius:8px;padding:12px 16px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
             <div style="display:flex;align-items:center">
-              <div style="${boxStyle}">${icon}</div>
+              ${iconBox}
               <div>
                 ${logoName}
                 <div style="font-size:8px;color:#cbd5e1;letter-spacing:2px;margin-top:1px">INFORMÁTICA</div>
@@ -1987,19 +1975,12 @@ function PresupuestoDocModal({
     const w = window.open("", "_blank", "width=900,height=700");
     if (!w) { alert("Permita ventanas emergentes para imprimir."); return; }
     const isJar = p.logo_tipo === "jar";
-    const isArandu = p.logo_tipo === "arandu";
     const headerBg = isJar ? "#7f1d1d" : "#1e3a5f";
     const headerAccent = isJar ? "#ef4444" : "#3b82f6";
-    const blue = "background:linear-gradient(135deg,#3b82f6,#1d4ed8)";
-    const red  = "background:linear-gradient(135deg,#ef4444,#b91c1c)";
-    const both = "background:linear-gradient(135deg,#3b82f6,#ef4444)";
-    const boxStyle = `width:46px;height:46px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;margin-right:10px;flex-shrink:0;${isJar ? red : isArandu ? blue : both}`;
-    const icon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M8 12h8M12 8v8"/></svg>`;
-    const logoName = isJar
-      ? `<div style="font-weight:800;font-size:19px;color:white;line-height:1">JAR</div>`
-      : isArandu
-      ? `<div style="font-weight:800;font-size:19px;color:white;line-height:1">ARANDU</div>`
-      : `<div style="font-weight:800;font-size:19px;line-height:1"><span style="color:#93c5fd">ARANDU</span><span style="color:#fca5a5">&amp;JAR</span></div>`;
+    const printUid2 = Math.random().toString(36).slice(2, 11);
+    const marca2 = normalizeLogoTipo(p.logo_tipo);
+    const iconBox = `<div style="width:46px;height:46px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;margin-right:10px">${svgMarcaIcon(marca2, printUid2, 46)}</div>`;
+    const logoName = `<div style="line-height:1">${svgPrintLogoName(p.logo_tipo, printUid2, { darkHeader: true })}</div>`;
     const rows = (p.items || []).map((item, idx) => `
       <tr style="background:${idx % 2 === 0 ? "white" : "#f8fafc"};page-break-inside:avoid">
         <td style="border:1px solid #e2e8f0;padding:6px 9px;color:#1e293b;font-size:11.5px">
@@ -2029,7 +2010,7 @@ function PresupuestoDocModal({
         <!-- ENCABEZADO -->
         <div style="background:${headerBg};border-radius:9px;padding:14px 18px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
           <div style="display:flex;align-items:center">
-            <div style="${boxStyle}">${icon}</div>
+            ${iconBox}
             <div>
               ${logoName}
               <div style="font-size:8px;color:#cbd5e1;letter-spacing:2px;margin-top:1px">INFORMÁTICA</div>
@@ -2082,9 +2063,9 @@ function PresupuestoDocModal({
           </tfoot>
         </table>
         ${p.observaciones || p.condiciones ? `
-        <div style="margin-top:12px">
-          ${p.observaciones ? `<div style="background:#fefce8;padding:9px 11px;border-left:4px solid #eab308;border-radius:0 5px 5px 0;margin-bottom:7px"><strong style="color:#92400e;font-size:10.5px">OBSERVACIONES:</strong><br><span style="font-size:10.5px;color:#713f12">${p.observaciones.replace(/\n/g,"<br>")}</span></div>` : ""}
-          ${p.condiciones ? `<div style="background:#f0fdf4;padding:9px 11px;border-left:4px solid #22c55e;border-radius:0 5px 5px 0"><strong style="color:#166534;font-size:10.5px">CONDICIONES:</strong><br><span style="font-size:10.5px;color:#15803d">${p.condiciones.replace(/\n/g,"<br>")}</span></div>` : ""}
+        <div style="margin-top:12px;page-break-inside:avoid;break-inside:avoid">
+          ${p.observaciones ? `<div style="background:#fefce8;padding:9px 11px;border-left:4px solid #eab308;border-radius:0 5px 5px 0;margin-bottom:7px;page-break-inside:avoid;break-inside:avoid"><strong style="color:#92400e;font-size:10.5px">OBSERVACIONES:</strong><br><span style="font-size:10.5px;color:#713f12">${p.observaciones.replace(/\n/g,"<br>")}</span></div>` : ""}
+          ${p.condiciones ? `<div style="background:#f0fdf4;padding:9px 11px;border-left:4px solid #22c55e;border-radius:0 5px 5px 0;page-break-inside:avoid;break-inside:avoid"><strong style="color:#166534;font-size:10.5px">CONDICIONES:</strong><br><span style="font-size:10.5px;color:#15803d">${p.condiciones.replace(/\n/g,"<br>")}</span></div>` : ""}
         </div>` : ""}
       </div>
     </body></html>`);
@@ -2259,7 +2240,7 @@ function PresupuestoDocModal({
 }
 
 // ═══ Vista previa inline (modal) ════════════════════════════════════════
-function PreviewModal({ item, onClose, navigate, token, onUpdated }) {
+function PreviewModal({ item, onClose, navigate, token, onUpdated, cuentasDisp = [] }) {
   const { kind, data } = item;
   const d = data || {};
   React.useEffect(() => {
@@ -2295,7 +2276,7 @@ function PreviewModal({ item, onClose, navigate, token, onUpdated }) {
           {kind === "presupuesto" && <PresupuestoPreview p={d} />}
           {kind === "factura"     && <FacturaPreview f={d} />}
           {kind === "contrato"    && <ContratoPreview c={d} />}
-          {kind === "ingreso"     && <IngresoPreview i={d} />}
+          {kind === "ingreso"     && <IngresoPreview i={d} cuentasDisp={cuentasDisp} />}
         </div>
         <div className="border-t border-white/10 px-6 py-3 flex justify-end gap-2">
           <button
@@ -2380,15 +2361,78 @@ function ContratoPreview({ c }) {
   );
 }
 
-function IngresoPreview({ i }) {
+function IngresoPreview({ i, cuentasDisp = [] }) {
+  const moneda = i.moneda || "PYG";
+  const montoConvertido = moneda !== "PYG" && i.tipo_cambio
+    ? i.monto * i.tipo_cambio
+    : null;
+
   return (
     <>
+      {/* Monto destacado */}
+      <div className="flex flex-col items-center justify-center bg-violet-500/10 border border-violet-500/20 rounded-xl py-5 mb-4">
+        <p className="text-violet-300 text-xs uppercase tracking-widest mb-1 font-body">Monto ingresado</p>
+        <p className="font-heading font-bold text-3xl text-violet-200">
+          {fmtMonto(i.monto || 0, moneda)}
+        </p>
+        {montoConvertido && (
+          <p className="text-slate-400 text-sm mt-1">
+            ≈ {fmtMonto(montoConvertido, "PYG")} <span className="text-slate-500 text-xs">TC {i.tipo_cambio}</span>
+          </p>
+        )}
+      </div>
+
+      {/* Categoría badge */}
+      <div className="flex items-center justify-between border-b border-white/5 pb-2 mb-1">
+        <span className="text-slate-400 text-xs uppercase tracking-wider">Categoría</span>
+        <span className="text-xs px-2.5 py-1 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/20 font-body">
+          {i.categoria || "—"}
+        </span>
+      </div>
+
       <PreviewRow label="Descripción" value={i.descripcion} />
-      <PreviewRow label="Categoría"   value={i.categoria} />
       <PreviewRow label="Fecha"       value={i.fecha} />
-      <PreviewRow label="Moneda"      value={i.moneda} />
-      <PreviewRow label="Monto"       value={fmtMonto(i.monto || 0, i.moneda)} />
-      {i.notas && <PreviewRow label="Notas" value={i.notas} />}
+      <PreviewRow label="Moneda"      value={moneda} />
+
+      {/* Cuenta bancaria — con fallback a predeterminada si el registro es viejo */}
+      {(() => {
+        const cuentaEf = i.cuenta_nombre
+          || cuentasDisp.find(c => c.logo_tipo === i.logo_tipo && c.moneda === moneda && c.es_predeterminada)?.nombre
+          || cuentasDisp.find(c => c.logo_tipo === i.logo_tipo && c.moneda === moneda)?.nombre
+          || null;
+        if (!cuentaEf) return null;
+        return (
+          <div className="flex items-center justify-between border-b border-white/5 pb-2">
+            <span className="text-slate-400 text-xs uppercase tracking-wider">Cuenta</span>
+            <span className="text-blue-300 text-sm flex items-center gap-1 font-body">
+              🏦 {cuentaEf}
+            </span>
+          </div>
+        );
+      })()}
+
+      {/* Empresa */}
+      {i.logo_tipo && (
+        <PreviewRow label="Empresa" value={
+          i.logo_tipo === "arandu" ? "Arandu Informática"
+          : i.logo_tipo === "jar"  ? "JAR Informática"
+          : "Arandu&JAR"
+        } />
+      )}
+
+      {i.notas && (
+        <div className="mt-3 bg-amber-500/5 border border-amber-500/15 rounded-lg px-4 py-3">
+          <p className="text-amber-400 text-xs uppercase tracking-wider mb-1">Notas</p>
+          <p className="text-slate-200 text-sm font-body">{i.notas}</p>
+        </div>
+      )}
+
+      {/* Fecha de carga */}
+      {i.created_at && (
+        <p className="text-slate-600 text-xs text-right mt-3 font-body">
+          Registrado: {i.created_at.slice(0, 10)}
+        </p>
+      )}
     </>
   );
 }
@@ -2579,7 +2623,7 @@ function FacturarModal({
 // ═══════════════════════════════════════════════════════════════
 // FacturaDocModal — vista visual de factura (estilo documento)
 // ═══════════════════════════════════════════════════════════════
-function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDelete, onPagar, onDeshacer, canEdit, canDelete, onReciboClick, onPresClick, onEditPago, onDeletePago }) {
+function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDelete, onPagar, onDeshacer, canEdit, canDelete, onReciboClick, onPresClick, onEditPago, onDeletePago, cuentasDisp = [] }) {
   React.useEffect(() => {
     const esc = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", esc);
@@ -2605,9 +2649,16 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
   };
   const est = ESTADO_STYLE[f.estado] || ESTADO_STYLE.pendiente;
 
+  // Cuenta predeterminada por moneda/empresa (fallback para registros viejos sin cuenta asignada)
+  const getCuentaFallback = (moneda, logo_tipo) =>
+    cuentasDisp.find(c => c.logo_tipo === logo_tipo && c.moneda === moneda && c.es_predeterminada)?.nombre
+    || cuentasDisp.find(c => c.logo_tipo === logo_tipo && c.moneda === moneda)?.nombre
+    || null;
+
   const handlePrint = () => {
     const w = window.open("", "_blank");
     if (!w) return;
+    const docLogo = svgDocumentHeaderLogoHtml(f.logo_tipo);
     const itemRows = (f.conceptos || []).length > 0
       ? (f.conceptos || []).map(c => `
           <tr>
@@ -2619,8 +2670,7 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
       <style>body{font-family:Arial,sans-serif;color:#111;padding:20px;max-width:800px;margin:0 auto}</style></head><body>
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;border-bottom:3px solid ${accentColor};padding-bottom:16px">
         <div>
-          <strong style="font-size:24px;color:${accentColor}">${f.logo_tipo === "jar" ? "JAR" : f.logo_tipo === "arandu" ? "ARANDU" : "ARANDU&JAR"}</strong>
-          <span style="font-size:11px;color:#6b7280;display:block">INFORMÁTICA</span>
+          ${docLogo}
           <div style="margin-top:12px;font-size:12px;color:#6b7280">
             <p>De la Conquista 1132 c/ Isabel la Católica</p><p>Barrio Sajonia, Asunción - Paraguay</p>
             <p>Tel: 021-421330 | info@aranduinformatica.net</p>
@@ -2653,6 +2703,7 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
       </table>
       ${f.notas ? `<div style="background:#fefce8;padding:10px;border-left:3px solid #ca8a04;"><strong style="color:#92400e">Notas:</strong><br>${f.notas}</div>` : ""}
       ${f.estado === "pagada" ? `<div style="margin-top:16px;text-align:center;border:2px solid #16a34a;padding:8px;border-radius:4px;color:#16a34a;font-weight:bold;font-size:18px">PAGADA</div>` : ""}
+      ${(() => { const fb=getCuentaFallback(f.moneda,f.logo_tipo); const cs=[...new Set((f.pagos||[]).map(p=>p.cuenta_nombre||fb).filter(Boolean))]; if(!cs.length&&fb) cs.push(fb); return cs.length ? `<div style="margin-top:8px;text-align:center;font-size:13px;color:#1d4ed8">🏦 ${cs.join(' · ')}</div>` : ""; })()}
     </body></html>`);
     w.document.close();
     setTimeout(() => w.print(), 400);
@@ -2727,6 +2778,25 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
                   {f.estado?.toUpperCase()}
                 </span>
               </div>
+              {/* Cuenta bancaria — visible sin scroll (usa fallback si el pago no tiene cuenta) */}
+              {(() => {
+                const pagos = f.pagos || [];
+                const cuentas = [...new Set(
+                  pagos.length > 0
+                    ? pagos.map(p => p.cuenta_nombre || getCuentaFallback(f.moneda, f.logo_tipo)).filter(Boolean)
+                    : [getCuentaFallback(f.moneda, f.logo_tipo)].filter(Boolean)
+                )];
+                if (!cuentas.length) return null;
+                return (
+                  <div className="mt-2 flex flex-col items-end gap-1">
+                    {cuentas.map((c, i) => (
+                      <span key={i} className="inline-flex items-center gap-1 text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2 py-0.5">
+                        🏦 {c}
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -2792,9 +2862,9 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-gray-700 font-medium">Pago {i + 1}</span>
                       {p.fecha && <span className="text-gray-500 text-xs">{p.fecha}</span>}
-                      {p.cuenta_nombre && (
+                      {(p.cuenta_nombre || getCuentaFallback(f.moneda, f.logo_tipo)) && (
                         <span className="text-xs bg-blue-50 text-blue-600 border border-blue-200 rounded px-1.5 py-0.5">
-                          🏦 {p.cuenta_nombre}
+                          🏦 {p.cuenta_nombre || getCuentaFallback(f.moneda, f.logo_tipo)}
                         </span>
                       )}
                       {p.tipo_cambio && (
@@ -2823,7 +2893,7 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
                         className="text-slate-400 hover:text-blue-500 transition-colors"
                         title="Editar pago"
                       >
-                        <Pencil className="w-3.5 h-3.5" />
+                        <Edit className="w-3.5 h-3.5" />
                       </button>
                     )}
                     {canEdit && onDeletePago && (
@@ -3263,7 +3333,7 @@ function PagoParcialModal({ fac, montoParcial, setMontoParcial, fechaPagoParcial
 // ═══════════════════════════════════════════════════════════════
 // ReciboDocModal — vista visual de recibo de pago
 // ═══════════════════════════════════════════════════════════════
-function ReciboDocModal({ recibo: r, onClose, fmtMonto }) {
+function ReciboDocModal({ recibo: r, onClose, fmtMonto, cuentasDisp = [] }) {
   React.useEffect(() => {
     const esc = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", esc);
@@ -3273,11 +3343,19 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto }) {
   const accentColor = r.logo_tipo === "jar" ? "#dc2626" : r.logo_tipo === "arandu" ? "#2563eb" : "#1d4ed8";
   const fmt = (n) => fmtMonto(n, r.moneda);
 
+  // Cuenta efectiva: la guardada en el recibo o la predeterminada por moneda/empresa
+  const cuentaEfectiva = r.cuenta_nombre
+    || cuentasDisp.find(c => c.logo_tipo === r.logo_tipo && c.moneda === (r.moneda || "PYG") && c.es_predeterminada)?.nombre
+    || cuentasDisp.find(c => c.logo_tipo === r.logo_tipo && c.moneda === (r.moneda || "PYG"))?.nombre
+    || null;
+
   const handlePrint = () => {
     const w = window.open("", "_blank");
     if (!w) return;
+    const docLogo = svgDocumentHeaderLogoHtml(r.logo_tipo);
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Recibo ${r.numero}</title>
       <style>body{font-family:Arial,sans-serif;color:#111;padding:20px;max-width:600px;margin:0 auto;border:2px solid ${accentColor};border-radius:8px}</style></head><body>
+      <div style="display:flex;justify-content:center;margin-bottom:16px">${docLogo}</div>
       <div style="text-align:center;margin-bottom:20px;border-bottom:2px solid ${accentColor};padding-bottom:16px">
         <h1 style="font-size:28px;font-weight:900;color:${accentColor};margin:0">RECIBO DE PAGO</h1>
         <p style="font-size:20px;font-weight:700;color:#1f2937;margin:4px 0">N° ${r.numero}</p>
@@ -3288,6 +3366,7 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto }) {
         ${r.ruc ? `<tr><td style="padding:8px 4px;color:#6b7280">RUC:</td><td style="padding:8px 4px">${r.ruc}</td></tr>` : ""}
         <tr style="background:#f9fafb"><td style="padding:8px 4px;color:#6b7280">Por factura:</td><td style="padding:8px 4px;font-family:monospace;font-weight:600">${r.factura_numero || "-"}</td></tr>
         <tr><td style="padding:8px 4px;color:#6b7280">Fecha de pago:</td><td style="padding:8px 4px;font-weight:600">${r.fecha_pago || "-"}</td></tr>
+        ${cuentaEfectiva ? `<tr style="background:#f9fafb"><td style="padding:8px 4px;color:#6b7280">Cuenta bancaria:</td><td style="padding:8px 4px;font-weight:600">🏦 ${cuentaEfectiva}</td></tr>` : ""}
       </table>
       <div style="background:${accentColor}10;border:2px solid ${accentColor};border-radius:8px;padding:16px;text-align:center;margin:20px 0">
         <p style="color:#6b7280;font-size:12px;margin:0 0 4px">MONTO RECIBIDO</p>
@@ -3350,6 +3429,12 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto }) {
             <p className="text-4xl font-black" style={{ color: accentColor }}>{fmt(r.monto)}</p>
           </div>
 
+          {cuentaEfectiva && (
+            <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-sm">
+              <span className="text-blue-600 text-xs uppercase tracking-wide font-semibold">Cuenta bancaria</span>
+              <span className="text-blue-800 font-medium flex items-center gap-1">🏦 {cuentaEfectiva}</span>
+            </div>
+          )}
           {r.notas && (
             <div className="bg-yellow-50 border-l-4 border-yellow-400 p-3 rounded-r text-sm text-gray-600">
               <strong className="text-yellow-800">Notas:</strong> {r.notas}
@@ -3375,7 +3460,6 @@ function ContratoDocModal({ contrato: c, facturas = [], onClose, onEdit, onDelet
   }, [onClose]);
 
   const accentColor = c.logo_tipo === "jar" ? "#dc2626" : "#7c3aed";
-  const facturasVinculadas = facturas.filter(f => f.contrato_id === c.id);
 
   const FREQ_LABEL = { mensual: "Mensual", trimestral: "Trimestral", semestral: "Semestral", anual: "Anual" };
 
@@ -3592,7 +3676,9 @@ function ContratoFormModal({ contrato, empresas, token, API, onClose, onSaved, a
             <label className={lbl}>Empresa Cliente *</label>
             <select className={inp} value={form.empresa_id} onChange={e => set("empresa_id", e.target.value)}>
               <option value="">— Seleccionar empresa —</option>
-              {empresas.map(e => <option key={e.id} value={e.id}>{e.razon_social || e.nombre}{e.ruc ? ` · ${e.ruc}` : ""}</option>)}
+              {empresas
+                .filter(e => !logoTipo || !e.logo_tipo || e.logo_tipo === logoTipo)
+                .map(e => <option key={e.id} value={e.id}>{e.razon_social || e.nombre}{e.ruc ? ` · ${e.ruc}` : ""}</option>)}
             </select>
           </div>
 

@@ -1646,15 +1646,7 @@ const EgresosPage = () => {
                   <button onClick={() => setShowCostoForm(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
                 </div>
                 <form onSubmit={handleSaveCosto} className="p-5 space-y-4">
-                  <div>
-                    <label className="text-slate-400 text-xs mb-2 block">Empresa *</label>
-                    <div className="flex gap-2">
-                      {[["arandujar","Arandu&JAR"],["arandu","Arandu"],["jar","JAR"]].map(([v,l]) => (
-                        <button key={v} type="button" onClick={() => setCostoFormData(f=>({...f,logo_tipo:v}))}
-                          className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${costoFormData.logo_tipo===v?"bg-blue-600 border-blue-600 text-white":"border-white/10 text-slate-400 hover:text-white bg-white/5"}`}>{l}</button>
-                      ))}
-                    </div>
-                  </div>
+
                   <div>
                     <label className="text-slate-400 text-xs mb-1 block">Nombre *</label>
                     <input required type="text" value={costoFormData.nombre} onChange={e=>setCostoFormData(f=>({...f,nombre:e.target.value}))}

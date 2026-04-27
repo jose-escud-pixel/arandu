@@ -1,3 +1,8 @@
+// ⚠️  DEPRECATED — Esta página ya no se usa.
+// Toda la funcionalidad de facturas fue migrada a VentasPage.jsx (tab "Facturas").
+// Mantener este archivo solo como referencia histórica. NO modificar.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import React, { useState, useEffect, useContext, useCallback, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import {
@@ -80,7 +85,6 @@ const emptyForm = {
   notas: "",
   presupuesto_id: "",      // legacy (compat)
   presupuesto_ids: [],     // nuevo: lista de presupuestos vinculados
-  contrato_id: "",
   _empresa_id: "",   // UI-only, not sent to API
 };
 
@@ -102,7 +106,6 @@ export default function FacturasPage() {
   const [loading, setLoading] = useState(false);
   const [empresas, setEmpresas] = useState([]);
   const [presupuestosDisp, setPresupuestosDisp] = useState([]);
-  const [contratosDisp, setContratosDisp] = useState([]);
 
   const [showModal, setShowModal] = useState(false);
   const [editingFac, setEditingFac] = useState(null);
@@ -145,7 +148,6 @@ export default function FacturasPage() {
         fetch(`${API}/admin/facturas/resumen?${qR}`, { headers }),
         fetch(`${API}/admin/empresas${logoQ}`, { headers }),
         fetch(`${API}/admin/presupuestos${logoQ}`, { headers }),
-        fetch(`${API}/admin/contratos${logoQ}`, { headers }),
         fetch(`${API}/admin/cuentas-bancarias${logoQ}`, { headers }),
       ]);
       if (empRes.ok) setEmpresas(await empRes.json());
@@ -208,7 +210,6 @@ export default function FacturasPage() {
       presupuesto_ids: fac.presupuesto_ids?.length
         ? fac.presupuesto_ids
         : (fac.presupuesto_id ? [fac.presupuesto_id] : []),
-      contrato_id: fac.contrato_id || "",
       _empresa_id: "",   // reset on edit; user can re-select if needed
     });
     setShowModal(true);
@@ -233,7 +234,7 @@ export default function FacturasPage() {
     if (!form.razon_social.trim()) { toast.error("Razón social requerida"); return; }
 
     // Si hay conceptos múltiples, calcular monto desde ellos
-    const tieneConceptos = form.tipo === "emitida" && (form.presupuesto_ids || []).length === 0 && !form.contrato_id && (form.conceptos || []).length > 0;
+    const tieneConceptos = form.tipo === "emitida" && (form.presupuesto_ids || []).length === 0 && (form.conceptos || []).length > 0;
     const montoFinal = tieneConceptos
       ? (form.conceptos || []).reduce((s, c) => s + (parseFloat(c.monto) || 0), 0)
       : toFloat(form.monto);
@@ -262,7 +263,6 @@ export default function FacturasPage() {
         notas: form.notas || null,
         presupuesto_ids: form.presupuesto_ids || [],
         presupuesto_id: form.presupuesto_ids?.length === 1 ? form.presupuesto_ids[0] : (form.presupuesto_id || null),
-        contrato_id: form.contrato_id || null,
       };
       const url = editingFac ? `${API}/admin/facturas/${editingFac.id}` : `${API}/admin/facturas`;
       const method = editingFac ? "PUT" : "POST";
@@ -599,9 +599,6 @@ export default function FacturasPage() {
                             : "Presupuesto vinculado"}
                         </span>
                       )}
-                      {fac.contrato_id && (
-                        <span className="text-xs text-emerald-400 block mt-0.5">📋 Contrato vinculado</span>
-                      )}
                     </td>
                     <td className="px-4 py-3 text-slate-400 text-sm whitespace-nowrap">{fac.fecha}</td>
                     <td className="px-4 py-3 text-right">
@@ -803,7 +800,7 @@ export default function FacturasPage() {
               </div>
 
               {/* Concepto / Multi-conceptos */}
-              {form.tipo === "emitida" && (form.presupuesto_ids || []).length === 0 && !form.contrato_id ? (
+              {form.tipo === "emitida" && (form.presupuesto_ids || []).length === 0 ? (
                 /* Emitida sin vínculo → multi-conceptos */
                 <div className="bg-white/3 border border-white/10 rounded-xl p-3 space-y-2">
                   <div className="flex items-center justify-between">
@@ -854,7 +851,7 @@ export default function FacturasPage() {
               {/* Moneda row — siempre visible */}
               <div className="grid grid-cols-3 gap-3">
                 {/* Monto solo cuando NO es multi-concepto */}
-                {!(form.tipo === "emitida" && (form.presupuesto_ids || []).length === 0 && !form.contrato_id && (form.conceptos || []).length > 0) && (
+                {!(form.tipo === "emitida" && (form.presupuesto_ids || []).length === 0 && (form.conceptos || []).length > 0) && (
                   <div className="col-span-2">
                     <label className="text-slate-400 text-xs block mb-1">Monto *</label>
                     <input type="number" value={form.monto} onChange={e => setForm(f => ({ ...f, monto: e.target.value }))}
@@ -863,7 +860,7 @@ export default function FacturasPage() {
                     />
                   </div>
                 )}
-                <div className={!(form.tipo === "emitida" && (form.presupuesto_ids || []).length === 0 && !form.contrato_id && (form.conceptos || []).length > 0) ? "" : "col-span-3"}>
+                <div className={!(form.tipo === "emitida" && (form.presupuesto_ids || []).length === 0 && (form.conceptos || []).length > 0) ? "" : "col-span-3"}>
                   <label className="text-slate-400 text-xs block mb-1">Moneda</label>
                   <select value={form.moneda} onChange={e => setForm(f => ({ ...f, moneda: e.target.value }))}
                     className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500">
@@ -907,12 +904,7 @@ export default function FacturasPage() {
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500"
                   />
                 </div>
-              )}
-
-              {/* Vinculación a presupuestos o contrato (solo facturas emitidas) */}
-              {form.tipo === "emitida" && (
-                <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-3 space-y-3">
-                  <p className="text-blue-300 text-xs font-medium">Vincular a presupuestos o contrato (opcional)</p>
+              )}</p>
 
                   {/* Presupuestos vinculados — multi-select con chips */}
                   <div>
@@ -938,7 +930,6 @@ export default function FacturasPage() {
                     {/* Selector para agregar otro presupuesto */}
                     <select
                       value=""
-                      disabled={!!form.contrato_id}
                       onChange={e => {
                         const val = e.target.value;
                         if (!val) return;
@@ -947,13 +938,12 @@ export default function FacturasPage() {
                           presupuesto_ids: f.presupuesto_ids.includes(val)
                             ? f.presupuesto_ids
                             : [...f.presupuesto_ids, val],
-                          contrato_id: "",
-                        }));
+                                                }));
                       }}
                       className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-400 disabled:opacity-40"
                     >
                       <option value="">
-                        {form.contrato_id ? "Primero quitá el contrato vinculado" : "+ Agregar presupuesto..."}
+                        {"+ Agregar presupuesto..."}
                       </option>
                       {presupuestosDisp
                         .filter(p => !(form.presupuesto_ids || []).includes(p.id))
@@ -971,13 +961,11 @@ export default function FacturasPage() {
                     <div>
                       <label className="text-slate-400 text-xs block mb-1">Contrato</label>
                       <select
-                        value={form.contrato_id || ""}
                         onChange={e => {
                           const cid = e.target.value;
                           const c = contratosDisp.find(x => x.id === cid);
                           setForm(f => ({
                             ...f,
-                            contrato_id: cid,
                             presupuesto_ids: [],
                             // Auto-completar si hay contrato y campos vacíos
                             concepto: cid && c ? (c.nombre || c.descripcion || f.concepto) : f.concepto,
@@ -1004,10 +992,10 @@ export default function FacturasPage() {
                     </div>
                   )}
 
-                  {((form.presupuesto_ids || []).length > 0 || form.contrato_id) && (
+                  {((form.presupuesto_ids || []).length > 0) && (
                     <button
                       type="button"
-                      onClick={() => setForm(f => ({ ...f, presupuesto_ids: [], contrato_id: "" }))}
+                      onClick={() => setForm(f => ({ ...f, presupuesto_ids: [] }))}
                       className="text-xs text-slate-500 hover:text-red-400 transition-colors"
                     >
                       ✕ Quitar todas las vinculaciones

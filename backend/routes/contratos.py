@@ -113,6 +113,25 @@ async def update_contrato(contrato_id: str, data: ContratoCreate, user: dict = D
     return c_actualizado
 
 
+@router.delete("/admin/contratos/limpiar-cobros-huerfanos")
+async def limpiar_cobros_huerfanos(user: dict = Depends(require_authenticated)):
+    """Elimina cobros_contratos cuya factura de origen ya no tiene ese pago (o fue eliminada)."""
+    if not has_permission(user, "contratos.editar"):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+    todos = await db.cobros_contratos.find({}, {"_id": 0}).to_list(5000)
+    eliminados = 0
+    for cobro in todos:
+        factura_id = cobro.get("from_factura_id")
+        if not factura_id:
+            continue  # cobro manual, no tocar
+        fac = await db.facturas.find_one({"id": factura_id}, {"_id": 0, "id": 1, "estado": 1})
+        if not fac or fac.get("estado") in ("pendiente", "anulada"):
+            await db.cobros_contratos.delete_one({"id": cobro["id"]})
+            eliminados += 1
+    await log_auditoria(user, "contratos", "limpiar_cobros_huerfanos",
+                        f"Eliminados {eliminados} cobros_contratos huérfanos")
+    return {"eliminados": eliminados}
+
 @router.delete("/admin/contratos/{contrato_id}")
 async def delete_contrato(contrato_id: str, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "contratos.eliminar"):
@@ -124,3 +143,4 @@ async def delete_contrato(contrato_id: str, user: dict = Depends(require_authent
     await log_auditoria(user, "contratos", "eliminar_contrato",
                         f"Contrato {c.get('numero', contrato_id)} eliminado")
     return {"detail": "Contrato eliminado"}
+

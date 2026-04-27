@@ -38,10 +38,6 @@ function mesLabel(m) {
 }
 function fmtPYG(n) {
   if (n == null || isNaN(n)) return "-";
-  if (Math.abs(n) >= 1_000_000)
-    return `₲ ${(n / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(n) >= 1_000)
-    return `₲ ${Math.round(n / 1_000)}K`;
   return `₲ ${Math.round(n).toLocaleString("es-PY")}`;
 }
 function fmtMonto(monto, moneda = "PYG") {
@@ -139,18 +135,18 @@ function StateDropdown({ estado, options, onChange, disabled = false }) {
 const TABS = [
   { id: "presupuestos", label: "Presupuestos", icon: FileText,      color: "blue" },
   { id: "facturas",     label: "Facturas",     icon: Receipt,       color: "emerald" },
-  { id: "contratos",    label: "Contratos",    icon: ClipboardList, color: "purple" },
   { id: "ingresos",     label: "Ingresos",     icon: TrendingUp,    color: "violet" },
   { id: "recibos",      label: "Recibos",      icon: Banknote,      color: "amber" },
 ];
 
 export default function VentasPage() {
   const { token, user, hasPermission, empresasPropias, activeEmpresaPropia } = useContext(AuthContext);
+  const isAdmin = user?.role === "admin";
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(() => {
     const t = searchParams.get("tab");
-    return t && ["presupuestos", "facturas", "contratos", "ingresos", "recibos"].includes(t) ? t : "presupuestos";
+    return t && ["presupuestos", "facturas", "ingresos", "recibos"].includes(t) ? t : "presupuestos";
   });
   // Filtro temporal: "todos" | "mes" | "anio"
   const [filtroTipo, setFiltroTipo] = useState("todos");
@@ -164,7 +160,6 @@ export default function VentasPage() {
   const [sortBy, setSortBy] = useState({
     presupuestos: { key: "fecha", dir: "desc" },
     facturas:     { key: "fecha", dir: "desc" },
-    contratos:    { key: "numero", dir: "desc" },
     ingresos:     { key: "fecha", dir: "desc" },
     recibos:      { key: "fecha_pago", dir: "desc" },
   });
@@ -205,11 +200,6 @@ export default function VentasPage() {
   const [showFacForm, setShowFacForm] = useState(false);
 
   // Contrato: chips search + visual doc + form modal
-  const [conChips, setConChips] = useState([]);
-  const [conInput, setConInput] = useState("");
-  const [conDoc, setConDoc] = useState(null);
-  const [showConForm, setShowConForm] = useState(false);
-  const [conFormItem, setConFormItem] = useState(null); // null=new, object=edit
   // Pago modals
   const [pagoFac, setPagoFac] = useState(null);
   const [showPagoModal, setShowPagoModal] = useState(false);
@@ -286,7 +276,6 @@ export default function VentasPage() {
   const [presupuestos, setPresupuestos] = useState([]);
   const [facturas, setFacturas] = useState([]);
   const [ingresos, setIngresos] = useState([]);
-  const [contratos, setContratos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showIngForm, setShowIngForm] = useState(false);  // modal nuevo ingreso
   const [ingFormItem, setIngFormItem] = useState(null);   // ingreso a editar
@@ -324,16 +313,15 @@ export default function VentasPage() {
       const logoQc = logoFilter !== "todas" ? `?logo_tipo=${logoFilter}` : "";
       const mesParam = filtroTipo === "mes" ? mes : "";
       const buildQ = (params) => { const p = Object.entries(params).filter(([,v]) => v != null && v !== "").map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join("&"); return p ? `?${p}` : ""; };
-      const [rPres, rFac, rIng, rCon, rEmp, rProv, rProd, rCuentas, rRecibos] = await Promise.all([
+      const [rPres, rFac, rIng, rEmp, rProv, rProd, rCuentas, rRecibos] = await Promise.all([
         fetch(`${API}/admin/presupuestos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
         fetch(`${API}/admin/facturas${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
         fetch(`${API}/admin/ingresos-varios${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
-        fetch(`${API}/admin/contratos${logoQc}`, { headers }),
         fetch(`${API}/admin/empresas${logoQc}`, { headers }),
         fetch(`${API}/admin/proveedores?activo=true`, { headers }),
         fetch(`${API}/admin/productos`, { headers }),
         fetch(`${API}/admin/cuentas-bancarias${logoQc}`, { headers }),
-        fetch(`${API}/admin/recibos${logoQc}`, { headers }),
+        fetch(`${API}/admin/recibos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
       ]);
       if (rPres.ok) setPresupuestos(await rPres.json());
       if (rFac.ok) {
@@ -347,7 +335,6 @@ export default function VentasPage() {
         })));
       }
       if (rIng.ok) { const dIng = await rIng.json(); setIngresos(Array.isArray(dIng) ? dIng : []); }
-      if (rCon.ok)  { const d = await rCon.json(); setContratos(d.contratos || d || []); }
       if (rEmp.ok) setEmpresas(await rEmp.json());
       if (rProv.ok) setProveedores(await rProv.json());
       if (rProd.ok) setProductos(await rProd.json());
@@ -360,6 +347,8 @@ export default function VentasPage() {
   };
 
   useEffect(() => { fetchAll(); }, [mes, filtroTipo, activeEmpresaPropia]); // eslint-disable-line
+
+
 
   // ── Al entrar con ?empresa=<id> desde Clientes, pre-llenar el buscador chip ──
   // (ruta vieja era /admin/presupuestos?empresa=X; ahora es /admin/ventas?tab=presupuestos&empresa=X
@@ -524,9 +513,18 @@ export default function VentasPage() {
 
   // ── Factura: deshacer pago ───────────────────────────────────
   const handleDeshacerFac = async (fac) => {
+    if (!window.confirm("¿Deshacer el pago? Se eliminarán todos los pagos y recibos registrados de esta factura.")) return;
     try {
-      const res = await fetch(`${API}/admin/facturas/${fac.id}/estado?estado=pendiente`, { method: "PATCH", headers });
-      if (!res.ok) throw new Error();
+      const pagos = fac.pagos || [];
+      if (pagos.length > 0) {
+        // Eliminar cada pago (y su recibo vinculado) uno por uno
+        for (const pago of pagos) {
+          await fetch(`${API}/admin/facturas/${fac.id}/pago/${pago.id}`, { method: "DELETE", headers });
+        }
+      } else {
+        // Factura sin array pagos (legacy) — solo cambiar estado
+        await fetch(`${API}/admin/facturas/${fac.id}/estado?estado=pendiente`, { method: "PATCH", headers });
+      }
       toast.success("Pago deshecho");
       fetchAll();
     } catch { toast.error("Error"); }
@@ -726,23 +724,29 @@ export default function VentasPage() {
       (i.categoria || "").toLowerCase().includes(q) ||
       String(i.monto_pyg || i.monto || "").includes(q)
     ).filter(i => logoFilter === "todas" || (i.logo_tipo || "arandujar") === logoFilter), sortBy.ingresos || { key: "fecha", dir: "desc" });
-  // Contratos: chips search (AND lógico)
-  const conAllChips = [...conChips, ...(conInput.trim() ? [conInput.trim()] : [])];
-  const filteredCon = sortList(contratos.filter(c => {
-    if (conAllChips.length === 0) return true;
-    const texto = [c.numero, c.nombre, c.descripcion, c.empresa_nombre, c.notas, c.moneda, c.frecuencia]
-      .filter(Boolean).join(" ").toLowerCase();
-    return conAllChips.every(chip => texto.includes(chip.toLowerCase()));
-  }), sortBy.contratos);
-
   // ─── Stats ───────────────────────────────────────────────────
   const totalFacturadoPYG = facturas
     .filter(f => f.tipo === "emitida" && f.estado !== "anulada")
     .reduce((s, f) => s + (f.monto_pyg || f.monto || 0), 0);
 
   const totalCobradoPYG = facturas
-    .filter(f => f.tipo === "emitida" && f.estado === "pagada")
-    .reduce((s, f) => s + (f.monto_pyg || f.monto || 0), 0);
+    .filter(f => f.tipo === "emitida" && (f.estado === "pagada" || f.estado === "parcial"))
+    .reduce((s, f) => {
+      // Para parcial: sumar solo lo cobrado (monto_pagado o suma de pagos del período)
+      if (f.estado === "parcial") {
+        // Si tiene pagos array, sumar los del período filtrado
+        const pagosArr = f.pagos || [];
+        if (pagosArr.length > 0) {
+          const mesFiltro = filtroTipo === "mes" ? mes : null;
+          const montoPagos = pagosArr
+            .filter(p => !mesFiltro || (p.fecha || "").startsWith(mesFiltro))
+            .reduce((ps, p) => ps + (p.monto || 0), 0);
+          return s + montoPagos;
+        }
+        return s + (f.monto_pagado || 0);
+      }
+      return s + (f.monto_pyg || f.monto || 0);
+    }, 0);
 
   const presAprobados = presupuestos.filter(p => p.estado === "aprobado").length;
   const presBorrador  = presupuestos.filter(p => p.estado === "borrador").length;
@@ -871,7 +875,6 @@ export default function VentasPage() {
                 }`}>
                   {t.id === "presupuestos" ? filteredPres.length
                    : t.id === "facturas" ? filteredFac.length
-                   : t.id === "contratos" ? filteredCon.length
                    : t.id === "recibos" ? filteredRecibos.length
                    : filteredIng.length}
                 </span>
@@ -951,7 +954,7 @@ export default function VentasPage() {
               </div>
             </div>
           );
-        })() : tab !== "contratos" ? (
+        })() : (
           <div className="flex items-center gap-3">
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
@@ -971,7 +974,7 @@ export default function VentasPage() {
               </button>
             )}
           </div>
-        ) : null}
+        )}
 
         {/* ── Tab: Presupuestos ─────────────────────────────────── */}
         {tab === "presupuestos" && (
@@ -1191,10 +1194,7 @@ export default function VentasPage() {
                           {(f.presupuesto_ids?.length > 0 || f.presupuesto_id) && (
                             <span className="ml-1 text-[10px] bg-blue-500/15 text-blue-300 border border-blue-500/20 px-1.5 py-0.5 rounded-full">📄 pres.</span>
                           )}
-                          {f.contrato_id && (
-                            <span className="ml-1 text-[10px] bg-violet-500/15 text-violet-300 border border-violet-500/20 px-1.5 py-0.5 rounded-full">📎 contr.</span>
-                          )}
-                        </td>
+</td>
                         <td className="px-4 py-3 max-w-[160px]">
                           <p className="text-slate-300 truncate">{f.razon_social || "-"}</p>
                           {f.ruc && <p className="text-slate-500 text-xs">RUC: {f.ruc}</p>}
@@ -1288,130 +1288,6 @@ export default function VentasPage() {
           </div>
         )}
 
-        {/* ── Tab: Contratos ──────────────────────────────────── */}
-        {tab === "contratos" && (
-          <div>
-            {/* Chip search bar — same pattern as presupuestos/facturas */}
-            <div className="flex items-center gap-2 mb-3 flex-wrap">
-              <div className="flex flex-wrap gap-1.5 flex-1 min-w-0 bg-white/5 border border-white/10 rounded-xl px-3 py-2 items-center">
-                {conChips.map((chip, i) => (
-                  <span key={i} className="flex items-center gap-1 bg-purple-500/20 text-purple-200 border border-purple-500/30 rounded-full px-2.5 py-0.5 text-xs">
-                    {chip}
-                    <button onClick={() => setConChips(prev => prev.filter((_, idx) => idx !== i))} className="hover:text-red-400 ml-0.5">×</button>
-                  </span>
-                ))}
-                <input
-                  className="flex-1 min-w-[120px] bg-transparent text-sm text-slate-200 placeholder-slate-500 focus:outline-none"
-                  placeholder={conChips.length ? "Agregar filtro..." : "Buscar contrato... (Enter para agregar chip)"}
-                  value={conInput}
-                  onChange={e => setConInput(e.target.value)}
-                  onKeyDown={e => {
-                    if ((e.key === "Enter" || e.key === ",") && conInput.trim()) {
-                      e.preventDefault();
-                      setConChips(prev => [...prev, conInput.trim()]);
-                      setConInput("");
-                    } else if (e.key === "Backspace" && !conInput && conChips.length) {
-                      setConChips(prev => prev.slice(0, -1));
-                    }
-                  }}
-                />
-                {(conChips.length > 0 || conInput) && (
-                  <button onClick={() => { setConChips([]); setConInput(""); }} className="text-slate-500 hover:text-red-400 text-xs ml-1">✕</button>
-                )}
-              </div>
-              {hasPermission("contratos.crear") && (
-                <button
-                  onClick={() => { setConFormItem(null); setShowConForm(true); }}
-                  className="flex items-center gap-1.5 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded-xl font-medium transition-all whitespace-nowrap">
-                  <Plus className="w-3.5 h-3.5" /> Nuevo contrato
-                </button>
-              )}
-            </div>
-
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-slate-500 text-xs font-body">{filteredCon.length} contrato{filteredCon.length !== 1 ? "s" : ""}</span>
-            </div>
-
-            {loading ? (
-              <div className="text-center py-10 text-slate-500 animate-pulse font-body">Cargando...</div>
-            ) : filteredCon.length === 0 ? (
-              <div className="text-center py-12 text-slate-500 font-body">
-                <ClipboardList className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                <p>Sin contratos registrados</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-xl border border-white/10">
-                <table className="w-full text-sm font-body">
-                  <thead>
-                    <tr className="border-b border-white/10 bg-white/3">
-                      <SortTh label="Nº"           sortKey="numero"         currentSort={sortBy.contratos} onClick={k => toggleSort("contratos", k)} className="text-left" />
-                      <SortTh label="Cliente"      sortKey="empresa_nombre" currentSort={sortBy.contratos} onClick={k => toggleSort("contratos", k)} className="text-left" />
-                      <SortTh label="Contrato"     sortKey="nombre"         currentSort={sortBy.contratos} onClick={k => toggleSort("contratos", k)} className="text-left" />
-                      <SortTh label="Frecuencia"   sortKey="frecuencia"     currentSort={sortBy.contratos} onClick={k => toggleSort("contratos", k)} className="text-left" />
-                      <SortTh label="Vigencia"     sortKey="fecha_inicio"   currentSort={sortBy.contratos} onClick={k => toggleSort("contratos", k)} className="text-left" />
-                      <SortTh label="Monto"        sortKey="monto"          currentSort={sortBy.contratos} onClick={k => toggleSort("contratos", k)} className="text-right" />
-                      <SortTh label="Estado"       sortKey="activo"         currentSort={sortBy.contratos} onClick={k => toggleSort("contratos", k)} className="text-center" />
-                      <th className="px-3 py-2 text-xs text-slate-500 font-medium"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredCon.map(c => (
-                      <tr key={c.id}
-                        onClick={() => setConDoc(c)}
-                        className="border-b border-white/5 hover:bg-white/3 cursor-pointer transition-colors">
-                        <td className="px-4 py-3 text-purple-300 font-mono text-xs">{c.numero || `CON-${c.id?.slice(-4)}`}</td>
-                        <td className="px-4 py-3 text-slate-200 text-sm">{c.empresa_nombre || "-"}</td>
-                        <td className="px-4 py-3 text-slate-300 text-xs max-w-[180px]">
-                          <p className="font-medium truncate">{c.nombre || "-"}</p>
-                          {c.descripcion && <p className="text-slate-500 truncate">{c.descripcion}</p>}
-                        </td>
-                        <td className="px-4 py-3 text-slate-400 text-xs capitalize">{c.frecuencia || "mensual"}</td>
-                        <td className="px-4 py-3 text-slate-400 text-xs">
-                          <p>{c.fecha_inicio || "-"}</p>
-                          {c.fecha_fin && <p className="text-slate-500">→ {c.fecha_fin}</p>}
-                        </td>
-                        <td className="px-4 py-3 text-right text-purple-300 font-medium text-sm">
-                          {fmtMonto(c.monto || 0, c.moneda || "PYG")}
-                          {c.moneda !== "PYG" && c.tipo_cambio && (
-                            <p className="text-slate-500 text-xs">≈ {fmtMonto(c.monto * c.tipo_cambio, "PYG")}</p>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.activo !== false ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/20" : "bg-slate-500/15 text-slate-400 border border-slate-500/20"}`}>
-                            {c.activo !== false ? "Activo" : "Inactivo"}
-                          </span>
-                        </td>
-                        <td className="px-3 py-3" onClick={e => e.stopPropagation()}>
-                          <div className="flex items-center gap-1">
-                            {hasPermission("contratos.editar") && (
-                              <button onClick={() => { setConFormItem(c); setShowConForm(true); }}
-                                className="p-1.5 rounded-lg hover:bg-yellow-500/15 text-slate-500 hover:text-yellow-400 transition-colors">
-                                <Edit className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                            {hasPermission("contratos.eliminar") && (
-                              <button onClick={async () => {
-                                if (!window.confirm(`¿Eliminar contrato "${c.nombre}"?`)) return;
-                                const res = await fetch(`${API}/admin/contratos/${c.id}`, { method: "DELETE", headers });
-                                if (res.ok) { toast.success("Contrato eliminado"); fetchAll(); }
-                                else toast.error("Error al eliminar");
-                              }}
-                                className="p-1.5 rounded-lg hover:bg-red-500/15 text-slate-500 hover:text-red-400 transition-colors">
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Tab: Ingresos Varios ─────────────────────────────── */}
         {tab === "ingresos" && (
           <div>
             <div className="flex items-center justify-between mb-3">
@@ -1578,7 +1454,7 @@ export default function VentasPage() {
         />
       )}
 
-      {/* Vista previa inline (facturas/contratos/ingresos) */}
+      {/* Vista previa inline (facturas/ingresos) */}
       {previewItem && (
         <PreviewModal
           item={previewItem}
@@ -1590,38 +1466,6 @@ export default function VentasPage() {
         />
       )}
 
-      {/* ── Contrato Doc View ── */}
-      {conDoc && (
-        <ContratoDocModal
-          contrato={conDoc}
-          facturas={facturas}
-          onClose={() => setConDoc(null)}
-          onEdit={() => { setConFormItem(conDoc); setShowConForm(true); setConDoc(null); }}
-          onDelete={async () => {
-            if (!window.confirm(`¿Eliminar contrato "${conDoc.nombre}"?`)) return;
-            const res = await fetch(`${API}/admin/contratos/${conDoc.id}`, { method: "DELETE", headers });
-            if (res.ok) { toast.success("Contrato eliminado"); setConDoc(null); fetchAll(); }
-            else toast.error("Error al eliminar");
-          }}
-          onFacClick={(fId) => { setConDoc(null); openFacDoc(fId); setTab("facturas"); }}
-          canEdit={hasPermission("contratos.editar")}
-          canDelete={hasPermission("contratos.eliminar")}
-          fmtMonto={fmtMonto}
-        />
-      )}
-
-      {/* ── Contrato Form (nueva/editar) ── */}
-      {showConForm && (
-        <ContratoFormModal
-          contrato={conFormItem}
-          empresas={empresas}
-          token={token}
-          API={API}
-          onClose={() => { setShowConForm(false); setConFormItem(null); }}
-          onSaved={() => { setShowConForm(false); setConFormItem(null); fetchAll(); }}
-          activeEmpresaPropia={activeEmpresaPropia}
-        />
-      )}
 
       {/* Presupuesto Edit/Copy Form */}
       {presFormItem && (
@@ -1706,7 +1550,6 @@ export default function VentasPage() {
           API={API}
           empresas={empresas}
           presupuestosDisp={presupuestos}
-          contratosDisp={contratos}
           activeEmpresaPropia={activeEmpresaPropia}
           hasPermission={hasPermission}
         />
@@ -2223,14 +2066,12 @@ function PreviewModal({ item, onClose, navigate, token, onUpdated, cuentasDisp =
   const title = {
     presupuesto: `Presupuesto #${d.numero || ""}`,
     factura:     `Factura ${d.numero || ""}`,
-    contrato:    `Contrato ${d.numero || d.id?.slice(0, 8) || ""}`,
     ingreso:     `Ingreso: ${d.descripcion || ""}`,
   }[kind] || "Detalle";
 
   const editUrl = {
     presupuesto: "/admin/presupuestos",
     factura:     "/admin/facturas",
-    contrato:    "/admin/contratos",
     ingreso:     "/admin/ingresos-varios",
   }[kind];
 
@@ -2246,7 +2087,6 @@ function PreviewModal({ item, onClose, navigate, token, onUpdated, cuentasDisp =
         <div className="px-6 py-5 space-y-3 text-sm font-body text-slate-200">
           {kind === "presupuesto" && <PresupuestoPreview p={d} />}
           {kind === "factura"     && <FacturaPreview f={d} />}
-          {kind === "contrato"    && <ContratoPreview c={d} />}
           {kind === "ingreso"     && <IngresoPreview i={d} cuentasDisp={cuentasDisp} />}
         </div>
         <div className="border-t border-white/10 px-6 py-3 flex justify-end gap-2">
@@ -2316,21 +2156,6 @@ function FacturaPreview({ f }) {
   );
 }
 
-function ContratoPreview({ c }) {
-  return (
-    <>
-      <PreviewRow label="Número"     value={c.numero} mono />
-      <PreviewRow label="Cliente"    value={c.empresa_nombre || c.cliente_nombre} />
-      <PreviewRow label="Nombre"     value={c.nombre || c.descripcion} />
-      <PreviewRow label="Frecuencia" value={c.frecuencia} />
-      <PreviewRow label="Monto"      value={fmtMonto(c.monto || c.valor || 0, c.moneda || "PYG")} />
-      <PreviewRow label="Inicio"     value={c.fecha_inicio} />
-      <PreviewRow label="Fin"        value={c.fecha_fin} />
-      <PreviewRow label="Estado"     value={<StateBadge estado={c.estado || "activo"} />} />
-      {c.notas && <PreviewRow label="Notas" value={c.notas} />}
-    </>
-  );
-}
 
 function IngresoPreview({ i, cuentasDisp = [] }) {
   const moneda = i.moneda || "PYG";
@@ -2980,11 +2805,11 @@ function PagoModal({ fac, fechaPago, setFechaPago, numeroReciboManual, setNumero
           <div>
             <label className="text-slate-400 text-xs block mb-1">Fecha de pago *</label>
             <input type="date" value={fechaPago}
-              disabled={fac.forma_pago === "contado"}
               onChange={e => setFechaPago(e.target.value)}
               className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500 disabled:opacity-60"
             />
           </div>
+          {fac.forma_pago !== "contado" && (
           <div>
             <label className="text-slate-400 text-xs block mb-1">Nº Recibo <span className="text-slate-500 text-[10px]">(opcional — autogenera si vacío)</span></label>
             <input type="text" value={numeroReciboManual} onChange={e => setNumeroReciboManual(e.target.value)}
@@ -2992,6 +2817,7 @@ function PagoModal({ fac, fechaPago, setFechaPago, numeroReciboManual, setNumero
               className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500"
             />
           </div>
+          )}
           {/* Cuentas bancarias — en moneda de la factura (primarias) */}
           {cuentasMoneda.length > 0 && (
             <div>
@@ -3421,319 +3247,10 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto, cuentasDisp = [] }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ContratoDocModal — vista visual de contrato
 // ═══════════════════════════════════════════════════════════════
-function ContratoDocModal({ contrato: c, facturas = [], onClose, onEdit, onDelete, onFacClick, canEdit, canDelete, fmtMonto }) {
-  React.useEffect(() => {
-    const esc = e => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", esc);
-    return () => document.removeEventListener("keydown", esc);
-  }, [onClose]);
-
-  const accentColor = c.logo_tipo === "jar" ? "#dc2626" : "#7c3aed";
-  const facturasVinculadas = facturas.filter(f => f.contrato_id === c.id);
-
-  const FREQ_LABEL = { mensual: "Mensual", trimestral: "Trimestral", semestral: "Semestral", anual: "Anual" };
-
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl w-full max-w-xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        {/* Toolbar */}
-        <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-gray-200 px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
-          <span className="text-gray-600 font-medium text-sm">Contrato de Servicio</span>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {canEdit && (
-              <button onClick={onEdit} className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-50 hover:bg-yellow-100 text-yellow-700 text-xs rounded-lg border border-yellow-200 transition-all">
-                <Edit className="w-3.5 h-3.5" /> Editar
-              </button>
-            )}
-            {canDelete && (
-              <button onClick={onDelete} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs rounded-lg border border-red-200 transition-all">
-                <Trash2 className="w-3.5 h-3.5" /> Eliminar
-              </button>
-            )}
-            <button onClick={onClose} className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs rounded-lg transition-all">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Header */}
-        <div className="p-6 border-b border-gray-200" style={{ borderTop: `4px solid ${accentColor}` }}>
-          <div className="flex items-start justify-between">
-            <div>
-              <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-1">Contrato de Servicio</p>
-              <h2 className="text-2xl font-black text-gray-800">{c.numero || `CON-${c.id?.slice(-4)}`}</h2>
-              <p className="text-gray-600 font-medium mt-1">{c.nombre}</p>
-            </div>
-            <span className={`px-3 py-1 rounded-full text-xs font-bold ${c.activo !== false ? "bg-emerald-100 text-emerald-700" : "bg-gray-100 text-gray-500"}`}>
-              {c.activo !== false ? "ACTIVO" : "INACTIVO"}
-            </span>
-          </div>
-        </div>
-
-        {/* Cliente */}
-        <div className="p-6 bg-gray-50 border-b">
-          <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-1">Cliente</p>
-          <p className="text-xl font-semibold text-gray-800">{c.empresa_nombre || "-"}</p>
-        </div>
-
-        {/* Detalles */}
-        <div className="p-6 grid grid-cols-2 gap-4 border-b">
-          <div>
-            <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-1">Monto</p>
-            <p className="text-2xl font-black" style={{ color: accentColor }}>{fmtMonto(c.monto || 0, c.moneda || "PYG")}</p>
-            {c.moneda !== "PYG" && c.tipo_cambio && (
-              <p className="text-xs text-gray-400 mt-0.5">≈ {fmtMonto(c.monto * c.tipo_cambio, "PYG")}</p>
-            )}
-          </div>
-          <div>
-            <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-1">Frecuencia</p>
-            <p className="text-lg font-bold text-gray-700 capitalize">{FREQ_LABEL[c.frecuencia] || c.frecuencia || "Mensual"}</p>
-            {c.dia_cobro && <p className="text-xs text-gray-400">Día de cobro: {c.dia_cobro}</p>}
-          </div>
-          <div>
-            <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-1">Inicio</p>
-            <p className="text-gray-700 font-medium">{c.fecha_inicio || "-"}</p>
-          </div>
-          <div>
-            <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-1">Fin</p>
-            <p className="text-gray-700 font-medium">{c.fecha_fin || <span className="text-gray-300">Indefinido</span>}</p>
-          </div>
-          {c.descripcion && (
-            <div className="col-span-2">
-              <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-1">Descripción</p>
-              <p className="text-gray-700 text-sm">{c.descripcion}</p>
-            </div>
-          )}
-        </div>
-
-        {/* Facturas vinculadas */}
-        {facturasVinculadas.length > 0 && (
-          <div className="p-6 border-b">
-            <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-3">
-              Facturas vinculadas ({facturasVinculadas.length})
-            </p>
-            <div className="space-y-2">
-              {facturasVinculadas.map(f => {
-                const ESTADO_COLOR = { pagada: "text-emerald-600", pendiente: "text-amber-600", parcial: "text-blue-600", anulada: "text-gray-400" };
-                return (
-                  <button key={f.id} onClick={() => onFacClick(f.id)}
-                    className="w-full flex items-center justify-between bg-gray-50 hover:bg-gray-100 rounded-lg px-3 py-2.5 text-left transition-all group">
-                    <div>
-                      <p className="text-sm font-mono font-semibold text-gray-700 group-hover:text-blue-600">{f.numero}</p>
-                      <p className="text-xs text-gray-400">{f.fecha} · {f.forma_pago === "credito" ? "Crédito" : "Contado"}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-gray-700">{fmtMonto(f.monto, f.moneda)}</p>
-                      <p className={`text-xs font-semibold ${ESTADO_COLOR[f.estado] || "text-gray-500"}`}>{(f.estado || "").toUpperCase()}</p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Notas */}
-        {c.notas && (
-          <div className="px-6 pb-6 pt-4">
-            <div className="bg-yellow-50 p-3 border-l-4 border-yellow-400 rounded-r">
-              <strong className="text-yellow-800 text-sm">Notas:</strong>
-              <p className="text-gray-700 text-sm mt-1 whitespace-pre-line">{c.notas}</p>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // ═══════════════════════════════════════════════════════════════
-// ContratoFormModal — crear / editar contrato
 // ═══════════════════════════════════════════════════════════════
-function ContratoFormModal({ contrato, empresas, token, API, onClose, onSaved, activeEmpresaPropia }) {
-  const isEdit = !!contrato;
-  const logoTipo = activeEmpresaPropia?.slug || "arandujar";
-
-  const emptyForm = {
-    empresa_id: "",
-    nombre: "",
-    descripcion: "",
-    monto: "",
-    moneda: "PYG",
-    tipo_cambio: "",
-    frecuencia: "mensual",
-    dia_cobro: 1,
-    fecha_inicio: new Date().toISOString().slice(0, 10),
-    fecha_fin: "",
-    activo: true,
-    notas: "",
-  };
-
-  const [form, setForm] = React.useState(isEdit ? {
-    empresa_id: contrato.empresa_id || "",
-    nombre: contrato.nombre || "",
-    descripcion: contrato.descripcion || "",
-    monto: contrato.monto || "",
-    moneda: contrato.moneda || "PYG",
-    tipo_cambio: contrato.tipo_cambio || "",
-    frecuencia: contrato.frecuencia || "mensual",
-    dia_cobro: contrato.dia_cobro || 1,
-    fecha_inicio: contrato.fecha_inicio || new Date().toISOString().slice(0, 10),
-    fecha_fin: contrato.fecha_fin || "",
-    activo: contrato.activo !== false,
-    notas: contrato.notas || "",
-  } : emptyForm);
-  const [saving, setSaving] = React.useState(false);
-
-  React.useEffect(() => {
-    const esc = e => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", esc);
-    return () => document.removeEventListener("keydown", esc);
-  }, [onClose]);
-
-  const set = (f, v) => setForm(prev => ({ ...prev, [f]: v }));
-
-  const handleSave = async () => {
-    if (!form.empresa_id) { toast.error("Seleccioná una empresa cliente"); return; }
-    if (!form.nombre.trim()) { toast.error("El nombre del contrato es requerido"); return; }
-    if (!form.monto || isNaN(parseFloat(form.monto))) { toast.error("Ingresá un monto válido"); return; }
-    setSaving(true);
-    try {
-      const payload = {
-        ...form,
-        logo_tipo: logoTipo,
-        monto: parseFloat(form.monto) || 0,
-        tipo_cambio: form.tipo_cambio ? parseFloat(form.tipo_cambio) : null,
-        dia_cobro: parseInt(form.dia_cobro) || 1,
-        fecha_fin: form.fecha_fin || null,
-        descripcion: form.descripcion || null,
-        notas: form.notas || null,
-      };
-      const url = isEdit ? `${API}/admin/contratos/${contrato.id}` : `${API}/admin/contratos`;
-      const method = isEdit ? "PUT" : "POST";
-      const res = await fetch(url, { method, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || "Error al guardar");
-      }
-      toast.success(isEdit ? "Contrato actualizado" : "Contrato creado");
-      onSaved();
-    } catch (e) { toast.error(e.message); }
-    finally { setSaving(false); }
-  };
-
-  const inp = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-purple-500/40 bg-white";
-  const lbl = "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 block";
-
-  return (
-    <div className="fixed inset-0 z-[200] flex items-start justify-center bg-black/70 backdrop-blur-sm overflow-y-auto py-6 px-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 sticky top-0 bg-white rounded-t-2xl z-10">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-purple-600 flex items-center justify-center">
-              <ClipboardList className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-gray-900">{isEdit ? `Editar Contrato` : "Nuevo Contrato"}</h2>
-              <p className="text-xs text-gray-400">{isEdit ? contrato.nombre : "Crear contrato de servicio"}</p>
-            </div>
-          </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
-        </div>
-
-        <div className="p-6 space-y-4">
-          <div>
-            <label className={lbl}>Empresa Cliente *</label>
-            <select className={inp} value={form.empresa_id} onChange={e => set("empresa_id", e.target.value)}>
-              <option value="">— Seleccionar empresa —</option>
-              {empresas
-                .filter(e => !logoTipo || !e.logo_tipo || e.logo_tipo === logoTipo)
-                .map(e => <option key={e.id} value={e.id}>{e.razon_social || e.nombre}{e.ruc ? ` · ${e.ruc}` : ""}</option>)}
-            </select>
-          </div>
-
-          <div>
-            <label className={lbl}>Nombre del servicio *</label>
-            <input className={inp} value={form.nombre} onChange={e => set("nombre", e.target.value)} placeholder="Ej: Soporte mensual, Hosting, Mantenimiento..." />
-          </div>
-
-          <div>
-            <label className={lbl}>Descripción</label>
-            <input className={inp} value={form.descripcion} onChange={e => set("descripcion", e.target.value)} placeholder="Detalle del contrato (opcional)" />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={lbl}>Monto *</label>
-              <input type="number" className={inp} value={form.monto} onChange={e => set("monto", e.target.value)} placeholder="0" />
-            </div>
-            <div>
-              <label className={lbl}>Moneda</label>
-              <select className={inp} value={form.moneda} onChange={e => set("moneda", e.target.value)}>
-                <option value="PYG">Guaraníes (₲)</option>
-                <option value="USD">Dólares (USD)</option>
-              </select>
-            </div>
-          </div>
-
-          {form.moneda === "USD" && (
-            <div>
-              <label className={lbl}>Tipo de Cambio (₲ por USD)</label>
-              <input type="number" className={inp} value={form.tipo_cambio} onChange={e => set("tipo_cambio", e.target.value)} placeholder="7500" />
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={lbl}>Frecuencia</label>
-              <select className={inp} value={form.frecuencia} onChange={e => set("frecuencia", e.target.value)}>
-                <option value="mensual">Mensual</option>
-                <option value="trimestral">Trimestral</option>
-                <option value="semestral">Semestral</option>
-                <option value="anual">Anual</option>
-              </select>
-            </div>
-            <div>
-              <label className={lbl}>Día de cobro</label>
-              <input type="number" className={inp} value={form.dia_cobro} onChange={e => set("dia_cobro", e.target.value)} min="1" max="31" />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={lbl}>Fecha inicio *</label>
-              <input type="date" className={inp} value={form.fecha_inicio} onChange={e => set("fecha_inicio", e.target.value)} />
-            </div>
-            <div>
-              <label className={lbl}>Fecha fin (opcional)</label>
-              <input type="date" className={inp} value={form.fecha_fin} onChange={e => set("fecha_fin", e.target.value)} />
-            </div>
-          </div>
-
-          <div>
-            <label className={lbl}>Notas</label>
-            <textarea className={inp + " min-h-[70px] resize-none"} value={form.notas} onChange={e => set("notas", e.target.value)} placeholder="Observaciones..." />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <input type="checkbox" id="con-activo" checked={form.activo} onChange={e => set("activo", e.target.checked)} className="w-4 h-4 accent-purple-600" />
-            <label htmlFor="con-activo" className="text-sm text-gray-600">Contrato activo</label>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition-colors">Cancelar</button>
-          <button onClick={handleSave} disabled={saving}
-            className="flex items-center gap-2 px-5 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg shadow transition-all">
-            <Save className="w-4 h-4" /> {saving ? "Guardando..." : isEdit ? "Guardar Cambios" : "Crear Contrato"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────
 //  EditPagoModal — editar un pago individual de una factura

@@ -88,6 +88,7 @@ class EmpresaCreate(BaseModel):
     aplica_retencion: bool = False        # Si esta empresa retiene IVA al pagar
     porcentaje_retencion: Optional[float] = None  # % de retención sobre el IVA (ej: 30)
     notas: Optional[str] = None
+    logo_tipo: Optional[str] = "arandujar"  # arandu | arandujar | jar
 
 class EmpresaResponse(BaseModel):
     id: str
@@ -101,6 +102,7 @@ class EmpresaResponse(BaseModel):
     aplica_retencion: bool = False
     porcentaje_retencion: Optional[float] = None
     notas: Optional[str] = None
+    logo_tipo: Optional[str] = "arandujar"
     created_at: str
 
 
@@ -600,7 +602,6 @@ class FacturaCreate(BaseModel):
     fecha_vencimiento: Optional[str] = None
     fecha_pago: Optional[str] = None
     monto_pagado: Optional[float] = None  # para pagos parciales
-    contrato_id: Optional[str] = None    # si viene de un contrato
     presupuesto_id: Optional[str] = None # DEPRECATED: usar presupuesto_ids
     presupuesto_ids: List[str] = []      # lista de presupuestos vinculados (muchos-a-muchos)
     notas: Optional[str] = None
@@ -637,7 +638,6 @@ class FacturaResponse(BaseModel):
     fecha_pago: Optional[str] = None
     monto_pagado: Optional[float] = None
     pagos: List[PagoItem] = []            # historial de pagos parciales/totales
-    contrato_id: Optional[str] = None
     presupuesto_id: Optional[str] = None  # DEPRECATED: usar presupuesto_ids
     presupuesto_ids: List[str] = []       # lista de presupuestos vinculados
     notas: Optional[str] = None
