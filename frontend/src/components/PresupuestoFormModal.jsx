@@ -317,7 +317,7 @@ const PresupuestoFormModal = ({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
@@ -329,7 +329,7 @@ const PresupuestoFormModal = ({
             <Calculator className="w-6 h-6 text-arandu-blue" />
             {editingId ? "Editar Presupuesto" : "Nuevo Presupuesto"}
           </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-white">
+          <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="text-slate-400 hover:text-white">
             <X className="w-6 h-6" />
           </button>
         </div>
@@ -770,7 +770,7 @@ const PresupuestoFormModal = ({
           <div className="flex gap-3 pt-4">
             <Button
               type="button"
-              onClick={onClose}
+              onMouseDown={(e) => e.target === e.currentTarget && onClose()}
               variant="outline"
               className="flex-1 border-white/20 text-slate-300"
             >

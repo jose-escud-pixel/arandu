@@ -38,6 +38,19 @@ async def get_facturas(
         # Filtra facturas cuya fecha empieza con YYYY-MM
         query["fecha"] = {"$regex": f"^{mes}"}
     facturas = await db.facturas.find(query, {"_id": 0}).sort("fecha", -1).to_list(1000)
+    # Enriquecemos con el nombre actual de la empresa vinculada (apodo) para
+    # que cualquier cambio en empresas se refleje sin tocar las facturas.
+    empresa_ids = list({f.get("empresa_id") for f in facturas if f.get("empresa_id")})
+    if empresa_ids:
+        empresas_docs = await db.empresas.find(
+            {"id": {"$in": empresa_ids}},
+            {"_id": 0, "id": 1, "nombre": 1, "razon_social": 1, "ruc": 1},
+        ).to_list(500)
+        emp_map = {e["id"]: e for e in empresas_docs}
+        for f in facturas:
+            eid = f.get("empresa_id")
+            if eid and eid in emp_map:
+                f["empresa_nombre"] = emp_map[eid].get("nombre") or f.get("empresa_nombre")
     return facturas
 
 
@@ -63,7 +76,30 @@ async def get_factura(factura_id: str, user: dict = Depends(require_authenticate
     fac = await db.facturas.find_one({"id": factura_id}, {"_id": 0})
     if not fac:
         raise HTTPException(status_code=404, detail="Factura no encontrada")
+    # Enriquecer con nombre actual de empresa
+    if fac.get("empresa_id"):
+        emp = await db.empresas.find_one(
+            {"id": fac["empresa_id"]},
+            {"_id": 0, "nombre": 1, "razon_social": 1, "ruc": 1},
+        )
+        if emp and emp.get("nombre"):
+            fac["empresa_nombre"] = emp["nombre"]
     return fac
+
+
+def _build_pago_entry(monto: float, fecha: str, cuenta_id: Optional[str],
+                       cuenta_nombre: Optional[str], tipo_cambio: Optional[float]) -> dict:
+    """Crea una entrada uniforme de pagos[] que cuadra con el resto del sistema."""
+    return {
+        "id": str(uuid.uuid4()),
+        "monto": monto,
+        "fecha": fecha,
+        "cuenta_id": cuenta_id,
+        "cuenta_nombre": cuenta_nombre,
+        "tipo_cambio": tipo_cambio,
+        "monto_cuenta": (round(monto / tipo_cambio, 2) if tipo_cambio and tipo_cambio > 0 else None),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @router.post("/admin/facturas", response_model=FacturaResponse)
@@ -71,9 +107,28 @@ async def create_factura(data: FacturaCreate, user: dict = Depends(require_authe
     if not has_permission(user, "facturas.crear"):
         raise HTTPException(status_code=403, detail="Sin permiso para crear facturas")
     now = datetime.now(timezone.utc).isoformat()
+    doc_data = data.dict()
+    # Si se crea ya pagada y se proveyó cuenta, armamos el array pagos[]
+    # para que el balance / saldo de cuentas lo registre correctamente.
+    if doc_data.get("estado") == "pagada" and doc_data.get("cuenta_id"):
+        # Resolver nombre si vino solo el id
+        cuenta_nombre = doc_data.get("cuenta_nombre")
+        if not cuenta_nombre:
+            c = await db.cuentas_bancarias.find_one({"id": doc_data["cuenta_id"]}, {"_id": 0, "nombre": 1})
+            cuenta_nombre = c.get("nombre") if c else None
+        doc_data["pagos"] = [_build_pago_entry(
+            monto=doc_data.get("monto", 0),
+            fecha=doc_data.get("fecha_pago") or doc_data.get("fecha"),
+            cuenta_id=doc_data["cuenta_id"],
+            cuenta_nombre=cuenta_nombre,
+            tipo_cambio=doc_data.get("tipo_cambio"),
+        )]
+        # Asegurar fecha_pago seteada
+        if not doc_data.get("fecha_pago"):
+            doc_data["fecha_pago"] = doc_data.get("fecha")
     doc = _normalizar_presupuesto_ids({
         "id": str(uuid.uuid4()),
-        **data.dict(),
+        **doc_data,
         "created_at": now,
     })
     await db.facturas.insert_one(doc)
@@ -89,7 +144,30 @@ async def update_factura(factura_id: str, data: FacturaCreate, user: dict = Depe
     fac = await db.facturas.find_one({"id": factura_id}, {"_id": 0})
     if not fac:
         raise HTTPException(status_code=404, detail="Factura no encontrada")
-    updates = _normalizar_presupuesto_ids(data.dict())
+    update_data = data.dict()
+    # Si se está marcando como pagada (estaba pendiente o sin pagos) y se dio cuenta,
+    # registramos el pago como entrada en pagos[].
+    if update_data.get("estado") == "pagada" and update_data.get("cuenta_id"):
+        existing_pagos = fac.get("pagos") or []
+        already_has_full_pago = any(
+            (p.get("monto", 0) >= update_data.get("monto", 0) - 0.01) for p in existing_pagos
+        )
+        if not already_has_full_pago:
+            cuenta_nombre = update_data.get("cuenta_nombre")
+            if not cuenta_nombre:
+                c = await db.cuentas_bancarias.find_one({"id": update_data["cuenta_id"]}, {"_id": 0, "nombre": 1})
+                cuenta_nombre = c.get("nombre") if c else None
+            entry = _build_pago_entry(
+                monto=update_data.get("monto", 0),
+                fecha=update_data.get("fecha_pago") or update_data.get("fecha"),
+                cuenta_id=update_data["cuenta_id"],
+                cuenta_nombre=cuenta_nombre,
+                tipo_cambio=update_data.get("tipo_cambio"),
+            )
+            update_data["pagos"] = existing_pagos + [entry]
+            if not update_data.get("fecha_pago"):
+                update_data["fecha_pago"] = update_data.get("fecha")
+    updates = _normalizar_presupuesto_ids(update_data)
     await db.facturas.update_one({"id": factura_id}, {"$set": updates})
     await log_auditoria(user, "facturas", "editar_factura",
                         f"Factura {factura_id} actualizada")

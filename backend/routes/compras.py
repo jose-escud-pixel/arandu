@@ -38,6 +38,9 @@ class CompraCreate(BaseModel):
     notas: Optional[str] = None
     # crédito
     fecha_vencimiento: Optional[str] = None  # YYYY-MM-DD cuando vence el crédito
+    # cuenta bancaria desde la que se pagó (solo aplica a contado)
+    cuenta_id: Optional[str] = None
+    cuenta_nombre: Optional[str] = None
 
 class CompraUpdate(BaseModel):
     logo_tipo: Optional[str] = None
@@ -56,6 +59,8 @@ class CompraUpdate(BaseModel):
     afecta_stock: Optional[bool] = None
     notas: Optional[str] = None
     fecha_vencimiento: Optional[str] = None
+    cuenta_id: Optional[str] = None
+    cuenta_nombre: Optional[str] = None
 
 class PagoCompraCreate(BaseModel):
     monto_pagado: float
@@ -63,6 +68,8 @@ class PagoCompraCreate(BaseModel):
     tipo_cambio: Optional[float] = None
     fecha_pago: str
     notas: Optional[str] = None
+    cuenta_id: Optional[str] = None
+    cuenta_nombre: Optional[str] = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -138,10 +145,29 @@ async def get_compras(
     return result
 
 
+def _exigir_tc_si_usd_contado(moneda: Optional[str], tipo_cambio: Optional[float],
+                                tipo_pago: Optional[str]):
+    """Una compra USD pagada al contado debe tener tipo de cambio (es egreso
+    inmediato y necesitamos el TC para reflejarlo en guaraníes).
+    Las compras a crédito NO necesitan TC al guardar — el TC real se carga
+    cuando se registra el pago en pagos_proveedores."""
+    if (moneda or "PYG").upper() != "USD":
+        return
+    if (tipo_pago or "contado") != "contado":
+        return  # credito: TC se setea al pagar
+    if not tipo_cambio or tipo_cambio <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Falta el tipo de cambio para una compra al contado en USD.",
+        )
+
+
 @router.post("/admin/compras")
 async def create_compra(data: CompraCreate, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "compras.crear"):
         raise HTTPException(status_code=403, detail="Sin permiso para crear compras")
+
+    _exigir_tc_si_usd_contado(data.moneda, data.tipo_cambio, data.tipo_pago)
 
     # Calcular subtotales de items
     items = []
@@ -167,6 +193,8 @@ async def create_compra(data: CompraCreate, user: dict = Depends(require_authent
         "afecta_stock": data.afecta_stock,
         "notas": data.notas,
         "fecha_vencimiento": data.fecha_vencimiento,
+        "cuenta_id": data.cuenta_id if data.tipo_pago == "contado" else None,
+        "cuenta_nombre": data.cuenta_nombre if data.tipo_pago == "contado" else None,
         "pagos": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "created_by": user.get("id"),
@@ -213,6 +241,16 @@ async def update_compra(compra_id: str, data: CompraUpdate, user: dict = Depends
     update_data = {k: v for k, v in data.dict().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="Sin datos para actualizar")
+
+    # Validar TC si se está editando la moneda/tc o la compra ya está en USD
+    existing_compra = await db.compras.find_one(
+        {"id": compra_id}, {"moneda": 1, "tipo_cambio": 1, "tipo_pago": 1}
+    ) or {}
+    moneda_final = update_data.get("moneda", existing_compra.get("moneda"))
+    tc_final = update_data.get("tipo_cambio", existing_compra.get("tipo_cambio"))
+    tipo_pago_final = update_data.get("tipo_pago", existing_compra.get("tipo_pago"))
+    _exigir_tc_si_usd_contado(moneda_final, tc_final, tipo_pago_final)
+
     result = await db.compras.update_one({"id": compra_id}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Compra no encontrada")
@@ -269,6 +307,8 @@ async def registrar_pago_compra(compra_id: str, data: PagoCompraCreate, user: di
         "tipo_cambio": data.tipo_cambio,
         "fecha_pago": data.fecha_pago,
         "notas": data.notas,
+        "cuenta_id": data.cuenta_id,
+        "cuenta_nombre": data.cuenta_nombre,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.compras.update_one({"id": compra_id}, {"$push": {"pagos": pago}})

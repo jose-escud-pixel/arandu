@@ -2,7 +2,7 @@ import React, { useState, useEffect, useContext } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, TrendingDown, ShoppingCart, Calendar, Users, Clock,
+  ArrowLeft, TrendingDown, TrendingUp, ShoppingCart, Calendar, Users, Clock,
   Plus, Search, Edit, Trash2, Save, X, Check, ChevronDown,
   AlertTriangle, FileText, DollarSign, Building2, Filter,
   CreditCard, Receipt, ExternalLink, Banknote, Package, ToggleLeft, ToggleRight,
@@ -160,12 +160,16 @@ function calcularIPS(emp) {
   return Math.round(base*0.09);
 }
 function calcMontoAPagar(emp, adelantos, extras, descuentos) {
+  // Comportamiento simétrico:
+  //  - Adelantos: se le pagaron al empleado por adelantado → se descuentan acá.
+  //  - Extras:    se le pagaron al empleado en su fecha (egreso ya contado en
+  //    balance) → NO se vuelven a sumar al sueldo a fin de mes (sería pagar dos veces).
+  // Nota: dejamos `extras` como argumento para compatibilidad pero no lo usamos.
   const base = parseFloat(emp.sueldo_base)||0;
   const ips = emp.aplica_ips !== false ? calcularIPS(emp) : 0;
   const totAd = (adelantos||[]).reduce((s,a)=>s+(a.monto||0),0);
-  const totEx = (extras||[]).reduce((s,e)=>s+(e.monto||0),0);
   const totDe = (descuentos||[]).reduce((s,d)=>s+(parseFloat(d.monto)||0),0);
-  return Math.max(0, base+totEx-ips-totAd-totDe);
+  return Math.max(0, base-ips-totAd-totDe);
 }
 function fmtSueldo(monto, moneda="PYG") {
   if (!monto && monto!==0) return "-";
@@ -185,7 +189,8 @@ function SueldosTab({ sueldosVenc, loadingSueldos, empleados, loadingEmpleados,
   adelantosMap, extrasMap, sueldosChips, setSueldosChips, sueldosInput, setSueldosInput,
   sueldosSubTab, setSueldosSubTab, filtroTipo, filtroMes, hasPermission,
   openSueldo, openAdelanto, openExtra, handleDeleteSueldo,
-  openCreateEmpleado, openEditEmpleado, handleToggleEmpleado, handleDeleteEmpleado, mesLabel }) {
+  openCreateEmpleado, openEditEmpleado, handleToggleEmpleado, handleDeleteEmpleado,
+  openAumentoSueldo, openHistorialSueldos, openSueldoView, mesLabel }) {
   const pagados    = sueldosVenc.filter(e => e.estado === "pagado");
   const pendientes = sueldosVenc.filter(e => e.estado !== "pagado");
   const montoPagado = pagados.reduce((s,e) => s + (e.sueldo_registrado?.monto_pagado || e.sueldo_base || 0), 0);
@@ -279,7 +284,9 @@ function SueldosTab({ sueldosVenc, loadingSueldos, empleados, loadingEmpleados,
                   </thead>
                   <tbody>
                     {filtradosSueldos.map(emp => (
-                      <tr key={emp.id} className={`border-b border-white/5 transition-colors ${emp.estado==="vencido"?"bg-red-500/5 hover:bg-red-500/10":"hover:bg-white/[0.03]"}`}>
+                      <tr key={emp.id}
+                        onClick={() => emp.estado==="pagado" && openSueldoView && openSueldoView(emp)}
+                        className={`border-b border-white/5 transition-colors ${emp.estado==="vencido"?"bg-red-500/5 hover:bg-red-500/10":"hover:bg-white/[0.03]"} ${emp.estado==="pagado"?"cursor-pointer":""}`}>
                         <td className="px-4 py-3">
                           <p className="text-white font-medium">{emp.nombre} {emp.apellido}</p>
                           <div className="flex flex-wrap gap-1 mt-1">
@@ -310,7 +317,7 @@ function SueldosTab({ sueldosVenc, loadingSueldos, empleados, loadingEmpleados,
                             : <span className="text-slate-600">—</span>}
                         </td>
                         <td className="px-4 py-3 text-center">{estadoBadgeSueldo(emp.estado)}</td>
-                        <td className="px-4 py-3 text-center">
+                        <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
                           {emp.estado === "pagado" ? (
                             <div className="flex items-center justify-center gap-2">
                               <span className="text-slate-500 text-xs">{emp.sueldo_registrado?.fecha_pago||""}</span>
@@ -397,6 +404,12 @@ function SueldosTab({ sueldosVenc, loadingSueldos, empleados, loadingEmpleados,
                     <div className="flex items-center gap-1">
                       {hasPermission("empleados.editar") && (
                         <>
+                          <button onClick={() => openAumentoSueldo(emp)} className="p-1.5 text-slate-500 hover:text-emerald-400 rounded transition-colors" title="Subir sueldo">
+                            <TrendingUp className="w-4 h-4"/>
+                          </button>
+                          <button onClick={() => openHistorialSueldos(emp)} className="p-1.5 text-slate-500 hover:text-cyan-400 rounded transition-colors" title="Ver historial de sueldos">
+                            <Clock className="w-4 h-4"/>
+                          </button>
                           <button onClick={() => handleToggleEmpleado(emp)} className="p-1.5 text-slate-500 hover:text-slate-300 rounded transition-colors" title={emp.activo?"Desactivar":"Activar"}>
                             {emp.activo ? <UserX className="w-4 h-4"/> : <UserCheck className="w-4 h-4"/>}
                           </button>
@@ -483,7 +496,7 @@ const EgresosPage = () => {
   const [editingCostoId, setEditingCostoId] = useState(null);
   const [costoFormData, setCostoFormData] = useState(emptyCostoForm());
   const [showPagoCostoModal, setShowPagoCostoModal] = useState(null);
-  const [pagoCostoForm, setPagoCostoForm] = useState({ monto_pagado: "", fecha_pago: hoy(), notas: "", tiene_factura: false, nro_factura: "" });
+  const [pagoCostoForm, setPagoCostoForm] = useState({ monto_pagado: "", fecha_pago: hoy(), notas: "", tiene_factura: false, nro_factura: "", cuenta_id: "", cuenta_nombre: "" });
 
   // ── Sueldos state ───────────────────────────────────────────────────────────
   const emptySueldoForm = () => ({ periodo: filtroMes, moneda: "PYG", tipo_cambio: "", fecha_pago: hoy(), descuento_ips: "", notas: "", descuentos_adicionales: [] });
@@ -525,6 +538,18 @@ const EgresosPage = () => {
   const [comprasProvList, setComprasProvList] = useState([]);   // compras pendientes del prov seleccionado
   const [loadingComprasProv, setLoadingComprasProv] = useState(false);
   const [selectedPagoView, setSelectedPagoView] = useState(null);
+  const [selectedCompraView, setSelectedCompraView] = useState(null);
+  const [selectedCostoView, setSelectedCostoView] = useState(null);  // gasto (Costo Fijo)
+  // Detalle de un sueldo pagado
+  const [sueldoView, setSueldoView] = useState(null);   // { emp, sueldo, adelantos, extras }
+  const [loadingSueldoView, setLoadingSueldoView] = useState(false);
+  // Aumento de sueldo / historial
+  const [aumentoEmp, setAumentoEmp] = useState(null);
+  const [aumentoForm, setAumentoForm] = useState({ sueldo_nuevo: "", motivo: "", fecha: hoy() });
+  const [savingAumento, setSavingAumento] = useState(false);
+  const [historialEmp, setHistorialEmp] = useState(null);
+  const [historialData, setHistorialData] = useState(null);
+  const [loadingHistorial, setLoadingHistorial] = useState(false);
 
   // ── Cuentas bancarias ───────────────────────────────────────────────────────
   const [cuentasDisp, setCuentasDisp] = useState([]);
@@ -713,7 +738,16 @@ const EgresosPage = () => {
   const handleRegistrarPagoCosto = async (e) => {
     e.preventDefault();
     const v = showPagoCostoModal;
-    const payload = { periodo: v.periodo || filtroMes, monto_pagado: parseFloat(pagoCostoForm.monto_pagado) || v.monto, fecha_pago: pagoCostoForm.fecha_pago, notas: pagoCostoForm.notas || null, tiene_factura: pagoCostoForm.tiene_factura, nro_factura: pagoCostoForm.tiene_factura ? (pagoCostoForm.nro_factura || null) : null };
+    const payload = {
+      periodo: v.periodo || filtroMes,
+      monto_pagado: parseFloat(pagoCostoForm.monto_pagado) || v.monto,
+      fecha_pago: pagoCostoForm.fecha_pago,
+      notas: pagoCostoForm.notas || null,
+      tiene_factura: pagoCostoForm.tiene_factura,
+      nro_factura: pagoCostoForm.tiene_factura ? (pagoCostoForm.nro_factura || null) : null,
+      cuenta_id: pagoCostoForm.cuenta_id || null,
+      cuenta_nombre: pagoCostoForm.cuenta_nombre || null,
+    };
     const res = await fetch(`${API}/admin/costos-fijos/${v.costo_id}/pagos`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
     if (res.ok) { toast.success("Pago registrado"); setShowPagoCostoModal(null); fetchVencimientos(filtroMes, filtroTipo, filtroAnio); }
     else { const err = await res.json().catch(() => ({})); toast.error(err.detail || "Error al registrar pago"); }
@@ -850,13 +884,93 @@ const EgresosPage = () => {
     const res = await fetch(`${API}/admin/empleados/${emp.id}/toggle`, { method: "PATCH", headers: { Authorization: `Bearer ${token}` } });
     if (res.ok) { toast.success(emp.activo ? "Desactivado" : "Activado"); fetchEmpleados(); }
   };
+  const openSueldoView = async (emp) => {
+    if (!emp || emp.estado !== "pagado" || !emp.sueldo_registrado) return;
+    setSueldoView({ emp, sueldo: emp.sueldo_registrado, adelantos: [], extras: [] });
+    setLoadingSueldoView(true);
+    try {
+      const hdrs = { Authorization: `Bearer ${token}` };
+      // Pasamos incluir_consumidos=1 para ver TAMBIÉN los que se descontaron
+      // de este sueldo (de lo contrario el filtro por default los oculta).
+      const periodo = emp.sueldo_registrado.periodo || filtroMes;
+      const [rAd, rEx] = await Promise.all([
+        fetch(`${API}/admin/empleados/${emp.id}/adelantos?periodo=${periodo}&incluir_consumidos=1`, { headers: hdrs }),
+        fetch(`${API}/admin/empleados/${emp.id}/extras?periodo=${periodo}&incluir_consumidos=1`, { headers: hdrs }),
+      ]);
+      const adelantos = rAd.ok ? await rAd.json() : [];
+      const extras = rEx.ok ? await rEx.json() : [];
+      setSueldoView({ emp, sueldo: emp.sueldo_registrado, adelantos, extras });
+    } catch {} finally { setLoadingSueldoView(false); }
+  };
+
+  const openAumentoSueldo = (emp) => {
+    setAumentoEmp(emp);
+    setAumentoForm({ sueldo_nuevo: String(emp.sueldo_base || ""), motivo: "Aumento", fecha: hoy() });
+  };
+
+  const handleSaveAumento = async () => {
+    if (!aumentoEmp) return;
+    const nuevo = parseFloat(aumentoForm.sueldo_nuevo) || 0;
+    if (nuevo <= 0) { toast.error("El sueldo nuevo debe ser mayor a 0"); return; }
+    if (nuevo === Number(aumentoEmp.sueldo_base)) { toast.error("El sueldo nuevo es igual al actual"); return; }
+    setSavingAumento(true);
+    try {
+      const res = await fetch(`${API}/admin/empleados/${aumentoEmp.id}/aumento-sueldo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          sueldo_nuevo: nuevo,
+          moneda: aumentoEmp.moneda || "PYG",
+          motivo: aumentoForm.motivo || null,
+          fecha: aumentoForm.fecha || hoy(),
+        }),
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || "Error"); }
+      toast.success(`Sueldo actualizado a ${fmt(nuevo, aumentoEmp.moneda || "PYG")}`);
+      setAumentoEmp(null);
+      fetchEmpleados();
+    } catch (e) { toast.error(e.message); }
+    finally { setSavingAumento(false); }
+  };
+
+  const openHistorialSueldos = async (emp) => {
+    setHistorialEmp(emp);
+    setLoadingHistorial(true);
+    setHistorialData(null);
+    try {
+      const res = await fetch(`${API}/admin/empleados/${emp.id}/historial-sueldos`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) setHistorialData(await res.json());
+    } catch {}
+    finally { setLoadingHistorial(false); }
+  };
+
   const handleDeleteEmpleado = async (emp) => {
     if (!window.confirm(`¿Eliminar a ${emp.nombre} ${emp.apellido}? También se eliminarán todos sus registros.`)) return;
     const res = await fetch(`${API}/admin/empleados/${emp.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
     if (res.ok) { toast.success("Empleado eliminado"); fetchEmpleados(); } else toast.error("Error al eliminar");
   };
 
-  const openAdelanto = (emp) => { setAdelantoEmp(emp); setFormAdelanto({ monto: "", fecha: hoy(), notas: "" }); setShowAdelantoModal(true); };
+  // Carga adelantos+extras del período (compartido entre los modales)
+  const cargarAdelantosExtrasDeEmp = async (empId) => {
+    const hdrs = { Authorization: `Bearer ${token}` };
+    try {
+      const [rAd, rEx] = await Promise.all([
+        fetch(`${API}/admin/empleados/${empId}/adelantos?periodo=${filtroMes}`, { headers: hdrs }),
+        fetch(`${API}/admin/empleados/${empId}/extras?periodo=${filtroMes}`, { headers: hdrs }),
+      ]);
+      setAdelantosPeriodo(rAd.ok ? await rAd.json() : []);
+      setExtrasPeriodo(rEx.ok ? await rEx.json() : []);
+    } catch { setAdelantosPeriodo([]); setExtrasPeriodo([]); }
+  };
+
+  const openAdelanto = async (emp) => {
+    setAdelantoEmp(emp);
+    setFormAdelanto({ monto: "", fecha: hoy(), notas: "" });
+    setShowAdelantoModal(true);
+    await cargarAdelantosExtrasDeEmp(emp.id);
+  };
   const handleSaveAdelanto = async () => {
     if (!formAdelanto.monto) { toast.error("Monto requerido"); return; }
     setSavingAdelanto(true);
@@ -868,7 +982,9 @@ const EgresosPage = () => {
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail||"Error"); }
       toast.success("Adelanto registrado");
-      setShowAdelantoModal(false);
+      // No cierro el modal — recargo y limpio el form para poder cargar otro
+      setFormAdelanto({ monto: "", fecha: hoy(), notas: "" });
+      await cargarAdelantosExtrasDeEmp(adelantoEmp.id);
       fetchSueldosVenc(filtroMes);
     } catch (e) { toast.error(e.message); }
     finally { setSavingAdelanto(false); }
@@ -876,13 +992,20 @@ const EgresosPage = () => {
   const handleDeleteAdelanto = async (id) => {
     if (!window.confirm("¿Eliminar adelanto?")) return;
     try {
-      await fetch(`${API}/admin/adelantos/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`${API}/admin/adelantos/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error();
       setAdelantosPeriodo(prev => prev.filter(a => a.id !== id));
       toast.success("Adelanto eliminado");
-    } catch { toast.error("Error"); }
+      fetchSueldosVenc(filtroMes);
+    } catch { toast.error("Error al eliminar"); }
   };
 
-  const openExtra = (emp) => { setExtraEmp(emp); setFormExtra({ monto: "", descripcion: "Extra", fecha: hoy(), notas: "" }); setShowExtraModal(true); };
+  const openExtra = async (emp) => {
+    setExtraEmp(emp);
+    setFormExtra({ monto: "", descripcion: "Extra", fecha: hoy(), notas: "" });
+    setShowExtraModal(true);
+    await cargarAdelantosExtrasDeEmp(emp.id);
+  };
   const handleSaveExtra = async () => {
     if (!formExtra.monto) { toast.error("Monto requerido"); return; }
     setSavingExtra(true);
@@ -894,7 +1017,8 @@ const EgresosPage = () => {
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail||"Error"); }
       toast.success("Extra registrado");
-      setShowExtraModal(false);
+      setFormExtra({ monto: "", descripcion: "Extra", fecha: hoy(), notas: "" });
+      await cargarAdelantosExtrasDeEmp(extraEmp.id);
       fetchSueldosVenc(filtroMes);
     } catch (e) { toast.error(e.message); }
     finally { setSavingExtra(false); }
@@ -902,10 +1026,12 @@ const EgresosPage = () => {
   const handleDeleteExtra = async (id) => {
     if (!window.confirm("¿Eliminar extra?")) return;
     try {
-      await fetch(`${API}/admin/extras/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`${API}/admin/extras/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error();
       setExtrasPeriodo(prev => prev.filter(e => e.id !== id));
       toast.success("Extra eliminado");
-    } catch { toast.error("Error"); }
+      fetchSueldosVenc(filtroMes);
+    } catch { toast.error("Error al eliminar"); }
   };
 
 
@@ -1251,7 +1377,7 @@ const EgresosPage = () => {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-arandu-dark p-4 md:p-8">
+    <div className="min-h-screen bg-arandu-dark p-3 sm:p-4 md:p-8">
       <div className="max-w-6xl mx-auto">
 
         {/* Header */}
@@ -1262,8 +1388,8 @@ const EgresosPage = () => {
           <div className="flex items-center gap-3">
             <TrendingDown className="w-8 h-8 text-red-400" />
             <div>
-              <h1 className="font-heading text-3xl font-bold text-white">Egresos</h1>
-              <p className="text-slate-400 text-sm">Compras, costos fijos, sueldos y pagos pendientes</p>
+              <h1 className="font-heading text-2xl md:text-3xl font-bold text-white">Egresos</h1>
+              <p className="text-slate-400 text-sm">Compras, gastos, sueldos y pagos pendientes</p>
             </div>
           </div>
         </div>
@@ -1324,7 +1450,7 @@ const EgresosPage = () => {
         </div>
 
         {/* Resumen cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           {[
             { label: "Compras este mes", value: fmt(totalComprasMes), icon: ShoppingCart, color: "text-orange-400" },
             { label: "Deuda proveedores", value: fmt(totalDeuda), icon: CreditCard, color: "text-red-400" },
@@ -1342,10 +1468,10 @@ const EgresosPage = () => {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 bg-arandu-dark-light border border-white/5 rounded-xl p-1 mb-6 flex-wrap">
+        <div className="flex gap-1 bg-arandu-dark-light border border-white/5 rounded-xl p-1 mb-6 flex-wrap overflow-x-auto">
           {[
             { id: "compras", label: "Compras", icon: ShoppingCart, color: "bg-orange-500" },
-            { id: "costos", label: "Costos Fijos", icon: Calendar, color: "bg-blue-600" },
+            { id: "costos", label: "Gastos", icon: Calendar, color: "bg-blue-600" },
             { id: "sueldos", label: "Sueldos", icon: Users, color: "bg-purple-600" },
             { id: "proveedores-pagos", label: "Pag. Proveedores", icon: Wallet, color: "bg-violet-600" },
             { id: "pago-iva", label: "IVA", icon: Receipt, color: "bg-amber-600" },
@@ -1381,100 +1507,175 @@ const EgresosPage = () => {
               />
             </div>
 
-            {/* Lista */}
-            {loadingCompras ? (
-              <div className="text-center py-12 text-orange-400 animate-pulse">Cargando...</div>
-            ) : compras.length === 0 ? (
-              <div className="text-center py-16 bg-arandu-dark-light border border-white/5 rounded-xl">
-                <ShoppingCart className="w-14 h-14 text-slate-700 mx-auto mb-3" />
-                <p className="text-slate-400 mb-4">No hay compras registradas</p>
-                {hasPermission("compras.crear") && (
-                  <Button onClick={openNewCompra} className="bg-orange-500 hover:bg-orange-600 text-white">
-                    <Plus className="w-4 h-4 mr-2" /> Registrar primera compra
-                  </Button>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {compras.filter(c => {
-                  const texto = [
-                    c.proveedor_nombre, c.fecha, String(c.monto_total||""),
-                    c.notas, c.numero_factura, c.moneda, c.estado_pago, c.tipo_pago
-                  ].filter(Boolean).join(" ");
-                  return matchChips(comprasChips, comprasInput, texto);
-                }).map(c => (
-                  <motion.div
-                    key={c.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="bg-arandu-dark-light border border-white/5 rounded-xl p-4 hover:border-orange-500/20 transition-all"
-                  >
-                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-orange-500/15 rounded-lg flex items-center justify-center flex-shrink-0">
-                          <ShoppingCart className="w-5 h-5 text-orange-400" />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-white font-medium">{c.proveedor_nombre}</h3>
-                            {c.tiene_factura && (
-                              <span className="text-xs bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 rounded px-1.5 py-0.5 flex items-center gap-1">
-                                <Receipt className="w-3 h-3" /> {c.numero_factura || "c/factura"}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-3 text-slate-500 text-xs mt-0.5">
-                            <span>{c.fecha}</span>
-                            <span className={`capitalize px-2 py-0.5 rounded-full border text-xs ${ESTADO_STYLES[c.tipo_pago === "contado" ? "pagado" : "pendiente"]}`}>
-                              {c.tipo_pago}
-                            </span>
-                            {c.notas && <span className="truncate max-w-[200px]">{c.notas}</span>}
-                          </div>
-                        </div>
-                      </div>
+            {/* Lista — tabla estilo Gastos pero con columnas tailored a compras */}
+            {(() => {
+              const comprasFiltradas = compras.filter(c => {
+                const texto = [
+                  c.proveedor_nombre, c.fecha, String(c.monto_total||""),
+                  c.notas, c.numero_factura, c.moneda, c.estado_pago, c.tipo_pago,
+                  ...(c.items || []).map(i => i.descripcion),
+                ].filter(Boolean).join(" ");
+                return matchChips(comprasChips, comprasInput, texto);
+              });
+              // Resumen: total / pagado / pendiente del período
+              let totalPYG = 0, totalUSD = 0, pagPYG = 0, pagUSD = 0;
+              comprasFiltradas.forEach(c => {
+                const m = c.monto_total || 0;
+                const pagado = c.tipo_pago === "contado" ? m : (c.total_pagado || 0);
+                if (c.moneda === "USD") { totalUSD += m; pagUSD += pagado; }
+                else { totalPYG += m; pagPYG += pagado; }
+              });
+              const pendCount = comprasFiltradas.filter(c => c.estado_pago === "pendiente" || c.estado_pago === "vencido" || c.estado_pago === "parcial").length;
 
-                      <div className="flex items-center gap-3">
-                        <div className="text-right">
-                          <p className="text-white font-bold">{fmt(c.monto_total, c.moneda)}</p>
-                          {c.tipo_pago === "credito" && (
-                            <p className={`text-xs ${c.saldo_pendiente > 0 ? "text-red-400" : "text-emerald-400"}`}>
-                              {c.saldo_pendiente > 0 ? `Debe ${fmt(c.saldo_pendiente)}` : "Saldado"}
-                            </p>
-                          )}
-                          {c.monto_iva > 0 && (
-                            <p className="text-slate-500 text-xs">IVA: {fmt(c.monto_iva)}</p>
-                          )}
-                        </div>
-                        <span className={`px-2 py-1 rounded-full text-xs border ${ESTADO_STYLES[c.estado_pago]}`}>
-                          {ESTADO_LABELS[c.estado_pago]}
-                        </span>
-                        <div className="flex gap-1">
-                          {c.tipo_pago === "credito" && c.estado_pago !== "pagado" && (
-                            <Button
-                              onClick={() => { setShowPagoModal(c); setPagoForm({ monto_pagado: c.saldo_pendiente || "", fecha_pago: hoy(), notas: "" }); }}
-                              variant="ghost"
-                              className="text-emerald-400 hover:bg-emerald-500/10 text-xs px-2"
-                            >
-                              <Banknote className="w-4 h-4 mr-1" /> Pagar
-                            </Button>
-                          )}
-                          {hasPermission("compras.editar") && (
-                            <Button onClick={() => openEditCompra(c)} variant="ghost" className="text-yellow-400 hover:bg-yellow-500/10">
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                          )}
-                          {hasPermission("compras.eliminar") && (
-                            <Button onClick={() => handleDeleteCompra(c.id)} variant="ghost" className="text-slate-400 hover:text-red-400 hover:bg-red-500/10">
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
+              if (loadingCompras) {
+                return <div className="text-center py-12 text-orange-400 animate-pulse">Cargando...</div>;
+              }
+              if (compras.length === 0) {
+                return (
+                  <div className="text-center py-16 bg-arandu-dark-light border border-white/5 rounded-xl">
+                    <ShoppingCart className="w-14 h-14 text-slate-700 mx-auto mb-3" />
+                    <p className="text-slate-400 mb-4">No hay compras registradas</p>
+                    {hasPermission("compras.crear") && (
+                      <Button onClick={openNewCompra} className="bg-orange-500 hover:bg-orange-600 text-white">
+                        <Plus className="w-4 h-4 mr-2" /> Registrar primera compra
+                      </Button>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <>
+                  {/* Summary cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                    <div className="bg-arandu-dark-light border border-white/5 rounded-xl p-4">
+                      <p className="text-slate-500 text-xs mb-1">Total comprado</p>
+                      {totalPYG > 0 && <p className="font-bold text-white">{fmt(totalPYG)}</p>}
+                      {totalUSD > 0 && <p className="font-bold text-white">{fmt(totalUSD, "USD")}</p>}
+                      {totalPYG === 0 && totalUSD === 0 && <p className="font-bold text-white">₲ 0</p>}
                     </div>
-                  </motion.div>
-                ))}
-              </div>
-            )}
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
+                      <p className="text-emerald-400 text-xs mb-1">Pagado</p>
+                      {pagPYG > 0 && <p className="font-bold text-emerald-400">{fmt(pagPYG)}</p>}
+                      {pagUSD > 0 && <p className="font-bold text-emerald-400">{fmt(pagUSD, "USD")}</p>}
+                      {pagPYG === 0 && pagUSD === 0 && <p className="font-bold text-emerald-400">₲ 0</p>}
+                    </div>
+                    <div className={`border rounded-xl p-4 ${pendCount > 0 ? "bg-amber-500/10 border-amber-500/20" : "bg-arandu-dark-light border-white/5"}`}>
+                      <p className={`text-xs mb-1 ${pendCount > 0 ? "text-amber-400" : "text-slate-500"}`}>
+                        Pendiente {pendCount > 0 && `(${pendCount})`}
+                      </p>
+                      {(totalPYG - pagPYG) > 0 && <p className={`font-bold ${pendCount > 0 ? "text-amber-400" : "text-white"}`}>{fmt(totalPYG - pagPYG)}</p>}
+                      {(totalUSD - pagUSD) > 0 && <p className={`font-bold ${pendCount > 0 ? "text-amber-400" : "text-white"}`}>{fmt(totalUSD - pagUSD, "USD")}</p>}
+                      {(totalPYG - pagPYG) === 0 && (totalUSD - pagUSD) === 0 && <p className="font-bold text-white">₲ 0</p>}
+                    </div>
+                  </div>
+
+                  {/* Tabla */}
+                  {comprasFiltradas.length === 0 ? (
+                    <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
+                      <ShoppingCart className="w-12 h-12 text-slate-700 mx-auto mb-2" />
+                      <p className="text-slate-400">No hay compras que coincidan con el filtro</p>
+                    </div>
+                  ) : (
+                    <div className="bg-arandu-dark-light border border-white/5 rounded-xl overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-white/10 text-slate-400 text-xs uppercase">
+                            <th className="px-4 py-3 text-left">Fecha</th>
+                            <th className="px-4 py-3 text-left">Empresa</th>
+                            <th className="px-4 py-3 text-left">Proveedor</th>
+                            <th className="px-4 py-3 text-left">Concepto</th>
+                            <th className="px-4 py-3 text-left">Factura</th>
+                            <th className="px-4 py-3 text-center">Tipo</th>
+                            <th className="px-4 py-3 text-right">Monto</th>
+                            <th className="px-4 py-3 text-center">Estado</th>
+                            <th className="px-4 py-3 text-center">Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {comprasFiltradas.map(c => {
+                            const items = c.items || [];
+                            const concepto = items.length === 0
+                              ? (c.notas || "—")
+                              : items.length === 1
+                                ? items[0].descripcion
+                                : `${items[0].descripcion} +${items.length - 1} más`;
+                            return (
+                              <tr key={c.id}
+                                onClick={() => setSelectedCompraView(c)}
+                                className="border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors"
+                              >
+                                <td className="px-4 py-3 text-slate-300 text-xs whitespace-nowrap">{c.fecha}</td>
+                                <td className="px-4 py-3">
+                                  <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-slate-300">
+                                    {LOGO_LABEL_MAP[c.logo_tipo] || c.logo_tipo}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-white font-medium max-w-[180px] truncate">{c.proveedor_nombre}</td>
+                                <td className="px-4 py-3 text-slate-400 text-xs max-w-[220px] truncate">{concepto}</td>
+                                <td className="px-4 py-3 text-xs">
+                                  {c.tiene_factura ? (
+                                    <span className="inline-flex items-center gap-1 bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 rounded px-1.5 py-0.5">
+                                      <Receipt className="w-3 h-3" />
+                                      {c.numero_factura || "c/factura"}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-600">—</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <span className={`text-xs px-2 py-0.5 rounded-full border capitalize ${
+                                    c.tipo_pago === "contado"
+                                      ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
+                                      : "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                                  }`}>
+                                    {c.tipo_pago}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  <p className="text-white font-bold whitespace-nowrap">{fmt(c.monto_total, c.moneda)}</p>
+                                  {c.tipo_pago === "credito" && c.saldo_pendiente > 0 && (
+                                    <p className="text-red-400 text-xs">Debe {fmt(c.saldo_pendiente, c.moneda)}</p>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <span className={`px-2 py-0.5 rounded-full text-xs border ${ESTADO_STYLES[c.estado_pago]}`}>
+                                    {ESTADO_LABELS[c.estado_pago]}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                                  <div className="flex items-center justify-center gap-1">
+                                    {c.tipo_pago === "credito" && c.estado_pago !== "pagado" && (
+                                      <button
+                                        onClick={() => { setShowPagoModal(c); setPagoForm({ monto_pagado: c.saldo_pendiente || "", fecha_pago: hoy(), notas: "" }); }}
+                                        className="flex items-center gap-1 px-2 py-1 bg-emerald-600/30 text-emerald-300 rounded-lg hover:bg-emerald-600/50 transition-colors text-xs"
+                                      >
+                                        <Banknote className="w-3.5 h-3.5" /> Pagar
+                                      </button>
+                                    )}
+                                    {hasPermission("compras.editar") && (
+                                      <button onClick={() => openEditCompra(c)}
+                                        className="text-slate-400 hover:text-yellow-400 transition-colors p-1">
+                                        <Edit className="w-4 h-4" />
+                                      </button>
+                                    )}
+                                    {hasPermission("compras.eliminar") && (
+                                      <button onClick={() => handleDeleteCompra(c.id)}
+                                        className="text-slate-400 hover:text-red-400 transition-colors p-1">
+                                        <Trash2 className="w-4 h-4" />
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
 
@@ -1502,7 +1703,7 @@ const EgresosPage = () => {
                   actionButton={hasPermission("costos_fijos.crear") ? (
                     <Button onClick={() => { setEditingCostoId(null); setCostoFormData({ logo_tipo: activeEmpresaPropia?.slug || "arandujar", nombre: "", descripcion: "", categoria: "", monto: "", moneda: "PYG", tipo_cambio: "", frecuencia: "mensual", dia_vencimiento: 1, fecha_inicio: new Date().toISOString().slice(0,10), fecha_fin: "", activo: true, notas: "" }); setShowCostoForm(true); }}
                       className="bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap">
-                      <Plus className="w-4 h-4 mr-2" /> Nuevo Costo
+                      <Plus className="w-4 h-4 mr-2" /> Nuevo Gasto
                     </Button>
                   ) : null}
                 />
@@ -1512,7 +1713,7 @@ const EgresosPage = () => {
               return (
                   <>
                   {/* Summary cards */}
-                  <div className="grid grid-cols-3 gap-3 mb-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
                     <div className="bg-arandu-dark-light border border-white/5 rounded-xl p-4">
                       <p className="text-slate-500 text-xs mb-1">Total del período</p>
                       {totalPYG > 0 && <p className="font-bold text-white">{fmt(totalPYG)}</p>}
@@ -1561,7 +1762,8 @@ const EgresosPage = () => {
                         </thead>
                         <tbody>
                           {vencFiltradas.map((v, i) => (
-                            <tr key={i} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                            <tr key={i} onClick={() => setSelectedCostoView(v)}
+                              className="border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors">
                               {filtroTipo === "anio" && <td className="px-4 py-3 text-slate-500 text-xs">{v.periodo || v.fecha_inicio?.slice(0,7) || "—"}</td>}
                               <td className="px-4 py-3">
                                 <p className="text-white font-medium">{v.nombre}</p>
@@ -1591,7 +1793,7 @@ const EgresosPage = () => {
                                   <p className="text-slate-500 text-xs mt-0.5">{v.pago.fecha_pago}</p>
                                 )}
                               </td>
-                              <td className="px-4 py-3 text-center">
+                              <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
                                 {v.estado === "pagado" ? (
                                   hasPermission("costos_fijos.editar") && (
                                     <button onClick={() => handleAnularPagoCosto(v)}
@@ -1601,14 +1803,14 @@ const EgresosPage = () => {
                                   )
                                 ) : (
                                   hasPermission("costos_fijos.editar") && (
-                                    <button onClick={() => { setPagoCostoForm({ monto_pagado: v.monto, fecha_pago: hoy(), notas: "", tiene_factura: false, nro_factura: "" }); setShowPagoCostoModal(v); }}
+                                    <button onClick={() => { setPagoCostoForm({ monto_pagado: v.monto, fecha_pago: hoy(), notas: "", tiene_factura: false, nro_factura: "", cuenta_id: "", cuenta_nombre: "" }); setShowPagoCostoModal(v); }}
                                       className="flex items-center gap-1 mx-auto px-3 py-1 bg-emerald-600/30 text-emerald-300 rounded-lg hover:bg-emerald-600/50 transition-colors text-xs">
                                       <Check className="w-3.5 h-3.5" /> Pagar
                                     </button>
                                   )
                                 )}
                               </td>
-                              <td className="px-4 py-3">
+                              <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                                 <div className="flex items-center justify-center gap-2">
                                   {hasPermission("costos_fijos.editar") && (
                                     <button onClick={() => { const src=costos.find(c=>c.id===v.costo_id)||v; if(src){ setEditingCostoId(src.id||src.costo_id); setCostoFormData({logo_tipo:src.logo_tipo||"arandujar",nombre:src.nombre||"",descripcion:src.descripcion||"",categoria:src.categoria||"",monto:src.monto||"",moneda:src.moneda||"PYG",tipo_cambio:src.tipo_cambio||"",frecuencia:src.frecuencia||"mensual",dia_vencimiento:src.dia_vencimiento||1,fecha_inicio:src.fecha_inicio||new Date().toISOString().slice(0,10),fecha_fin:src.fecha_fin||"",activo:src.activo!==false,notas:src.notas||""}); setShowCostoForm(true); } }}
@@ -1642,7 +1844,7 @@ const EgresosPage = () => {
               <motion.div initial={{scale:0.95,opacity:0}} animate={{scale:1,opacity:1}} exit={{scale:0.95,opacity:0}}
                 className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
                 <div className="flex items-center justify-between p-5 border-b border-white/10">
-                  <h2 className="font-heading text-lg text-white">{editingCostoId ? "Editar costo fijo" : "Nuevo costo fijo"}</h2>
+                  <h2 className="font-heading text-lg text-white">{editingCostoId ? "Editar gasto" : "Nuevo gasto"}</h2>
                   <button onClick={() => setShowCostoForm(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
                 </div>
                 <form onSubmit={handleSaveCosto} className="p-5 space-y-4">
@@ -1766,6 +1968,20 @@ const EgresosPage = () => {
                       className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/60"/>
                   </div>
                   <div>
+                    <label className="text-slate-400 text-xs mb-1 block">Cuenta bancaria *</label>
+                    <select required value={pagoCostoForm.cuenta_id}
+                      onChange={e => {
+                        const c = cuentasDisp.find(c => c.id === e.target.value);
+                        setPagoCostoForm(f => ({ ...f, cuenta_id: e.target.value, cuenta_nombre: c?.nombre || "" }));
+                      }}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/60">
+                      <option value="">Seleccionar cuenta...</option>
+                      {cuentasDisp.map(c => (
+                        <option key={c.id} value={c.id}>{c.nombre} ({c.moneda}){c.es_predeterminada ? " ★" : ""}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
                     <label className="text-slate-400 text-xs mb-1 block">Notas</label>
                     <input type="text" value={pagoCostoForm.notas} onChange={e=>setPagoCostoForm(f=>({...f,notas:e.target.value}))}
                       className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/60"/>
@@ -1819,6 +2035,8 @@ const EgresosPage = () => {
             handleDeleteSueldo={handleDeleteSueldo}
             openCreateEmpleado={openCreateEmpleado} openEditEmpleado={openEditEmpleado}
             handleToggleEmpleado={handleToggleEmpleado} handleDeleteEmpleado={handleDeleteEmpleado}
+            openAumentoSueldo={openAumentoSueldo} openHistorialSueldos={openHistorialSueldos}
+            openSueldoView={openSueldoView}
             mesLabel={mesLabel}
           />
         )}
@@ -1983,14 +2201,22 @@ const EgresosPage = () => {
                 <div className="bg-white/5 border border-white/10 rounded-lg p-3 space-y-2 text-sm">
                   <p className="text-slate-400 text-xs font-medium mb-1">Desglose del pago</p>
                   <div className="flex justify-between text-slate-300"><span>Sueldo base</span><span>{fmtSueldo(parseFloat(selectedEmp.sueldo_base)||0, selectedEmp.moneda)}</span></div>
-                  {extrasPeriodo.length > 0 && <div className="flex justify-between text-green-300"><span>+ Extras ({extrasPeriodo.length})</span><span>+ {fmtSueldo(extrasPeriodo.reduce((s,e)=>s+(e.monto||0),0), selectedEmp.moneda)}</span></div>}
                   {selectedEmp.aplica_ips !== false && <div className="flex justify-between text-blue-300"><span>− IPS</span><span>− {fmtSueldo(parseFloat(formSueldo.descuento_ips)||0, "PYG")}</span></div>}
                   {adelantosPeriodo.length > 0 && <div className="flex justify-between text-amber-300"><span>− Adelantos ({adelantosPeriodo.length})</span><span>− {fmtSueldo(adelantosPeriodo.reduce((s,a)=>s+(a.monto||0),0), selectedEmp.moneda)}</span></div>}
                   {formSueldo.descuentos_adicionales.length > 0 && <div className="flex justify-between text-red-300"><span>− Descuentos adicionales</span><span>− {fmtSueldo(formSueldo.descuentos_adicionales.reduce((s,d)=>s+(parseFloat(d.monto)||0),0), "PYG")}</span></div>}
                   <div className="border-t border-white/10 pt-2 flex justify-between font-semibold">
-                    <span className="text-white">Total a pagar</span>
+                    <span className="text-white">Total a pagar (sueldo)</span>
                     <span className="text-emerald-300">{fmtSueldo(calcMontoAPagar(selectedEmp, adelantosPeriodo, extrasPeriodo, formSueldo.descuentos_adicionales), selectedEmp.moneda)}</span>
                   </div>
+                  {extrasPeriodo.length > 0 && (
+                    <div className="border-t border-dashed border-white/10 pt-2 mt-2">
+                      <p className="text-green-300 text-[11px] font-medium mb-1">Extras del período (ya pagados — no se suman acá)</p>
+                      <div className="flex justify-between text-green-300/80 text-xs">
+                        <span>{extrasPeriodo.length} extra{extrasPeriodo.length>1?"s":""}</span>
+                        <span>{fmtSueldo(extrasPeriodo.reduce((s,e)=>s+(e.monto||0),0), selectedEmp.moneda)}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -2080,11 +2306,11 @@ const EgresosPage = () => {
         {/* MODAL: Adelanto */}
         {showAdelantoModal && adelantoEmp && (
           <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4"
-            onClick={e => e.target===e.currentTarget && setShowAdelantoModal(false)}>
-            <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-sm p-5">
+            onMouseDown={e => e.target===e.currentTarget && setShowAdelantoModal(false)}>
+            <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-md p-5 max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-white font-heading text-lg">Registrar adelanto</h2>
+                  <h2 className="text-white font-heading text-lg">Adelantos</h2>
                   <p className="text-slate-400 text-sm">{adelantoEmp.nombre} {adelantoEmp.apellido} — {mesLabel(filtroMes)}</p>
                 </div>
                 <button onClick={() => setShowAdelantoModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
@@ -2092,6 +2318,33 @@ const EgresosPage = () => {
               <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-300 mb-4">
                 Sueldo neto: <strong>{fmtSueldo((parseFloat(adelantoEmp.sueldo_base)||0) - calcularIPS(adelantoEmp), adelantoEmp.moneda||"PYG")}</strong>
               </div>
+
+              {/* Lista de adelantos existentes */}
+              {(adelantosPeriodo || []).length > 0 && (
+                <div className="bg-amber-900/20 border border-amber-500/30 rounded-lg p-3 mb-4 space-y-1.5">
+                  <p className="text-amber-300 text-xs font-medium mb-1">Adelantos del período ({adelantosPeriodo.length})</p>
+                  {adelantosPeriodo.map(a => (
+                    <div key={a.id} className="flex items-center justify-between gap-2 py-1.5 border-b border-amber-500/10 last:border-0">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-amber-200 text-xs">{a.fecha}</p>
+                        {a.notas && <p className="text-slate-500 text-[11px] truncate">{a.notas}</p>}
+                      </div>
+                      <span className="text-amber-300 text-sm font-medium">{fmtSueldo(a.monto, a.moneda || "PYG")}</span>
+                      <button onClick={() => handleDeleteAdelanto(a.id)}
+                        className="text-slate-500 hover:text-red-400 transition-colors p-1"
+                        title="Eliminar adelanto">
+                        <Trash2 className="w-3.5 h-3.5"/>
+                      </button>
+                    </div>
+                  ))}
+                  <div className="flex justify-between pt-1.5 text-xs">
+                    <span className="text-slate-400">Total descontado al sueldo:</span>
+                    <strong className="text-amber-300">{fmtSueldo(adelantosPeriodo.reduce((s,a)=>s+(a.monto||0),0), adelantoEmp.moneda || "PYG")}</strong>
+                  </div>
+                </div>
+              )}
+
+              <p className="text-slate-400 text-xs font-medium mb-2">Nuevo adelanto</p>
               <div className="space-y-3">
                 <div>
                   <label className="text-slate-400 text-xs mb-1 block">Monto *</label>
@@ -2109,7 +2362,7 @@ const EgresosPage = () => {
                     className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500/60"/>
                 </div>
                 <div className="flex gap-3 pt-1">
-                  <button onClick={() => setShowAdelantoModal(false)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm">Cancelar</button>
+                  <button onClick={() => setShowAdelantoModal(false)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm">Cerrar</button>
                   <button onClick={handleSaveAdelanto} disabled={savingAdelanto}
                     className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
                     {savingAdelanto ? "Guardando..." : "Registrar adelanto"}
@@ -2123,18 +2376,45 @@ const EgresosPage = () => {
         {/* MODAL: Extra */}
         {showExtraModal && extraEmp && (
           <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4"
-            onClick={e => e.target===e.currentTarget && setShowExtraModal(false)}>
-            <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-sm p-5">
+            onMouseDown={e => e.target===e.currentTarget && setShowExtraModal(false)}>
+            <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-md p-5 max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-white font-heading text-lg">Registrar extra</h2>
+                  <h2 className="text-white font-heading text-lg">Extras</h2>
                   <p className="text-slate-400 text-sm">{extraEmp.nombre} {extraEmp.apellido} — {mesLabel(filtroMes)}</p>
                 </div>
                 <button onClick={() => setShowExtraModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
               </div>
               <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-xs text-green-300 mb-4">
-                Los extras se <strong>suman</strong> al sueldo base al momento del registro de pago.
+                Los extras se cuentan como <strong>egreso individual</strong> en su fecha (igual que un adelanto). NO se vuelven a sumar al sueldo a fin de mes.
               </div>
+
+              {/* Lista de extras existentes */}
+              {(extrasPeriodo || []).length > 0 && (
+                <div className="bg-green-900/20 border border-green-500/30 rounded-lg p-3 mb-4 space-y-1.5">
+                  <p className="text-green-300 text-xs font-medium mb-1">Extras del período ({extrasPeriodo.length})</p>
+                  {extrasPeriodo.map(e => (
+                    <div key={e.id} className="flex items-center justify-between gap-2 py-1.5 border-b border-green-500/10 last:border-0">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-green-200 text-xs">{e.fecha} — {e.descripcion || "Extra"}</p>
+                        {e.notas && <p className="text-slate-500 text-[11px] truncate">{e.notas}</p>}
+                      </div>
+                      <span className="text-green-300 text-sm font-medium">{fmtSueldo(e.monto, e.moneda || "PYG")}</span>
+                      <button onClick={() => handleDeleteExtra(e.id)}
+                        className="text-slate-500 hover:text-red-400 transition-colors p-1"
+                        title="Eliminar extra">
+                        <Trash2 className="w-3.5 h-3.5"/>
+                      </button>
+                    </div>
+                  ))}
+                  <div className="flex justify-between pt-1.5 text-xs">
+                    <span className="text-slate-400">Total pagado en extras:</span>
+                    <strong className="text-green-300">{fmtSueldo(extrasPeriodo.reduce((s,e)=>s+(e.monto||0),0), extraEmp.moneda || "PYG")}</strong>
+                  </div>
+                </div>
+              )}
+
+              <p className="text-slate-400 text-xs font-medium mb-2">Nuevo extra</p>
               <div className="space-y-3">
                 <div>
                   <label className="text-slate-400 text-xs mb-1 block">Descripción</label>
@@ -2157,7 +2437,7 @@ const EgresosPage = () => {
                     className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-green-500/60"/>
                 </div>
                 <div className="flex gap-3 pt-1">
-                  <button onClick={() => setShowExtraModal(false)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm">Cancelar</button>
+                  <button onClick={() => setShowExtraModal(false)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm">Cerrar</button>
                   <button onClick={handleSaveExtra} disabled={savingExtra}
                     className="flex-1 py-2.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
                     {savingExtra ? "Guardando..." : "Registrar extra"}
@@ -2313,8 +2593,8 @@ const EgresosPage = () => {
             {/* Modal registrar pago IVA */}
             {showPagoIvaForm && (
               <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
-                onClick={e => e.target === e.currentTarget && setShowPagoIvaForm(false)}>
-                <div className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-md p-6">
+                onMouseDown={(e) => e.target === e.currentTarget && setShowPagoIvaForm(false)}>
+                <div className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-md p-4 sm:p-6">
                   <div className="flex items-center justify-between mb-5">
                     <div>
                       <h3 className="font-heading text-lg font-bold text-white">Registrar pago IVA</h3>
@@ -2395,47 +2675,63 @@ const EgresosPage = () => {
               />
             </div>
 
-            {/* Resumen rápido */}
-            {todosPagosProveedores.length > 0 && (
-              <div className="grid grid-cols-3 gap-3 mb-5">
-                {[
-                  { label: "Pendientes", val: todosPagosProveedores.filter(p => p.estado === "pendiente").length, color: "text-blue-400" },
-                  { label: "Vencidos", val: todosPagosProveedores.filter(p => p.estado === "vencido").length, color: "text-red-400" },
-                  { label: "Pagados", val: todosPagosProveedores.filter(p => p.estado === "pagado").length, color: "text-emerald-400" },
-                ].map(s => (
-                  <div key={s.label} className="bg-arandu-dark-light border border-white/5 rounded-xl p-3 text-center">
-                    <p className={`font-heading font-bold text-2xl ${s.color}`}>{s.val}</p>
-                    <p className="text-slate-500 text-xs mt-0.5">{s.label}</p>
-                  </div>
-                ))}
-              </div>
-            )}
+            {/* Aplica el período global (filtroTipo / filtroMes / filtroAnio).
+                Para pagos pendientes/vencidos usamos fecha_vencimiento; para pagados usamos fecha_pago. */}
+            {(() => {
+              const pagosPorPeriodo = todosPagosProveedores.filter(p => {
+                if (filtroTipo === "todos") return true;
+                const fechaRef = p.fecha_pago || p.fecha_vencimiento || "";
+                if (!fechaRef) return false;
+                if (filtroTipo === "mes")  return fechaRef.startsWith(filtroMes);
+                if (filtroTipo === "anio") return fechaRef.startsWith(filtroAnio);
+                return true;
+              });
+              return (
+                <>
+                  {pagosPorPeriodo.length > 0 && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+                      {[
+                        { label: "Pendientes", val: pagosPorPeriodo.filter(p => p.estado === "pendiente").length, color: "text-blue-400" },
+                        { label: "Vencidos",   val: pagosPorPeriodo.filter(p => p.estado === "vencido").length,   color: "text-red-400" },
+                        { label: "Pagados",    val: pagosPorPeriodo.filter(p => p.estado === "pagado").length,    color: "text-emerald-400" },
+                      ].map(s => (
+                        <div key={s.label} className="bg-arandu-dark-light border border-white/5 rounded-xl p-3 text-center">
+                          <p className={`font-heading font-bold text-2xl ${s.color}`}>{s.val}</p>
+                          <p className="text-slate-500 text-xs mt-0.5">{s.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
-            {loadingTodosPagos ? (
-              <div className="flex items-center justify-center py-16 text-violet-400">
-                <Loader2 className="w-6 h-6 animate-spin mr-2" /> Cargando pagos...
-              </div>
-            ) : todosPagosProveedores.length === 0 ? (
-              <div className="text-center py-16 bg-arandu-dark-light border border-white/5 rounded-xl">
-                <Wallet className="w-14 h-14 text-slate-700 mx-auto mb-3" />
-                <p className="text-slate-400 mb-2">No hay pagos a proveedores registrados</p>
-                {hasPermission("pagos_proveedores.crear") && (
-                  <button onClick={() => setShowPagoProvForm(true)} className="text-sm text-violet-400 hover:underline">
-                    Registrar primer pago
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {todosPagosProveedores
-                  .filter(p => {
-                    const texto = [
-                      p.proveedor_nombre, p.concepto, String(p.monto||""),
-                      p.fecha_pago, p.fecha_vencimiento, p.cuenta_nombre,
-                      p.moneda, p.estado
-                    ].filter(Boolean).join(" ");
-                    return matchChips(pagoProvChips, pagoProvInput, texto);
-                  })
+                  {loadingTodosPagos ? (
+                    <div className="flex items-center justify-center py-16 text-violet-400">
+                      <Loader2 className="w-6 h-6 animate-spin mr-2" /> Cargando pagos...
+                    </div>
+                  ) : pagosPorPeriodo.length === 0 ? (
+                    <div className="text-center py-16 bg-arandu-dark-light border border-white/5 rounded-xl">
+                      <Wallet className="w-14 h-14 text-slate-700 mx-auto mb-3" />
+                      <p className="text-slate-400 mb-2">
+                        {todosPagosProveedores.length === 0
+                          ? "No hay pagos a proveedores registrados"
+                          : `No hay pagos en este período (${filtroTipo === "mes" ? mesLabel(filtroMes) : filtroTipo === "anio" ? filtroAnio : "todo el tiempo"})`}
+                      </p>
+                      {hasPermission("pagos_proveedores.crear") && todosPagosProveedores.length === 0 && (
+                        <button onClick={() => setShowPagoProvForm(true)} className="text-sm text-violet-400 hover:underline">
+                          Registrar primer pago
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {pagosPorPeriodo
+                        .filter(p => {
+                          const texto = [
+                            p.proveedor_nombre, p.concepto, String(p.monto||""),
+                            p.fecha_pago, p.fecha_vencimiento, p.cuenta_nombre,
+                            p.moneda, p.estado
+                          ].filter(Boolean).join(" ");
+                          return matchChips(pagoProvChips, pagoProvInput, texto);
+                        })
                   .map((pago, i) => {
                     const estadoBadge = {
                       pagado:   "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
@@ -2447,7 +2743,8 @@ const EgresosPage = () => {
                         key={pago.id || i}
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="bg-arandu-dark-light border border-white/5 rounded-xl p-4 hover:border-violet-500/20 transition-all"
+                        onClick={() => setSelectedPagoView(pago)}
+                        className="bg-arandu-dark-light border border-white/5 rounded-xl p-4 hover:border-violet-500/40 hover:bg-white/[0.03] cursor-pointer transition-all"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -2470,14 +2767,7 @@ const EgresosPage = () => {
                                 {pago.estado}
                               </span>
                             </div>
-                            <div className="flex flex-col gap-1">
-                              <button
-                                onClick={() => setSelectedPagoView(pago)}
-                                className="text-slate-500 hover:text-violet-400 transition-colors"
-                                title="Ver detalle"
-                              >
-                                <Eye className="w-4 h-4" />
-                              </button>
+                            <div className="flex flex-col gap-1" onClick={e => e.stopPropagation()}>
                               {hasPermission("pagos_proveedores.editar") && (
                                 <button
                                   onClick={() => openEditPagoProv(pago)}
@@ -2513,6 +2803,9 @@ const EgresosPage = () => {
                   })}
               </div>
             )}
+                </>
+              );
+            })()}
           </div>
         )}
       </div>
@@ -2523,7 +2816,7 @@ const EgresosPage = () => {
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/80 z-50 flex items-start justify-center p-4 overflow-y-auto"
-            onClick={e => e.target === e.currentTarget && setShowCompraForm(false)}
+            onMouseDown={(e) => e.target === e.currentTarget && setShowCompraForm(false)}
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
@@ -2863,7 +3156,7 @@ const EgresosPage = () => {
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4"
-            onClick={e => e.target === e.currentTarget && setShowProductoBrowser(false)}
+            onMouseDown={(e) => e.target === e.currentTarget && setShowProductoBrowser(false)}
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
@@ -2939,11 +3232,11 @@ const EgresosPage = () => {
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
-            onClick={e => e.target === e.currentTarget && setShowPagoModal(null)}
+            onMouseDown={(e) => e.target === e.currentTarget && setShowPagoModal(null)}
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-md p-6"
+              className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-md p-4 sm:p-6"
             >
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-heading text-lg font-bold text-white">Registrar Pago</h3>
@@ -2996,9 +3289,13 @@ const EgresosPage = () => {
         {showPagoProvForm && (
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 overflow-y-auto"
-            onClick={e => e.target === e.currentTarget && setShowPagoProvForm(false)}
+            className="fixed inset-0 bg-black/80 z-[60] overflow-y-auto p-4"
+            onMouseDown={(e) => e.target === e.currentTarget && setShowPagoProvForm(false)}
           >
+            <div
+              className="flex min-h-full items-center justify-center"
+              onMouseDown={(e) => e.target === e.currentTarget && setShowPagoProvForm(false)}
+            >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
               className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-md p-6 my-6"
@@ -3232,6 +3529,7 @@ const EgresosPage = () => {
                 </div>
               </form>
             </motion.div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -3242,7 +3540,7 @@ const EgresosPage = () => {
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4"
-            onClick={e => e.target === e.currentTarget && setSelectedPagoView(null)}
+            onMouseDown={(e) => e.target === e.currentTarget && setSelectedPagoView(null)}
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
@@ -3318,9 +3616,17 @@ const EgresosPage = () => {
                   <p className="text-white text-sm font-medium">{selectedPagoView.moneda === "USD" ? "Dólar (USD)" : "Guaraní (₲)"}</p>
                 </div>
                 <div className="bg-arandu-dark/60 rounded-xl p-3">
-                  <p className="text-slate-500 text-xs mb-0.5">Cuenta de pago</p>
+                  <p className="text-slate-500 text-xs mb-0.5">Cuenta tipo</p>
                   <p className="text-white text-sm font-medium capitalize">{selectedPagoView.cuenta_pago || "guaranies"}</p>
                 </div>
+                {selectedPagoView.cuenta_nombre && (
+                  <div className="bg-arandu-dark/60 rounded-xl p-3 col-span-2">
+                    <p className="text-slate-500 text-xs mb-0.5 flex items-center gap-1">
+                      <Banknote className="w-3 h-3" /> Pagado desde
+                    </p>
+                    <p className="text-white text-sm font-medium">{selectedPagoView.cuenta_nombre}</p>
+                  </div>
+                )}
               </div>
 
               {/* Notas */}
@@ -3367,6 +3673,689 @@ const EgresosPage = () => {
                 onClick={() => setSelectedPagoView(null)}
                 className="w-full py-2.5 rounded-lg bg-arandu-dark border border-white/10 text-slate-400 text-sm hover:text-white transition-all"
               >
+                Cerrar
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══ MODAL: Ver detalle de una Compra ════════════════════════════════ */}
+      <AnimatePresence>
+        {selectedCompraView && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4"
+            onMouseDown={(e) => e.target === e.currentTarget && setSelectedCompraView(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between mb-5">
+                <span className="text-xs bg-orange-500/20 text-orange-300 border border-orange-500/30 rounded-full px-3 py-1 font-medium">
+                  Compra
+                </span>
+                <button onClick={() => setSelectedCompraView(null)} className="text-slate-400 hover:text-white">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Proveedor + estado */}
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-11 h-11 bg-orange-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <ShoppingCart className="w-5 h-5 text-orange-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-slate-400 text-xs">Proveedor</p>
+                  <p className="text-white font-semibold truncate">{selectedCompraView.proveedor_nombre || "—"}</p>
+                </div>
+                {selectedCompraView.estado_pago && (
+                  <span className={`text-xs px-2.5 py-1 rounded-full border ${ESTADO_STYLES[selectedCompraView.estado_pago] || ""}`}>
+                    {ESTADO_LABELS[selectedCompraView.estado_pago] || selectedCompraView.estado_pago}
+                  </span>
+                )}
+              </div>
+
+              {/* Factura / fecha */}
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="bg-arandu-dark/60 rounded-xl p-3">
+                  <p className="text-slate-500 text-xs mb-0.5">Fecha</p>
+                  <p className="text-white text-sm font-medium">{selectedCompraView.fecha || "—"}</p>
+                </div>
+                <div className="bg-arandu-dark/60 rounded-xl p-3">
+                  <p className="text-slate-500 text-xs mb-0.5">Tipo de pago</p>
+                  <p className="text-white text-sm font-medium capitalize">{selectedCompraView.tipo_pago || "contado"}</p>
+                </div>
+                {(() => {
+                  // Mostrar cuenta bancaria desde la que se pagó.
+                  // Para contado: viene en compra.cuenta_nombre.
+                  // Para credito: tomamos del primer pago aplicado (compra.pagos[0].cuenta_nombre).
+                  const cuentaNombre = selectedCompraView.cuenta_nombre
+                    || (selectedCompraView.pagos || []).find(p => p.cuenta_nombre)?.cuenta_nombre;
+                  const pagosConCuenta = (selectedCompraView.pagos || []).filter(p => p.cuenta_nombre);
+                  if (!cuentaNombre) return null;
+                  return (
+                    <div className="bg-arandu-dark/60 rounded-xl p-3 col-span-2">
+                      <p className="text-slate-500 text-xs mb-0.5 flex items-center gap-1">
+                        <Banknote className="w-3 h-3" /> Pagado desde
+                      </p>
+                      <p className="text-white text-sm font-medium">{cuentaNombre}</p>
+                      {pagosConCuenta.length > 1 && (
+                        <p className="text-slate-500 text-xs mt-0.5">+ {pagosConCuenta.length - 1} pago{pagosConCuenta.length > 2 ? "s" : ""} más</p>
+                      )}
+                    </div>
+                  );
+                })()}
+                {selectedCompraView.numero_factura && (
+                  <div className="bg-arandu-dark/60 rounded-xl p-3 col-span-2">
+                    <p className="text-slate-500 text-xs mb-0.5 flex items-center gap-1">
+                      <Receipt className="w-3 h-3" /> Nº Factura
+                    </p>
+                    <p className="text-white text-sm font-medium">{selectedCompraView.numero_factura}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Monto destacado */}
+              <div className="bg-orange-500/10 border border-orange-500/20 rounded-2xl p-5 text-center mb-4">
+                <p className="text-slate-400 text-xs mb-1">Monto total</p>
+                <p className="font-heading text-3xl font-bold text-orange-400">
+                  {fmt(selectedCompraView.monto_total, selectedCompraView.moneda)}
+                </p>
+                {selectedCompraView.moneda === "USD" && selectedCompraView.tipo_cambio && (
+                  <p className="text-slate-500 text-xs mt-1">
+                    TC: ₲ {Number(selectedCompraView.tipo_cambio).toLocaleString("es-PY")} / USD
+                  </p>
+                )}
+                {selectedCompraView.monto_iva > 0 && (
+                  <p className="text-slate-500 text-xs mt-1">IVA incluido: {fmt(selectedCompraView.monto_iva)}</p>
+                )}
+              </div>
+
+              {/* Saldo si es credito */}
+              {selectedCompraView.tipo_pago === "credito" && (
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3">
+                    <p className="text-slate-500 text-xs mb-0.5">Pagado</p>
+                    <p className="text-emerald-400 text-sm font-bold">{fmt(selectedCompraView.total_pagado || 0, selectedCompraView.moneda)}</p>
+                  </div>
+                  <div className={`rounded-xl p-3 border ${selectedCompraView.saldo_pendiente > 0 ? "bg-red-500/5 border-red-500/20" : "bg-emerald-500/5 border-emerald-500/20"}`}>
+                    <p className="text-slate-500 text-xs mb-0.5">Saldo pendiente</p>
+                    <p className={`text-sm font-bold ${selectedCompraView.saldo_pendiente > 0 ? "text-red-400" : "text-emerald-400"}`}>
+                      {fmt(selectedCompraView.saldo_pendiente || 0, selectedCompraView.moneda)}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Items */}
+              {(selectedCompraView.items || []).length > 0 && (
+                <div className="bg-arandu-dark/60 border border-white/5 rounded-xl p-3 mb-4">
+                  <p className="text-slate-500 text-xs mb-2">Ítems ({selectedCompraView.items.length})</p>
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                    {selectedCompraView.items.map((it, idx) => (
+                      <div key={idx} className="flex justify-between gap-2 text-xs border-b border-white/5 last:border-0 pb-1.5 last:pb-0">
+                        <span className="text-slate-300 flex-1 truncate">{it.descripcion}</span>
+                        <span className="text-slate-500 whitespace-nowrap">×{it.cantidad}</span>
+                        <span className="text-slate-200 whitespace-nowrap font-medium">{fmt(it.subtotal || (it.cantidad * it.precio_unitario), selectedCompraView.moneda)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Notas */}
+              {selectedCompraView.notas && (
+                <div className="bg-arandu-dark/60 border border-white/5 rounded-xl p-3 mb-4">
+                  <p className="text-slate-500 text-xs mb-1 flex items-center gap-1">
+                    <FileText className="w-3 h-3" /> Notas
+                  </p>
+                  <p className="text-slate-300 text-sm">{selectedCompraView.notas}</p>
+                </div>
+              )}
+
+              {/* Acciones */}
+              {selectedCompraView.tipo_pago === "credito" && selectedCompraView.estado_pago !== "pagado" && (
+                <button
+                  onClick={() => {
+                    setShowPagoModal(selectedCompraView);
+                    setPagoForm({ monto_pagado: selectedCompraView.saldo_pendiente || "", fecha_pago: hoy(), notas: "" });
+                    setSelectedCompraView(null);
+                  }}
+                  className="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-all flex items-center justify-center gap-2 mb-2"
+                >
+                  <Banknote className="w-4 h-4" /> Registrar pago
+                </button>
+              )}
+
+              <div className="flex gap-2 mb-2">
+                {hasPermission("compras.editar") && (
+                  <button
+                    onClick={() => { openEditCompra(selectedCompraView); setSelectedCompraView(null); }}
+                    className="flex-1 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm hover:bg-yellow-500/20 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Edit className="w-4 h-4" /> Editar
+                  </button>
+                )}
+                {hasPermission("compras.eliminar") && (
+                  <button
+                    onClick={() => { handleDeleteCompra(selectedCompraView.id); setSelectedCompraView(null); }}
+                    className="flex-1 py-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm hover:bg-red-500/20 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Trash2 className="w-4 h-4" /> Eliminar
+                  </button>
+                )}
+              </div>
+
+              <button
+                onClick={() => setSelectedCompraView(null)}
+                className="w-full py-2.5 rounded-lg bg-arandu-dark border border-white/10 text-slate-400 text-sm hover:text-white transition-all"
+              >
+                Cerrar
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══ MODAL: Ver detalle de un Gasto (Costo Fijo) ═══════════════════ */}
+      <AnimatePresence>
+        {selectedCostoView && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4"
+            onMouseDown={(e) => e.target === e.currentTarget && setSelectedCostoView(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-sm p-6 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between mb-5">
+                <span className="text-xs bg-blue-500/20 text-blue-300 border border-blue-500/30 rounded-full px-3 py-1 font-medium">
+                  Gasto
+                </span>
+                <button onClick={() => setSelectedCostoView(null)} className="text-slate-400 hover:text-white">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Nombre + estado */}
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-11 h-11 bg-blue-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <Calendar className="w-5 h-5 text-blue-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-slate-400 text-xs">Concepto</p>
+                  <p className="text-white font-semibold truncate">{selectedCostoView.nombre || "—"}</p>
+                </div>
+                {selectedCostoView.estado && (
+                  <span className={`text-xs px-2.5 py-1 rounded-full border ${
+                    { pagado:"bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+                      pendiente:"bg-amber-500/15 text-amber-400 border-amber-500/30",
+                      vencido:"bg-red-500/15 text-red-400 border-red-500/30"
+                    }[selectedCostoView.estado] || ""
+                  }`}>
+                    {selectedCostoView.estado}
+                  </span>
+                )}
+              </div>
+
+              {selectedCostoView.descripcion && (
+                <div className="bg-arandu-dark/60 border border-white/5 rounded-xl p-3 mb-4">
+                  <p className="text-slate-500 text-xs mb-0.5">Descripción</p>
+                  <p className="text-slate-300 text-sm">{selectedCostoView.descripcion}</p>
+                </div>
+              )}
+
+              {/* Monto destacado */}
+              <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-5 text-center mb-4">
+                <p className="text-slate-400 text-xs mb-1">Monto</p>
+                <p className="font-heading text-3xl font-bold text-blue-300">
+                  {fmt(selectedCostoView.monto, selectedCostoView.moneda)}
+                </p>
+                {selectedCostoView.moneda === "USD" && selectedCostoView.tipo_cambio && (
+                  <p className="text-slate-500 text-xs mt-1">
+                    TC: ₲ {Number(selectedCostoView.tipo_cambio).toLocaleString("es-PY")} / USD
+                  </p>
+                )}
+              </div>
+
+              {/* Grid de info */}
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="bg-arandu-dark/60 rounded-xl p-3">
+                  <p className="text-slate-500 text-xs mb-0.5">Empresa</p>
+                  <p className="text-white text-sm font-medium">{LOGO_LABEL_MAP[selectedCostoView.logo_tipo] || selectedCostoView.logo_tipo || "—"}</p>
+                </div>
+                <div className="bg-arandu-dark/60 rounded-xl p-3">
+                  <p className="text-slate-500 text-xs mb-0.5">Categoría</p>
+                  <p className="text-white text-sm font-medium">{selectedCostoView.categoria || "—"}</p>
+                </div>
+                <div className="bg-arandu-dark/60 rounded-xl p-3">
+                  <p className="text-slate-500 text-xs mb-0.5">Frecuencia</p>
+                  <p className="text-white text-sm font-medium capitalize">{selectedCostoView.frecuencia || "mensual"}</p>
+                </div>
+                <div className="bg-arandu-dark/60 rounded-xl p-3">
+                  <p className="text-slate-500 text-xs mb-0.5">Día vencimiento</p>
+                  <p className="text-white text-sm font-medium">{selectedCostoView.dia_vencimiento || "—"}</p>
+                </div>
+                {selectedCostoView.pago?.fecha_pago && (
+                  <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3 col-span-2">
+                    <p className="text-slate-500 text-xs mb-0.5">Pagado el</p>
+                    <p className="text-emerald-400 text-sm font-medium">{selectedCostoView.pago.fecha_pago}</p>
+                    {selectedCostoView.pago.monto_pagado && selectedCostoView.pago.monto_pagado !== selectedCostoView.monto && (
+                      <p className="text-slate-400 text-xs mt-0.5">{fmt(selectedCostoView.pago.monto_pagado, selectedCostoView.moneda)} (parcial)</p>
+                    )}
+                  </div>
+                )}
+                {selectedCostoView.pago?.cuenta_nombre && (
+                  <div className="bg-arandu-dark/60 rounded-xl p-3 col-span-2">
+                    <p className="text-slate-500 text-xs mb-0.5 flex items-center gap-1">
+                      <Banknote className="w-3 h-3" /> Pagado desde
+                    </p>
+                    <p className="text-white text-sm font-medium">{selectedCostoView.pago.cuenta_nombre}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Notas */}
+              {selectedCostoView.notas && (
+                <div className="bg-arandu-dark/60 border border-white/5 rounded-xl p-3 mb-4">
+                  <p className="text-slate-500 text-xs mb-1 flex items-center gap-1">
+                    <FileText className="w-3 h-3" /> Notas
+                  </p>
+                  <p className="text-slate-300 text-sm">{selectedCostoView.notas}</p>
+                </div>
+              )}
+
+              {/* Acciones */}
+              {selectedCostoView.estado !== "pagado" && hasPermission("costos_fijos.editar") && (
+                <button
+                  onClick={() => {
+                    setPagoCostoForm({ monto_pagado: selectedCostoView.monto, fecha_pago: hoy(), notas: "", tiene_factura: false, nro_factura: "", cuenta_id: "", cuenta_nombre: "" });
+                    setShowPagoCostoModal(selectedCostoView);
+                    setSelectedCostoView(null);
+                  }}
+                  className="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-all flex items-center justify-center gap-2 mb-2"
+                >
+                  <Check className="w-4 h-4" /> Registrar pago
+                </button>
+              )}
+              {selectedCostoView.estado === "pagado" && hasPermission("costos_fijos.editar") && (
+                <button
+                  onClick={() => { handleAnularPagoCosto(selectedCostoView); setSelectedCostoView(null); }}
+                  className="w-full py-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm hover:bg-red-500/20 transition-all flex items-center justify-center gap-2 mb-2"
+                >
+                  <X className="w-4 h-4" /> Anular pago
+                </button>
+              )}
+
+              <div className="flex gap-2 mb-2">
+                {hasPermission("costos_fijos.editar") && (
+                  <button
+                    onClick={() => {
+                      const src = costos.find(c => c.id === selectedCostoView.costo_id) || selectedCostoView;
+                      if (src) {
+                        setEditingCostoId(src.id || src.costo_id);
+                        setCostoFormData({
+                          logo_tipo: src.logo_tipo || "arandujar",
+                          nombre: src.nombre || "",
+                          descripcion: src.descripcion || "",
+                          categoria: src.categoria || "",
+                          monto: src.monto || "",
+                          moneda: src.moneda || "PYG",
+                          tipo_cambio: src.tipo_cambio || "",
+                          frecuencia: src.frecuencia || "mensual",
+                          dia_vencimiento: src.dia_vencimiento || 1,
+                          fecha_inicio: src.fecha_inicio || new Date().toISOString().slice(0, 10),
+                          fecha_fin: src.fecha_fin || "",
+                          activo: src.activo !== false,
+                          notas: src.notas || "",
+                        });
+                        setShowCostoForm(true);
+                        setSelectedCostoView(null);
+                      }
+                    }}
+                    className="flex-1 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm hover:bg-yellow-500/20 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Edit className="w-4 h-4" /> Editar
+                  </button>
+                )}
+                {hasPermission("costos_fijos.eliminar") && (
+                  <button
+                    onClick={() => {
+                      const src = costos.find(c => c.id === selectedCostoView.costo_id) || selectedCostoView;
+                      if (src) handleDeleteCosto({ ...src, id: src.id || src.costo_id });
+                      setSelectedCostoView(null);
+                    }}
+                    className="flex-1 py-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm hover:bg-red-500/20 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Trash2 className="w-4 h-4" /> Eliminar
+                  </button>
+                )}
+              </div>
+
+              <button
+                onClick={() => setSelectedCostoView(null)}
+                className="w-full py-2.5 rounded-lg bg-arandu-dark border border-white/10 text-slate-400 text-sm hover:text-white transition-all"
+              >
+                Cerrar
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══ MODAL: Detalle de un Sueldo Pagado ═════════════════════════════ */}
+      <AnimatePresence>
+        {sueldoView && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4"
+            onMouseDown={(e) => e.target === e.currentTarget && setSueldoView(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto"
+            >
+              {(() => {
+                const { emp, sueldo, adelantos, extras } = sueldoView;
+                const moneda = sueldo?.moneda || emp.moneda || "PYG";
+                const base = parseFloat(emp.sueldo_base) || 0;
+                const ips = parseFloat(sueldo?.descuento_ips) || 0;
+                const totAd = (adelantos || []).reduce((s, a) => s + (a.monto || 0), 0);
+                const totEx = (extras || []).reduce((s, e) => s + (e.monto || 0), 0);
+                const desAd = parseFloat(sueldo?.descuentos_adicionales) || 0;
+                return (
+                  <>
+                    <div className="flex items-center justify-between mb-4">
+                      <span className="text-xs bg-violet-500/20 text-violet-300 border border-violet-500/30 rounded-full px-3 py-1 font-medium">
+                        Sueldo pagado
+                      </span>
+                      <button onClick={() => setSueldoView(null)} className="text-slate-400 hover:text-white">
+                        <X className="w-5 h-5"/>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="w-11 h-11 bg-violet-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                        <Users className="w-5 h-5 text-violet-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-slate-400 text-xs">Empleado</p>
+                        <p className="text-white font-semibold truncate">{emp.nombre} {emp.apellido}</p>
+                        {emp.cargo && <p className="text-slate-500 text-xs">{emp.cargo}</p>}
+                      </div>
+                      <span className="text-xs px-2.5 py-1 rounded-full border bg-emerald-500/15 text-emerald-400 border-emerald-500/30">
+                        Pagado
+                      </span>
+                    </div>
+
+                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-5 text-center mb-4">
+                      <p className="text-slate-400 text-xs mb-1">Monto pagado</p>
+                      <p className="font-heading text-3xl font-bold text-emerald-400">
+                        {fmtSueldo(sueldo.monto_pagado, moneda)}
+                      </p>
+                      {sueldo.tipo_cambio && moneda === "USD" && (
+                        <p className="text-slate-500 text-xs mt-1">
+                          TC: ₲ {Number(sueldo.tipo_cambio).toLocaleString("es-PY")} / USD
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      <div className="bg-arandu-dark/60 rounded-xl p-3">
+                        <p className="text-slate-500 text-xs mb-0.5">Período</p>
+                        <p className="text-white text-sm font-medium">{mesLabel(sueldo.periodo || filtroMes)}</p>
+                      </div>
+                      <div className="bg-arandu-dark/60 rounded-xl p-3">
+                        <p className="text-slate-500 text-xs mb-0.5">Fecha de pago</p>
+                        <p className="text-emerald-400 text-sm font-medium">{sueldo.fecha_pago || "—"}</p>
+                      </div>
+                    </div>
+
+                    {/* Desglose */}
+                    <div className="bg-arandu-dark/60 border border-white/5 rounded-xl p-3 mb-4 text-sm">
+                      <p className="text-slate-500 text-xs font-medium mb-2">Desglose</p>
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-slate-300"><span>Sueldo base</span><span>{fmtSueldo(base, moneda)}</span></div>
+                        {ips > 0 && <div className="flex justify-between text-blue-300"><span>− IPS</span><span>− {fmtSueldo(ips, "PYG")}</span></div>}
+                        {totAd > 0 && <div className="flex justify-between text-amber-300"><span>− Adelantos ({adelantos.length})</span><span>− {fmtSueldo(totAd, moneda)}</span></div>}
+                        {desAd > 0 && <div className="flex justify-between text-red-300"><span>− Descuentos adicionales</span><span>− {fmtSueldo(desAd, "PYG")}</span></div>}
+                        <div className="border-t border-white/10 pt-1.5 mt-1.5 flex justify-between font-semibold">
+                          <span className="text-white">Total pagado</span>
+                          <span className="text-emerald-300">{fmtSueldo(sueldo.monto_pagado, moneda)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Adelantos del período */}
+                    {adelantos.length > 0 && (
+                      <div className="bg-amber-900/20 border border-amber-500/30 rounded-xl p-3 mb-4">
+                        <p className="text-amber-300 text-xs font-medium mb-2">Adelantos del período ({adelantos.length})</p>
+                        <div className="space-y-1.5">
+                          {adelantos.map(a => (
+                            <div key={a.id} className="flex items-center justify-between text-xs">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-amber-200">{a.fecha}</p>
+                                {a.notas && <p className="text-slate-500 text-[11px] truncate">{a.notas}</p>}
+                              </div>
+                              <span className="text-amber-300 font-medium">{fmtSueldo(a.monto, a.moneda || "PYG")}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Extras del período */}
+                    {extras.length > 0 && (
+                      <div className="bg-green-900/20 border border-green-500/30 rounded-xl p-3 mb-4">
+                        <p className="text-green-300 text-xs font-medium mb-2">Extras del período ({extras.length}) — pagados aparte</p>
+                        <div className="space-y-1.5">
+                          {extras.map(e => (
+                            <div key={e.id} className="flex items-center justify-between text-xs">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-green-200">{e.fecha} — {e.descripcion || "Extra"}</p>
+                                {e.notas && <p className="text-slate-500 text-[11px] truncate">{e.notas}</p>}
+                              </div>
+                              <span className="text-green-300 font-medium">{fmtSueldo(e.monto, e.moneda || "PYG")}</span>
+                            </div>
+                          ))}
+                          <div className="border-t border-green-500/20 pt-1.5 flex justify-between text-green-200 font-medium">
+                            <span>Total extras</span>
+                            <span>{fmtSueldo(totEx, moneda)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Notas */}
+                    {sueldo.notas && (
+                      <div className="bg-arandu-dark/60 border border-white/5 rounded-xl p-3 mb-4">
+                        <p className="text-slate-500 text-xs mb-1 flex items-center gap-1"><FileText className="w-3 h-3"/> Notas</p>
+                        <p className="text-slate-300 text-sm">{sueldo.notas}</p>
+                      </div>
+                    )}
+
+                    {loadingSueldoView && (
+                      <p className="text-center text-slate-500 text-xs mb-3">Cargando detalles...</p>
+                    )}
+
+                    {/* Acciones */}
+                    {hasPermission("empleados.editar") && (
+                      <button
+                        onClick={() => { handleDeleteSueldo(sueldo.id); setSueldoView(null); }}
+                        className="w-full mb-2 py-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm hover:bg-red-500/20 transition-all flex items-center justify-center gap-2"
+                      >
+                        <X className="w-4 h-4"/> Deshacer pago
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setSueldoView(null)}
+                      className="w-full py-2.5 rounded-lg bg-arandu-dark border border-white/10 text-slate-400 text-sm hover:text-white transition-all">
+                      Cerrar
+                    </button>
+                  </>
+                );
+              })()}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══ MODAL: Subir Sueldo ════════════════════════════════════════════ */}
+      <AnimatePresence>
+        {aumentoEmp && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4"
+            onMouseDown={(e) => e.target === e.currentTarget && setAumentoEmp(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-sm p-6"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <span className="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full px-3 py-1 font-medium inline-flex items-center gap-1">
+                    <TrendingUp className="w-3.5 h-3.5"/> Subir sueldo
+                  </span>
+                  <p className="text-white font-semibold mt-2">{aumentoEmp.nombre} {aumentoEmp.apellido}</p>
+                </div>
+                <button onClick={() => setAumentoEmp(null)} className="text-slate-400 hover:text-white">
+                  <X className="w-5 h-5"/>
+                </button>
+              </div>
+
+              <div className="bg-arandu-dark/60 border border-white/5 rounded-xl p-3 mb-4 text-sm">
+                <p className="text-slate-400">Sueldo actual</p>
+                <p className="text-white font-bold text-xl">{fmt(aumentoEmp.sueldo_base, aumentoEmp.moneda || "PYG")}</p>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Sueldo nuevo *</label>
+                  <input type="number" min="0" step="any" autoFocus
+                    value={aumentoForm.sueldo_nuevo}
+                    onChange={e => setAumentoForm(f => ({ ...f, sueldo_nuevo: e.target.value }))}
+                    className="w-full bg-arandu-dark border border-emerald-500/30 rounded-lg px-3 py-2.5 text-white text-lg font-bold focus:outline-none focus:border-emerald-500"
+                  />
+                  {aumentoForm.sueldo_nuevo && parseFloat(aumentoForm.sueldo_nuevo) > Number(aumentoEmp.sueldo_base) && (
+                    <p className="text-emerald-400 text-xs mt-1">
+                      +{fmt(parseFloat(aumentoForm.sueldo_nuevo) - Number(aumentoEmp.sueldo_base), aumentoEmp.moneda || "PYG")}
+                      ({((parseFloat(aumentoForm.sueldo_nuevo) - Number(aumentoEmp.sueldo_base)) / Number(aumentoEmp.sueldo_base) * 100).toFixed(1)}%)
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Fecha del cambio</label>
+                  <input type="date" value={aumentoForm.fecha}
+                    onChange={e => setAumentoForm(f => ({ ...f, fecha: e.target.value }))}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/60"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 text-xs mb-1 block">Motivo</label>
+                  <input type="text" value={aumentoForm.motivo}
+                    onChange={e => setAumentoForm(f => ({ ...f, motivo: e.target.value }))}
+                    placeholder="Ej: aumento anual, ajuste por inflación, ascenso..."
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/60"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-5">
+                <button onClick={() => setAumentoEmp(null)}
+                  className="flex-1 py-2.5 rounded-lg border border-white/10 text-slate-400 text-sm hover:text-white transition-all">
+                  Cancelar
+                </button>
+                <button onClick={handleSaveAumento} disabled={savingAumento}
+                  className="flex-1 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-medium transition-all flex items-center justify-center gap-2">
+                  <TrendingUp className="w-4 h-4"/> {savingAumento ? "Guardando..." : "Aplicar aumento"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ═══ MODAL: Historial de sueldos ═════════════════════════════════════ */}
+      <AnimatePresence>
+        {historialEmp && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4"
+            onMouseDown={(e) => e.target === e.currentTarget && setHistorialEmp(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-md p-6 max-h-[85vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <span className="text-xs bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded-full px-3 py-1 font-medium inline-flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5"/> Historial de sueldos
+                  </span>
+                  <p className="text-white font-semibold mt-2">{historialEmp.nombre} {historialEmp.apellido}</p>
+                </div>
+                <button onClick={() => setHistorialEmp(null)} className="text-slate-400 hover:text-white">
+                  <X className="w-5 h-5"/>
+                </button>
+              </div>
+
+              {loadingHistorial ? (
+                <div className="text-center py-8 text-slate-500">Cargando...</div>
+              ) : historialData ? (
+                <>
+                  <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 text-center mb-4">
+                    <p className="text-slate-400 text-xs mb-1">Sueldo actual</p>
+                    <p className="font-heading text-2xl font-bold text-emerald-300">
+                      {fmt(historialData.sueldo_actual, historialData.moneda)}
+                    </p>
+                    {historialData.fecha_ingreso && (
+                      <p className="text-slate-500 text-xs mt-1">Ingreso: {historialData.fecha_ingreso}</p>
+                    )}
+                  </div>
+
+                  {(historialData.historial || []).length === 0 ? (
+                    <div className="text-center py-6 bg-arandu-dark/60 border border-white/5 rounded-xl">
+                      <Clock className="w-10 h-10 text-slate-700 mx-auto mb-2"/>
+                      <p className="text-slate-400 text-sm">Sin cambios registrados todavía</p>
+                      <p className="text-slate-600 text-xs mt-1">El sueldo nunca fue modificado desde su carga inicial.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {[...historialData.historial].reverse().map((h, i) => {
+                        const subio = h.sueldo_nuevo > h.sueldo_anterior;
+                        const diff = h.sueldo_nuevo - h.sueldo_anterior;
+                        const pct = h.sueldo_anterior > 0 ? (diff / h.sueldo_anterior * 100) : 0;
+                        return (
+                          <div key={i} className={`border rounded-xl p-3 ${subio ? "bg-emerald-500/5 border-emerald-500/20" : "bg-amber-500/5 border-amber-500/20"}`}>
+                            <div className="flex justify-between items-start gap-2">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-slate-300 text-xs">{h.fecha}</p>
+                                <p className="text-white text-sm font-medium mt-1">
+                                  {fmt(h.sueldo_anterior, h.moneda || "PYG")} → <span className={subio ? "text-emerald-300" : "text-amber-300"}>{fmt(h.sueldo_nuevo, h.moneda || "PYG")}</span>
+                                </p>
+                                {h.motivo && <p className="text-slate-500 text-xs mt-1">{h.motivo}</p>}
+                                {h.usuario_nombre && <p className="text-slate-600 text-[10px] mt-1">por {h.usuario_nombre}</p>}
+                              </div>
+                              <span className={`text-xs px-2 py-1 rounded-full whitespace-nowrap ${subio ? "bg-emerald-500/20 text-emerald-300" : "bg-amber-500/20 text-amber-300"}`}>
+                                {subio ? "+" : ""}{fmt(diff, h.moneda || "PYG")} ({pct >= 0 ? "+" : ""}{pct.toFixed(1)}%)
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="text-center py-8 text-slate-500">No se pudo cargar el historial</div>
+              )}
+
+              <button onClick={() => setHistorialEmp(null)}
+                className="w-full mt-4 py-2.5 rounded-lg bg-arandu-dark border border-white/10 text-slate-400 text-sm hover:text-white transition-all">
                 Cerrar
               </button>
             </motion.div>

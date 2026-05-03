@@ -235,7 +235,7 @@ const PresupuestoCostosModal = ({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
-        onClick={(e) => e.target === e.currentTarget && onClose()}
+        onMouseDown={(e) => e.target === e.currentTarget && onClose()}
       >
         <motion.div
           initial={{ scale: 0.9, opacity: 0 }}
@@ -257,7 +257,7 @@ const PresupuestoCostosModal = ({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
@@ -285,7 +285,7 @@ const PresupuestoCostosModal = ({
               <Save className="w-4 h-4 mr-2" />
               {savingCostos ? "Guardando..." : "Guardar"}
             </Button>
-            <Button onClick={onClose} className="bg-red-600 hover:bg-red-700 text-white">
+            <Button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="bg-red-600 hover:bg-red-700 text-white">
               <X className="w-4 h-4 mr-2" />
               Cerrar
             </Button>

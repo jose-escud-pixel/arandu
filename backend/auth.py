@@ -16,11 +16,15 @@ def hash_password(password: str) -> str:
 def verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
-def create_token(user_id: str) -> str:
+def create_token(user_id: str, session_id: str = None) -> str:
+    """Genera un JWT incluyendo session_id, así una sesión nueva invalida la
+    anterior (single-session enforcement)."""
     payload = {
         "user_id": user_id,
-        "exp": datetime.now(timezone.utc).timestamp() + 86400 * 7
+        "exp": datetime.now(timezone.utc).timestamp() + 86400 * 7,
     }
+    if session_id:
+        payload["session_id"] = session_id
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
@@ -28,9 +32,25 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     try:
         payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("user_id")
+        token_sid = payload.get("session_id")
         user = await db.users.find_one({"id": user_id}, {"_id": 0})
         if not user:
             raise HTTPException(status_code=401, detail="Usuario no encontrado")
+        # Single-session enforcement: si el usuario tiene una sesión activa,
+        # el token tiene que tener el mismo session_id. Si no coincide → echamos.
+        active_sid = user.get("active_session_id")
+        if active_sid and token_sid and active_sid != token_sid:
+            raise HTTPException(
+                status_code=401,
+                detail="Tu sesión fue cerrada porque iniciaste sesión en otro dispositivo.",
+            )
+        # Caso legacy: usuario tiene sesión activa pero el token es viejo (sin sid).
+        # Lo rechazamos para forzar re-login con un token nuevo.
+        if active_sid and not token_sid:
+            raise HTTPException(
+                status_code=401,
+                detail="Tu sesión expiró. Iniciá sesión de nuevo.",
+            )
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expirado")

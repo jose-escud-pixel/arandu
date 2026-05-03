@@ -225,6 +225,24 @@ async def update_empresa(empresa_id: str, data: EmpresaCreate, user: dict = Depe
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Empresa no encontrada")
+    # Propagar el nuevo nombre/razón social/RUC a todas las facturas Y presupuestos
+    # vinculados, así si alguien usaba un apodo (ej: "Constructora - EDB") y lo
+    # cambia, se actualiza en toda la app sin tocar registros uno por uno.
+    await db.facturas.update_many(
+        {"empresa_id": empresa_id},
+        {"$set": {
+            "empresa_nombre": data.nombre,
+            "razon_social": data.razon_social,
+            "ruc": data.ruc,
+        }}
+    )
+    await db.presupuestos.update_many(
+        {"empresa_id": empresa_id},
+        {"$set": {
+            "empresa_nombre": data.nombre,
+            "empresa_ruc": data.ruc,
+        }}
+    )
     empresa = await db.empresas.find_one({"id": empresa_id}, {"_id": 0})
     return empresa
 

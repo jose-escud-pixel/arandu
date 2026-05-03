@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useContext, useRef } from "react";
+import { createPortal } from "react-dom";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AuthContext } from "../App";
 import { toast } from "sonner";
@@ -96,38 +97,95 @@ function StateBadge({ estado }) {
   );
 }
 
-// Dropdown editable de estado (para cambiar el estado al hacer click)
+// Dropdown editable de estado (para cambiar el estado al hacer click).
+// Se renderiza vía portal con position:fixed para que no quede recortado por
+// contenedores con overflow (tablas, modales, etc.) ni "se vaya atrás" detrás
+// de otros elementos al aprobar/rechazar varios presupuestos seguidos.
 function StateDropdown({ estado, options, onChange, disabled = false }) {
   const [open, setOpen] = React.useState(false);
+  const [pos, setPos] = React.useState({ top: 0, left: 0, openUp: false, width: 130 });
   const ref = React.useRef(null);
-  React.useEffect(() => {
-    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+  const menuRef = React.useRef(null);
+
+  const computePos = React.useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const menuH = 80; // altura aproximada para 2-3 opciones
+    const menuW = Math.max(130, rect.width);
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const openUp = spaceBelow < menuH + 12 && rect.top > menuH + 12;
+    setPos({
+      top: openUp ? rect.top - 6 : rect.bottom + 6,
+      left: rect.left + rect.width / 2,
+      openUp,
+      width: menuW,
+    });
   }, []);
+
+  React.useEffect(() => {
+    if (!open) return;
+    computePos();
+    const onDoc = (e) => {
+      if (ref.current && ref.current.contains(e.target)) return;
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onScrollOrResize = () => computePos();
+    document.addEventListener("mousedown", onDoc);
+    window.addEventListener("scroll", onScrollOrResize, true);
+    window.addEventListener("resize", onScrollOrResize);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("scroll", onScrollOrResize, true);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
+  }, [open, computePos]);
+
   if (disabled) return <StateBadge estado={estado} />;
+
+  const menu = open ? (
+    <div
+      ref={menuRef}
+      style={{
+        position: "fixed",
+        top: pos.top,
+        left: pos.left,
+        transform: pos.openUp ? "translate(-50%, -100%)" : "translate(-50%, 0)",
+        minWidth: pos.width,
+        zIndex: 9999,
+      }}
+      className="bg-arandu-dark border border-white/20 rounded-lg shadow-2xl overflow-hidden"
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      {options.map(op => (
+        <button
+          key={op}
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setOpen(false); if (op !== estado) onChange(op); }}
+          className={`w-full text-left px-3 py-1.5 text-xs font-body transition-all ${
+            op === estado
+              ? "bg-white/10 text-white"
+              : "text-slate-300 hover:bg-white/5 hover:text-white"
+          }`}
+        >
+          {ESTADO_BADGE[op]?.label || op}
+        </button>
+      ))}
+    </div>
+  ) : null;
+
   return (
-    <span className="relative inline-block" ref={ref} onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}>
+    <span
+      className="relative inline-block"
+      ref={ref}
+      onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
+    >
       <span className="cursor-pointer">
         <StateBadge estado={estado} />
       </span>
-      {open && (
-        <div className="absolute top-full mt-1 left-1/2 -translate-x-1/2 z-[100] bg-arandu-dark border border-white/20 rounded-lg shadow-xl overflow-hidden min-w-[130px]">
-          {options.map(op => (
-            <button
-              key={op}
-              onClick={(e) => { e.stopPropagation(); setOpen(false); if (op !== estado) onChange(op); }}
-              className={`w-full text-left px-3 py-1.5 text-xs font-body transition-all ${
-                op === estado
-                  ? "bg-white/10 text-white"
-                  : "text-slate-300 hover:bg-white/5 hover:text-white"
-              }`}
-            >
-              {ESTADO_BADGE[op]?.label || op}
-            </button>
-          ))}
-        </div>
-      )}
+      {menu && createPortal(menu, document.body)}
     </span>
   );
 }
@@ -702,7 +760,7 @@ export default function VentasPage() {
     .filter(f => {
       if (facAllChips.length === 0) return true;
       const texto = [
-        f.numero, f.razon_social, f.ruc, f.concepto, f.notas,
+        f.numero, f.empresa_nombre, f.razon_social, f.ruc, f.concepto, f.notas,
         ...(f.conceptos || []).map(c => c.descripcion),
         String(f.monto || ""), f.estado, f.forma_pago
       ].filter(Boolean).join(" ").toLowerCase();
@@ -1173,7 +1231,7 @@ export default function VentasPage() {
                   <thead>
                     <tr className="border-b border-white/10 bg-white/3">
                       <SortTh label="N° Factura"  sortKey="numero"       currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-left" />
-                      <SortTh label="Razón Social" sortKey="razon_social" currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-left" />
+                      <SortTh label="Cliente" sortKey="empresa_nombre" currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-left" />
                       <SortTh label="Fecha"       sortKey="fecha"        currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-left" />
                       <SortTh label="Monto"       sortKey="monto"        currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-right" />
                       <SortTh label="Estado"      sortKey="estado"       currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-center" />
@@ -1195,9 +1253,12 @@ export default function VentasPage() {
                             <span className="ml-1 text-[10px] bg-blue-500/15 text-blue-300 border border-blue-500/20 px-1.5 py-0.5 rounded-full">📄 pres.</span>
                           )}
 </td>
-                        <td className="px-4 py-3 max-w-[160px]">
-                          <p className="text-slate-300 truncate">{f.razon_social || "-"}</p>
-                          {f.ruc && <p className="text-slate-500 text-xs">RUC: {f.ruc}</p>}
+                        <td className="px-4 py-3 max-w-[180px]">
+                          <p className="text-slate-200 truncate font-medium">{f.empresa_nombre || f.razon_social || "-"}</p>
+                          {f.empresa_nombre && f.razon_social && f.empresa_nombre !== f.razon_social && (
+                            <p className="text-slate-500 text-xs truncate">{f.razon_social}</p>
+                          )}
+                          {f.ruc && <p className="text-slate-600 text-[11px]">RUC: {f.ruc}</p>}
                         </td>
                         <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
                           {f.fecha || "-"}
@@ -1552,6 +1613,7 @@ export default function VentasPage() {
           presupuestosDisp={presupuestos}
           activeEmpresaPropia={activeEmpresaPropia}
           hasPermission={hasPermission}
+          cuentasDisp={cuentasDisp}
         />
       )}
 
@@ -1888,7 +1950,7 @@ function PresupuestoDocModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="bg-white rounded-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto relative" onClick={e => e.stopPropagation()}>
         {/* Toolbar */}
         <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-gray-200 px-4 py-3 flex flex-col gap-2">
@@ -1948,7 +2010,7 @@ function PresupuestoDocModal({
                   <Trash2 className="w-3.5 h-3.5" /> Eliminar
                 </button>
               )}
-              <button onClick={onClose}
+              <button onMouseDown={(e) => e.target === e.currentTarget && onClose()}
                 className="flex items-center gap-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs rounded-lg transition-all">
                 <X className="w-3.5 h-3.5" /> Cerrar
               </button>
@@ -2076,11 +2138,11 @@ function PreviewModal({ item, onClose, navigate, token, onUpdated, cuentasDisp =
   }[kind];
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="bg-arandu-dark rounded-2xl border border-white/15 shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="sticky top-0 bg-arandu-dark border-b border-white/10 px-6 py-4 flex items-center justify-between">
           <h3 className="font-heading text-white text-lg">{title}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white p-1">
+          <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="text-slate-400 hover:text-white p-1">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -2091,7 +2153,7 @@ function PreviewModal({ item, onClose, navigate, token, onUpdated, cuentasDisp =
         </div>
         <div className="border-t border-white/10 px-6 py-3 flex justify-end gap-2">
           <button
-            onClick={onClose}
+            onMouseDown={(e) => e.target === e.currentTarget && onClose()}
             className="px-3 py-1.5 rounded-lg text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/30 transition-all"
           >
             Cerrar
@@ -2142,7 +2204,10 @@ function FacturaPreview({ f }) {
   return (
     <>
       <PreviewRow label="Número"   value={f.numero} mono />
-      <PreviewRow label="Razón soc." value={f.razon_social} />
+      <PreviewRow label="Cliente" value={f.empresa_nombre || f.razon_social} />
+      {f.empresa_nombre && f.razon_social && f.empresa_nombre !== f.razon_social && (
+        <PreviewRow label="Razón soc." value={f.razon_social} />
+      )}
       <PreviewRow label="RUC"      value={f.ruc} mono />
       <PreviewRow label="Concepto" value={f.concepto} />
       <PreviewRow label="Fecha"    value={f.fecha} />
@@ -2240,7 +2305,7 @@ function FacturarModal({
 }) {
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()} />
       <div className="relative bg-arandu-dark-light border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto">
         <h2 className="font-heading text-lg text-white mb-1">Facturar presupuesto</h2>
         <p className="text-slate-400 text-sm mb-4">
@@ -2344,6 +2409,7 @@ function FacturarModal({
                   if (!facturaSearch.trim()) return true;
                   const q = facturaSearch.toLowerCase();
                   return (f.numero || "").toLowerCase().includes(q)
+                    || (f.empresa_nombre || "").toLowerCase().includes(q)
                     || (f.razon_social || "").toLowerCase().includes(q)
                     || (f.concepto || "").toLowerCase().includes(q);
                 })
@@ -2364,7 +2430,7 @@ function FacturarModal({
                         {f.estado}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-400 mt-0.5">{f.razon_social} · {f.fecha}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{f.empresa_nombre || f.razon_social} · {f.fecha}</p>
                     {f.concepto && <p className="text-xs text-slate-500 truncate">{f.concepto}</p>}
                     {f.presupuesto_id === presupuesto.id && (
                       <p className="text-xs text-orange-400 mt-0.5">✓ Ya vinculada a este presupuesto</p>
@@ -2376,6 +2442,7 @@ function FacturarModal({
                 if (!facturaSearch.trim()) return true;
                 const q = facturaSearch.toLowerCase();
                 return (f.numero || "").toLowerCase().includes(q)
+                  || (f.empresa_nombre || "").toLowerCase().includes(q)
                   || (f.razon_social || "").toLowerCase().includes(q)
                   || (f.concepto || "").toLowerCase().includes(q);
               }).length === 0 && (
@@ -2386,7 +2453,7 @@ function FacturarModal({
             </div>
             {facturaSeleccionada && (
               <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg px-3 py-2 text-xs text-orange-300">
-                Seleccionada: <strong>{facturaSeleccionada.numero}</strong> — {facturaSeleccionada.razon_social}
+                Seleccionada: <strong>{facturaSeleccionada.numero}</strong> — {facturaSeleccionada.empresa_nombre || facturaSeleccionada.razon_social}
               </div>
             )}
           </div>
@@ -2394,7 +2461,7 @@ function FacturarModal({
 
         <div className="flex gap-2 mt-5">
           <button
-            onClick={onClose}
+            onMouseDown={(e) => e.target === e.currentTarget && onClose()}
             className="flex-1 px-4 py-2 border border-white/10 rounded-lg text-slate-300 hover:text-white hover:border-white/30 transition-all text-sm font-body"
           >
             Cancelar
@@ -2506,7 +2573,7 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
   };
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto relative" onClick={e => e.stopPropagation()}>
         {/* Toolbar */}
         <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-gray-200 px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
@@ -2540,7 +2607,7 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
                 <Trash2 className="w-3.5 h-3.5" /> Eliminar
               </button>
             )}
-            <button onClick={onClose}
+            <button onMouseDown={(e) => e.target === e.currentTarget && onClose()}
               className="flex items-center gap-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs rounded-lg transition-all">
               <X className="w-3.5 h-3.5" /> Cerrar
             </button>
@@ -2600,7 +2667,10 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
         {/* Cliente */}
         <div className="p-6 bg-gray-50 border-b">
           <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-2">CLIENTE</p>
-          <p className="text-xl font-semibold text-gray-800">{f.razon_social || "-"}</p>
+          <p className="text-xl font-semibold text-gray-800">{f.empresa_nombre || f.razon_social || "-"}</p>
+          {f.empresa_nombre && f.razon_social && f.empresa_nombre !== f.razon_social && (
+            <p className="text-sm text-gray-500">{f.razon_social}</p>
+          )}
           {f.ruc && <p className="text-sm text-gray-500 mt-0.5">RUC: {f.ruc}</p>}
         </div>
 
@@ -2788,14 +2858,15 @@ function PagoModal({ fac, fechaPago, setFechaPago, numeroReciboManual, setNumero
   const monedaAlterna = monedaFac === "PYG" ? "USD" : "PYG";
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[400] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[400] overflow-y-auto p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="flex min-h-full items-center justify-center" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-sm my-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-5 border-b border-white/10">
           <div>
             <h2 className="text-white font-heading font-bold">Registrar pago</h2>
-            <p className="text-slate-400 text-sm mt-0.5">Factura {fac.numero} — {fac.razon_social}</p>
+            <p className="text-slate-400 text-sm mt-0.5">Factura {fac.numero} — {fac.empresa_nombre || fac.razon_social}</p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+          <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-5 space-y-4">
           <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 text-center">
@@ -2914,7 +2985,7 @@ function PagoModal({ fac, fechaPago, setFechaPago, numeroReciboManual, setNumero
             </div>
           )}
           <div className="flex gap-3 pt-1">
-            <button onClick={onClose} className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm transition-all">
+            <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm transition-all">
               Cancelar
             </button>
             <button onClick={onConfirm} className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-all">
@@ -2922,6 +2993,7 @@ function PagoModal({ fac, fechaPago, setFechaPago, numeroReciboManual, setNumero
             </button>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
@@ -2956,14 +3028,14 @@ function PagoParcialModal({ fac, montoParcial, setMontoParcial, fechaPagoParcial
   const monedaAlterna = monedaFac === "PYG" ? "USD" : "PYG";
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[400] flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[400] flex items-center justify-center p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-sm max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-5 border-b border-white/10">
           <div>
             <h2 className="text-white font-heading font-bold">Registrar pago parcial</h2>
-            <p className="text-slate-400 text-sm mt-0.5">Factura {fac.numero} — {fac.razon_social}</p>
+            <p className="text-slate-400 text-sm mt-0.5">Factura {fac.numero} — {fac.empresa_nombre || fac.razon_social}</p>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+          <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-5 space-y-4">
           {/* Resumen */}
@@ -3114,7 +3186,7 @@ function PagoParcialModal({ fac, montoParcial, setMontoParcial, fechaPagoParcial
             </div>
           )}
           <div className="flex gap-3 pt-1">
-            <button onClick={onClose} className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm transition-all">
+            <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm transition-all">
               Cancelar
             </button>
             <button onClick={onConfirm} className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-all">
@@ -3177,7 +3249,7 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto, cuentasDisp = [] }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl relative" onClick={e => e.stopPropagation()}>
         {/* Toolbar */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
@@ -3187,7 +3259,7 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto, cuentasDisp = [] }) {
               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg transition-all">
               <Printer className="w-3.5 h-3.5" /> Imprimir
             </button>
-            <button onClick={onClose}
+            <button onMouseDown={(e) => e.target === e.currentTarget && onClose()}
               className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs rounded-lg transition-all">
               Cerrar
             </button>
@@ -3296,7 +3368,7 @@ function EditPagoModal({ factura: fac, pago, cuentasDisp, onClose, onSave, fmtMo
             <h2 className="font-bold text-gray-800 text-base">Editar pago</h2>
             <p className="text-xs text-gray-400 mt-0.5">Factura {fac?.numero} · {fac?.razon_social}</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+          <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="text-gray-400 hover:text-gray-600 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -3359,7 +3431,7 @@ function EditPagoModal({ factura: fac, pago, cuentasDisp, onClose, onSave, fmtMo
         </div>
 
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition-colors">
+          <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition-colors">
             Cancelar
           </button>
           <button onClick={handleSave} disabled={saving}
@@ -3463,7 +3535,7 @@ function IngresosFormModal({ ingreso, cuentasDisp, activeLogoTipo, token, API, o
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">Ingresos varios / sin factura</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+          <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="text-gray-400 hover:text-gray-600 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -3553,7 +3625,7 @@ function IngresosFormModal({ ingreso, cuentasDisp, activeLogoTipo, token, API, o
         </div>
 
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition-colors">
+          <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition-colors">
             Cancelar
           </button>
           <button onClick={handleSave} disabled={saving}

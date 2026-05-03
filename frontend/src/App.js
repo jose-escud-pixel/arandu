@@ -24,6 +24,7 @@ import VentasPage from "./pages/VentasPage";
 import ProductosPage from "./pages/ProductosPage";
 import BancosPage from "./pages/BancosPage";
 import EmpresasPropiasPage from "./pages/EmpresasPropiasPage";
+import { toast } from "sonner";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -149,14 +150,52 @@ function AuthProvider({ children }) {
     await loadEmpresasPropias(accessToken, userData);
   };
 
-  const logout = () => {
+  const logout = React.useCallback(async (silent = false) => {
+    // Le avisamos al backend para que limpie la sesión activa (best-effort).
+    const t = localStorage.getItem("token");
+    if (t) {
+      try {
+        await fetch(`${API}/auth/logout`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${t}` },
+        });
+      } catch (e) { /* sin red, no pasa nada */ }
+    }
     setUser(null);
     setToken(null);
     setActiveEmpresaPropia(null);
     setEmpresasPropias([]);
     localStorage.removeItem("token");
     applyTheme("oscuro-azul");
-  };
+    if (!silent && typeof window !== "undefined") {
+      window.location.href = "/login";
+    }
+  }, []);
+
+  // Sesión única — chequeo periódico contra /auth/me.
+  // Si el backend nos echa (token inválido o sesión cerrada en otro lado),
+  // mostramos un aviso y cerramos sesión local.
+  React.useEffect(() => {
+    if (!token) return;
+    const check = async () => {
+      try {
+        const res = await fetch(`${API}/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.status === 401) {
+          let detail = "";
+          try { const j = await res.json(); detail = j?.detail || ""; } catch (_) {}
+          if (/otro dispositivo|sesión|expir/i.test(detail)) {
+            toast.error(detail || "Tu sesión fue cerrada.");
+          }
+          logout(true);
+          if (typeof window !== "undefined") window.location.href = "/login";
+        }
+      } catch (e) { /* sin conexión, ignoramos */ }
+    };
+    const id = setInterval(check, 30000);  // cada 30 segundos
+    return () => clearInterval(id);
+  }, [token, logout]);
 
   // Cambiar empresa activa y guardar como predeterminada
   const switchEmpresa = React.useCallback((empresa) => {

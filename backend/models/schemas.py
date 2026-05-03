@@ -400,6 +400,8 @@ class PagoCostoFijoCreate(BaseModel):
     notas: Optional[str] = None
     tiene_factura: bool = False
     nro_factura: Optional[str] = None   # Nro. de factura para IVA crédito fiscal
+    cuenta_id: Optional[str] = None     # cuenta bancaria desde la que se pagó
+    cuenta_nombre: Optional[str] = None # nombre desnormalizado para display
 
 class PagoCostoFijoResponse(BaseModel):
     id: str
@@ -410,6 +412,8 @@ class PagoCostoFijoResponse(BaseModel):
     notas: Optional[str] = None
     tiene_factura: bool = False
     nro_factura: Optional[str] = None
+    cuenta_id: Optional[str] = None
+    cuenta_nombre: Optional[str] = None
     created_at: str
 
 
@@ -487,6 +491,16 @@ class EmpleadoCreate(BaseModel):
     ips_monto_manual: Optional[float] = None
     notas: Optional[str] = None
 
+class HistorialSueldoEntry(BaseModel):
+    fecha: str                   # YYYY-MM-DD del cambio
+    sueldo_anterior: float
+    sueldo_nuevo: float
+    moneda: str = "PYG"
+    motivo: Optional[str] = None
+    usuario_id: Optional[str] = None
+    usuario_nombre: Optional[str] = None
+
+
 class EmpleadoResponse(BaseModel):
     id: str
     logo_tipo: str
@@ -506,6 +520,7 @@ class EmpleadoResponse(BaseModel):
     sueldo_minimo_vigente: Optional[float] = None
     ips_monto_manual: Optional[float] = None
     notas: Optional[str] = None
+    historial_sueldos: List[HistorialSueldoEntry] = []
     created_at: str
 
 class SueldoCreate(BaseModel):
@@ -592,9 +607,13 @@ class FacturaCreate(BaseModel):
     numero: str                           # Nro de factura
     fecha: str                            # YYYY-MM-DD
     forma_pago: str = "contado"           # contado | credito
-    razon_social: str                     # cliente o proveedor
+    razon_social: str                     # cliente o proveedor (razón social formal)
     ruc: Optional[str] = None
+    # Vínculo con la empresa para poder mostrar siempre el nombre/apodo actual
+    empresa_id: Optional[str] = None
+    empresa_nombre: Optional[str] = None  # snapshot del nombre/apodo al crear
     concepto: str
+    conceptos: Optional[List[dict]] = None  # detalle de ítems (cuando viene del form nuevo)
     monto: float
     moneda: str = "PYG"
     tipo_cambio: Optional[float] = None
@@ -605,6 +624,10 @@ class FacturaCreate(BaseModel):
     presupuesto_id: Optional[str] = None # DEPRECATED: usar presupuesto_ids
     presupuesto_ids: List[str] = []      # lista de presupuestos vinculados (muchos-a-muchos)
     notas: Optional[str] = None
+    # Cuenta bancaria a la que entró (o de la que salió) la plata,
+    # cuando se crea/edita la factura ya marcada como pagada.
+    cuenta_id: Optional[str] = None
+    cuenta_nombre: Optional[str] = None
 
 class PagoItem(BaseModel):
     """Un pago individual dentro del historial de pagos de una factura."""
@@ -629,7 +652,10 @@ class FacturaResponse(BaseModel):
     forma_pago: str = "contado"
     razon_social: str
     ruc: Optional[str] = None
+    empresa_id: Optional[str] = None
+    empresa_nombre: Optional[str] = None
     concepto: str
+    conceptos: Optional[List[dict]] = None
     monto: float
     moneda: str
     tipo_cambio: Optional[float] = None
@@ -641,4 +667,6 @@ class FacturaResponse(BaseModel):
     presupuesto_id: Optional[str] = None  # DEPRECATED: usar presupuesto_ids
     presupuesto_ids: List[str] = []       # lista de presupuestos vinculados
     notas: Optional[str] = None
+    cuenta_id: Optional[str] = None
+    cuenta_nombre: Optional[str] = None
     created_at: str

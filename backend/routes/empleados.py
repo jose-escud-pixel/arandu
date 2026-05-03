@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime, timezone
+from pydantic import BaseModel
 import uuid
 from typing import List, Optional
 
@@ -63,10 +64,85 @@ async def update_empleado(empleado_id: str, data: EmpleadoCreate, user: dict = D
     if not emp:
         raise HTTPException(status_code=404, detail="Empleado no encontrado")
     updates = data.dict()
-    await db.empleados.update_one({"id": empleado_id}, {"$set": updates})
+    # Si el sueldo cambió, dejamos rastro en historial_sueldos
+    sueldo_anterior = emp.get("sueldo_base")
+    sueldo_nuevo = updates.get("sueldo_base")
+    push_op = None
+    if sueldo_anterior is not None and sueldo_nuevo is not None and float(sueldo_anterior) != float(sueldo_nuevo):
+        push_op = {
+            "fecha": datetime.now(timezone.utc).date().isoformat(),
+            "sueldo_anterior": float(sueldo_anterior),
+            "sueldo_nuevo": float(sueldo_nuevo),
+            "moneda": updates.get("moneda") or emp.get("moneda", "PYG"),
+            "motivo": "Modificación desde edición de empleado",
+            "usuario_id": user.get("id"),
+            "usuario_nombre": user.get("name"),
+        }
+    update_payload = {"$set": updates}
+    if push_op:
+        update_payload["$push"] = {"historial_sueldos": push_op}
+    await db.empleados.update_one({"id": empleado_id}, update_payload)
     await log_auditoria(user, "empleados", "editar_empleado",
                         f"Empleado {empleado_id} actualizado")
-    return {**emp, **updates}
+    refreshed = await db.empleados.find_one({"id": empleado_id}, {"_id": 0})
+    return refreshed
+
+
+class AumentoSueldoIn(BaseModel):
+    sueldo_nuevo: float
+    moneda: Optional[str] = None
+    motivo: Optional[str] = None
+    fecha: Optional[str] = None   # YYYY-MM-DD; defaults a hoy
+
+
+@router.post("/admin/empleados/{empleado_id}/aumento-sueldo", response_model=EmpleadoResponse)
+async def aumentar_sueldo(empleado_id: str, data: AumentoSueldoIn,
+                            user: dict = Depends(require_authenticated)):
+    """Endpoint dedicado a subir (o ajustar) el sueldo dejando registro
+    en el historial. Más explícito que un PUT genérico."""
+    if not has_permission(user, "empleados.editar"):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+    emp = await db.empleados.find_one({"id": empleado_id}, {"_id": 0})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    if data.sueldo_nuevo is None or data.sueldo_nuevo <= 0:
+        raise HTTPException(status_code=400, detail="Sueldo nuevo inválido")
+    sueldo_anterior = float(emp.get("sueldo_base") or 0)
+    moneda = data.moneda or emp.get("moneda", "PYG")
+    fecha = data.fecha or datetime.now(timezone.utc).date().isoformat()
+    entry = {
+        "fecha": fecha,
+        "sueldo_anterior": sueldo_anterior,
+        "sueldo_nuevo": float(data.sueldo_nuevo),
+        "moneda": moneda,
+        "motivo": data.motivo or "Aumento de sueldo",
+        "usuario_id": user.get("id"),
+        "usuario_nombre": user.get("name"),
+    }
+    await db.empleados.update_one(
+        {"id": empleado_id},
+        {"$set": {"sueldo_base": float(data.sueldo_nuevo), "moneda": moneda},
+         "$push": {"historial_sueldos": entry}},
+    )
+    await log_auditoria(user, "empleados", "aumento_sueldo",
+                        f"Sueldo {emp.get('nombre')} {emp.get('apellido')}: {sueldo_anterior} → {data.sueldo_nuevo} ({moneda})")
+    refreshed = await db.empleados.find_one({"id": empleado_id}, {"_id": 0})
+    return refreshed
+
+
+@router.get("/admin/empleados/{empleado_id}/historial-sueldos")
+async def get_historial_sueldos(empleado_id: str, user: dict = Depends(require_authenticated)):
+    if not has_permission(user, "empleados.ver"):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+    emp = await db.empleados.find_one({"id": empleado_id}, {"_id": 0, "historial_sueldos": 1, "sueldo_base": 1, "moneda": 1, "fecha_ingreso": 1})
+    if not emp:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    return {
+        "sueldo_actual": emp.get("sueldo_base"),
+        "moneda": emp.get("moneda", "PYG"),
+        "fecha_ingreso": emp.get("fecha_ingreso"),
+        "historial": emp.get("historial_sueldos") or [],
+    }
 
 
 @router.patch("/admin/empleados/{empleado_id}/toggle")
@@ -207,14 +283,27 @@ async def create_sueldo(
         raise HTTPException(status_code=400, detail="Ya existe un sueldo registrado para ese periodo")
 
     now = datetime.now(timezone.utc).isoformat()
+    sueldo_id = str(uuid.uuid4())
     doc = {
-        "id": str(uuid.uuid4()),
+        "id": sueldo_id,
         "empleado_id": empleado_id,
         "empleado_nombre": f"{emp.get('nombre', '')} {emp.get('apellido', '')}".strip(),
         **data.dict(),
         "created_at": now,
     }
     await db.sueldos.insert_one(doc)
+    # Marcar todos los adelantos y extras de ese período como consumidos por
+    # este sueldo, para que no aparezcan más en próximos meses.
+    await db.adelantos_sueldos.update_many(
+        {"empleado_id": empleado_id, "periodo": data.periodo,
+         "consumido_por_sueldo": {"$in": [None, False]}},
+        {"$set": {"consumido_por_sueldo": sueldo_id}},
+    )
+    await db.extras_sueldos.update_many(
+        {"empleado_id": empleado_id, "periodo": data.periodo,
+         "consumido_por_sueldo": {"$in": [None, False]}},
+        {"$set": {"consumido_por_sueldo": sueldo_id}},
+    )
     await log_auditoria(user, "empleados", "registrar_sueldo",
                         f"Sueldo de {doc['empleado_nombre']} periodo {data.periodo}")
     return {**doc, "_id": None}
@@ -228,6 +317,15 @@ async def delete_sueldo(sueldo_id: str, user: dict = Depends(require_authenticat
     if not s:
         raise HTTPException(status_code=404, detail="Registro no encontrado")
     await db.sueldos.delete_one({"id": sueldo_id})
+    # Liberar adelantos y extras que estaban marcados como consumidos por este sueldo
+    await db.adelantos_sueldos.update_many(
+        {"consumido_por_sueldo": sueldo_id},
+        {"$set": {"consumido_por_sueldo": None}},
+    )
+    await db.extras_sueldos.update_many(
+        {"consumido_por_sueldo": sueldo_id},
+        {"$set": {"consumido_por_sueldo": None}},
+    )
     return {"ok": True}
 
 
@@ -249,18 +347,28 @@ async def get_sueldos_empleado(empleado_id: str, user: dict = Depends(require_au
 async def get_adelantos_empleado(
     empleado_id: str,
     periodo: Optional[str] = None,
+    incluir_consumidos: bool = False,
     user: dict = Depends(require_authenticated)
 ):
     if not has_permission(user, "empleados.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso")
     query: dict = {"empleado_id": empleado_id}
     if periodo:
-        # Buscar por campo "periodo" exacto O por "fecha" del mismo mes
-        # (compatibilidad con adelantos guardados antes del campo periodo)
+        # Estrategia estricta:
+        #  - Si el adelanto TIENE periodo cargado, exigimos que coincida exactamente.
+        #  - Si NO tiene periodo (registros viejos), aceptamos por fecha del mes.
+        # Antes era un $or "abierto", lo que hacía que un adelanto cargado un día
+        # de marzo pero asignado al período febrero apareciera en los DOS meses.
         query["$or"] = [
             {"periodo": periodo},
-            {"fecha": {"$regex": f"^{periodo}"}},
+            {"$and": [
+                {"$or": [{"periodo": None}, {"periodo": ""}, {"periodo": {"$exists": False}}]},
+                {"fecha": {"$regex": f"^{periodo}"}},
+            ]},
         ]
+    if not incluir_consumidos:
+        # Por default ocultamos adelantos ya descontados en un sueldo pagado.
+        query["consumido_por_sueldo"] = {"$in": [None, False]}
     adelantos = await db.adelantos_sueldos.find(query, {"_id": 0}).sort("fecha", 1).to_list(200)
     return adelantos
 
@@ -314,6 +422,7 @@ async def delete_adelanto(adelanto_id: str, user: dict = Depends(require_authent
 async def get_extras_empleado(
     empleado_id: str,
     periodo: Optional[str] = None,
+    incluir_consumidos: bool = False,
     user: dict = Depends(require_authenticated)
 ):
     if not has_permission(user, "empleados.ver"):
@@ -322,8 +431,13 @@ async def get_extras_empleado(
     if periodo:
         query["$or"] = [
             {"periodo": periodo},
-            {"fecha": {"$regex": f"^{periodo}"}},
+            {"$and": [
+                {"$or": [{"periodo": None}, {"periodo": ""}, {"periodo": {"$exists": False}}]},
+                {"fecha": {"$regex": f"^{periodo}"}},
+            ]},
         ]
+    if not incluir_consumidos:
+        query["consumido_por_sueldo"] = {"$in": [None, False]}
     extras = await db.extras_sueldos.find(query, {"_id": 0}).sort("fecha", 1).to_list(200)
     return extras
 

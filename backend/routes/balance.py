@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime, timezone
 from typing import Optional, List
+import logging
 
 from config import db
 from auth import require_authenticated, has_permission
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
@@ -13,11 +15,28 @@ router = APIRouter()
 # ─────────────────────────────────────────────
 
 def to_pyg(monto: float, moneda: str, tipo_cambio: Optional[float]) -> float:
-    """Convierte monto a PYG usando el tipo de cambio almacenado."""
+    """Convierte un monto a guaraníes usando el tipo de cambio.
+
+    Reglas:
+    - Si la moneda es PYG (o está vacía) → devuelve el monto tal cual.
+    - Si la moneda es USD (u otra) y hay un tipo_cambio válido (>0) → multiplica.
+    - Si la moneda es USD pero NO hay tipo_cambio → devuelve 0.
+      (Antes devolvía monto*1.0 y eso sumaba los dólares como guaraníes,
+      inflando el balance en Gs y haciendo que el USD se descuente "doble".)
+    """
     if moneda == "PYG" or not moneda:
-        return monto
-    tc = tipo_cambio or 1.0
-    return monto * tc
+        return monto or 0
+    try:
+        tc = float(tipo_cambio) if tipo_cambio not in (None, "", 0) else 0.0
+    except (TypeError, ValueError):
+        tc = 0.0
+    if tc <= 0:
+        logger.warning(
+            "to_pyg: movimiento en %s sin tipo_cambio (monto=%s) — se omite del total Gs",
+            moneda, monto,
+        )
+        return 0.0
+    return (monto or 0) * tc
 
 
 def mes_range(periodo: str):
@@ -185,8 +204,19 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
             monto_base = fac["monto"]
         _registrar_ingreso_fac(fac, monto_base, "Facturas emitidas")
 
-    # ── COSTOS FIJOS PAGADOS ─────────────────────────────────────
-    pagos_cf = await db.pagos_costos_fijos.find({"periodo": periodo}, {"_id": 0}).to_list(1000)
+    # ── COSTOS FIJOS / GASTOS PAGADOS ────────────────────────────
+    # Igual que sueldos: el egreso se cuenta cuando se PAGÓ (fecha_pago), no
+    # cuando vencía (periodo). Fallback a periodo para registros legacy.
+    pagos_cf = await db.pagos_costos_fijos.find(
+        {"$or": [
+            {"fecha_pago": {"$regex": mes_range(periodo)}},
+            {"$and": [
+                {"$or": [{"fecha_pago": None}, {"fecha_pago": ""}, {"fecha_pago": {"$exists": False}}]},
+                {"periodo": periodo},
+            ]},
+        ]},
+        {"_id": 0}
+    ).to_list(1000)
     if pagos_cf:
         cf_ids = list({p["costo_fijo_id"] for p in pagos_cf})
         costos = await db.costos_fijos.find(
@@ -199,12 +229,25 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
                 continue
             moneda_cf = cf.get("moneda", "PYG")
             monto_pyg = to_pyg(pago["monto_pagado"], moneda_cf, cf.get("tipo_cambio"))
-            egresos.append({"fuente": "Costos fijos", "descripcion": cf.get("nombre", ""), "monto_pyg": monto_pyg})
+            egresos.append({"fuente": "Gastos", "descripcion": cf.get("nombre", ""), "monto_pyg": monto_pyg})
             if moneda_cf == "USD":
-                egresos_usd.append({"fuente": "Costos fijos", "monto_usd": pago["monto_pagado"]})
+                egresos_usd.append({"fuente": "Gastos", "monto_usd": pago["monto_pagado"]})
 
     # ── SUELDOS PAGADOS ──────────────────────────────────────────
-    sueldos = await db.sueldos.find({"periodo": periodo}, {"_id": 0}).to_list(1000)
+    # Contamos el sueldo en el mes en que se DESEMBOLSÓ (fecha_pago), no en el
+    # mes al que corresponde (periodo). Ej: sueldo de febrero pagado en marzo
+    # se cuenta como egreso de marzo.
+    # Para compatibilidad con sueldos viejos sin fecha_pago, caemos al periodo.
+    sueldos = await db.sueldos.find(
+        {"$or": [
+            {"fecha_pago": {"$regex": mes_range(periodo)}},
+            {"$and": [
+                {"$or": [{"fecha_pago": None}, {"fecha_pago": ""}, {"fecha_pago": {"$exists": False}}]},
+                {"periodo": periodo},
+            ]},
+        ]},
+        {"_id": 0}
+    ).to_list(1000)
     if sueldos:
         emp_ids = list({s["empleado_id"] for s in sueldos})
         empleados = await db.empleados.find(
@@ -241,19 +284,61 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
             if moneda_a == "USD":
                 egresos_usd.append({"fuente": "Adelantos sueldo", "monto_usd": adelanto["monto"]})
 
+    # ── EXTRAS DE SUELDO (igual tratamiento que adelantos) ──────
+    # Cuentan como egreso por su fecha. NO se vuelven a sumar al sueldo
+    # cuando se hace la liquidación a fin de mes (se asume que ya se le pagó
+    # al empleado el día de la fecha del extra).
+    # Para datos viejos: si el extra ya fue absorbido por un sueldo registrado
+    # (consumido_por_sueldo != null), no lo contamos acá para no duplicar.
+    extras = await db.extras_sueldos.find(
+        {"fecha": {"$regex": mes_range(periodo)},
+         "consumido_por_sueldo": {"$in": [None, False]}},
+        {"_id": 0}
+    ).to_list(1000)
+    if extras:
+        emp_ids_ex = list({e["empleado_id"] for e in extras})
+        empleados_ex = await db.empleados.find(
+            {"id": {"$in": emp_ids_ex}}, {"_id": 0, "id": 1, "logo_tipo": 1, "nombre": 1, "apellido": 1}
+        ).to_list(500)
+        emp_ex_map = {e["id"]: e for e in empleados_ex}
+        for extra in extras:
+            emp = emp_ex_map.get(extra["empleado_id"], {})
+            if logo_tipo and logo_tipo != "todas" and emp.get("logo_tipo") != logo_tipo:
+                continue
+            moneda_e = extra.get("moneda", "PYG")
+            monto_pyg = to_pyg(extra["monto"], moneda_e, extra.get("tipo_cambio"))
+            nombre = f"{emp.get('nombre', '')} {emp.get('apellido', '')}".strip() or extra.get("empleado_nombre", "")
+            descrip = extra.get("descripcion") or "Extra"
+            egresos.append({"fuente": "Extras sueldo", "descripcion": f"{nombre} — {descrip}", "monto_pyg": monto_pyg})
+            if moneda_e == "USD":
+                egresos_usd.append({"fuente": "Extras sueldo", "monto_usd": extra["monto"]})
+
     # ── COMPRAS ──────────────────────────────────────────────────
+    # IMPORTANTE: solo contamos compras tipo_pago = "contado" como egresos del
+    # mes. Las "credito" generan un saldo pendiente y se cuentan recién cuando
+    # se registra el pago en `pagos_proveedores` (con su tipo de cambio real),
+    # así evitamos contar dos veces y no exigimos TC en una compra credito que
+    # todavía no fue pagada.
     compras_bal = await db.compras.find(
-        {"fecha": {"$regex": mes_range(periodo)}}, {"_id": 0}
+        {"fecha": {"$regex": mes_range(periodo)},
+         "tipo_pago": {"$in": ["contado", None]}},
+        {"_id": 0}
     ).to_list(1000)
     for c in compras_bal:
+        if (c.get("tipo_pago") or "contado") != "contado":
+            continue
         if logo_tipo and logo_tipo != "todas" and c.get("logo_tipo") != logo_tipo:
             continue
         moneda_c = c.get("moneda", "PYG")
-        monto_pyg_c = to_pyg(c.get("monto_total") or c.get("monto", 0), moneda_c, c.get("tipo_cambio"))
+        monto_compra = c.get("monto_total") or c.get("monto", 0)
+        monto_pyg_c = to_pyg(monto_compra, moneda_c, c.get("tipo_cambio"))
         proveedor = c.get("proveedor_nombre") or c.get("proveedor_id", "Compra")
-        egresos.append({"fuente": "Compras", "descripcion": proveedor, "monto_pyg": monto_pyg_c})
+        # Solo agregamos egreso PYG si pudimos convertir (PYG real, o USD con TC).
+        # Una compra USD contado sin TC no afecta al total Gs (solo USD).
+        if monto_pyg_c > 0 or moneda_c == "PYG":
+            egresos.append({"fuente": "Compras", "descripcion": proveedor, "monto_pyg": monto_pyg_c})
         if moneda_c == "USD":
-            egresos_usd.append({"fuente": "Compras", "monto_usd": c.get("monto_total") or c.get("monto", 0)})
+            egresos_usd.append({"fuente": "Compras", "monto_usd": monto_compra})
 
     # ── FACTURAS RECIBIDAS PAGADAS ───────────────────────────────
     fac_recibidas = await db.facturas.find(

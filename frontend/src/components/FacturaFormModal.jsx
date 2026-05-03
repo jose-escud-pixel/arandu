@@ -12,6 +12,7 @@ const FacturaFormModal = ({
   presupuestosDisp,  // todos los presupuestos disponibles
   activeEmpresaPropia,
   hasPermission,
+  cuentasDisp = [],  // cuentas bancarias disponibles
 }) => {
   const isEdit = !!factura;
 
@@ -29,6 +30,9 @@ const FacturaFormModal = ({
     tipo_cambio: "",
     estado: "pendiente",
     fecha_vencimiento: "",
+    fecha_pago: "",
+    cuenta_id: "",
+    cuenta_nombre: "",
     presupuesto_ids: [],
     notas: "",
     conceptos: [defaultConcepto()],
@@ -48,6 +52,20 @@ const FacturaFormModal = ({
         const pres = presupuestosDisp.find(p => factura.presupuesto_ids.includes(p.id));
         if (pres) empresaId = String(pres.empresa_id || "");
       }
+      // Si la factura no tiene conceptos[] (legacy), reconstruimos uno desde concepto/monto
+      const conceptosFromFac = (factura.conceptos && factura.conceptos.length > 0)
+        ? factura.conceptos
+        : [{
+            descripcion: factura.concepto || "",
+            cantidad: 1,
+            precio_unitario: factura.monto || 0,
+            subtotal: factura.monto || 0,
+          }];
+      // Si la factura ya tiene pagos[], heredamos cuenta del primero
+      const primerPago = (factura.pagos || [])[0] || {};
+      // Resolver empresa: prefiero la guardada en factura.empresa_id, sino la inferida del presupuesto
+      const empIdFinal = factura.empresa_id || empresaId || "";
+      const empData = empIdFinal ? empresas.find(e => String(e.id) === String(empIdFinal)) : null;
       setForm({
         logo_tipo:          factura.logo_tipo || "arandujar",
         tipo:               factura.tipo || "emitida",
@@ -55,20 +73,201 @@ const FacturaFormModal = ({
         numero:             factura.numero || "",
         fecha:              factura.fecha ? factura.fecha.slice(0, 10) : "",
         fecha_vencimiento:  factura.fecha_vencimiento ? factura.fecha_vencimiento.slice(0, 10) : "",
+        fecha_pago:         factura.fecha_pago ? factura.fecha_pago.slice(0, 10) : "",
+        cuenta_id:          factura.cuenta_id || primerPago.cuenta_id || "",
+        cuenta_nombre:      factura.cuenta_nombre || primerPago.cuenta_nombre || "",
         razon_social:       factura.razon_social || "",
         ruc:                factura.ruc || "",
+        empresa_id:         empIdFinal,
+        empresa_nombre:     empData?.nombre || factura.empresa_nombre || "",
         concepto:           factura.concepto || "",
-        conceptos:          factura.conceptos || [],
+        conceptos:          conceptosFromFac,
         monto:              factura.monto ?? "",
         moneda:             factura.moneda || "PYG",
         tipo_cambio:        factura.tipo_cambio ?? "",
         estado:             factura.estado || "pendiente",
         notas:              factura.notas || "",
         presupuesto_ids:    factura.presupuesto_ids || (factura.presupuesto_id ? [factura.presupuesto_id] : []),
-        _empresa_id:        empresaId,
+        _empresa_id:        empIdFinal,
+        _razon_social_locked: !!empIdFinal,
       });
     }
   }, [isEdit, factura, presupuestosDisp]);
+
+  // ── Helpers / handlers ─────────────────────────────────────────
+  // Setter genérico para campos planos del form
+  const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+
+  // Format helper (₲ o USD según moneda actual)
+  const fmtMonto = (n) => {
+    const num = Number(n) || 0;
+    if (form.moneda === "USD") {
+      return `USD ${num.toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+    return `₲ ${Math.round(num).toLocaleString("es-PY")}`;
+  };
+
+  // Conceptos / ítems
+  const addConcepto = () => {
+    setForm(prev => ({ ...prev, conceptos: [...(prev.conceptos || []), defaultConcepto()] }));
+  };
+  const removeConcepto = (idx) => {
+    setForm(prev => ({ ...prev, conceptos: prev.conceptos.filter((_, i) => i !== idx) }));
+  };
+  const handleConceptoChange = (idx, key, value) => {
+    setForm(prev => {
+      const conceptos = (prev.conceptos || []).map((c, i) => {
+        if (i !== idx) return c;
+        const nuevo = { ...c, [key]: value };
+        // Recalcular subtotal si cambió cantidad o precio_unitario
+        if (key === "cantidad" || key === "precio_unitario") {
+          const cant = parseFloat(key === "cantidad" ? value : c.cantidad) || 0;
+          const precio = parseFloat(key === "precio_unitario" ? value : c.precio_unitario) || 0;
+          nuevo.subtotal = cant * precio;
+        }
+        return nuevo;
+      });
+      return { ...prev, conceptos };
+    });
+  };
+
+  // Total derivado
+  const totalMonto = useMemo(() => {
+    return (form.conceptos || []).reduce((s, c) => s + (Number(c.subtotal) || 0), 0);
+  }, [form.conceptos]);
+
+  // Cliente / empresa
+  const handleEmpresaChange = (empresaId) => {
+    if (!empresaId) {
+      setForm(prev => ({
+        ...prev,
+        _empresa_id: "",
+        _razon_social_locked: false,
+        razon_social: "",
+        ruc: "",
+        empresa_id: "",
+        empresa_nombre: "",
+      }));
+      return;
+    }
+    const emp = empresas.find(e => String(e.id) === String(empresaId));
+    setForm(prev => ({
+      ...prev,
+      _empresa_id: empresaId,
+      _razon_social_locked: true,
+      razon_social: emp?.razon_social || emp?.nombre || prev.razon_social,
+      ruc: emp?.ruc || "",
+      empresa_id: empresaId,
+      empresa_nombre: emp?.nombre || emp?.razon_social || "",
+      presupuesto_ids: [], // limpiar selección al cambiar de empresa
+    }));
+  };
+
+  // Presupuestos vinculables (filtrados por empresa si hay)
+  const presupuestosFiltrados = useMemo(() => {
+    if (!presupuestosDisp) return [];
+    let list = presupuestosDisp.filter(p => p.estado !== "anulado");
+    if (form._empresa_id) {
+      list = list.filter(p => String(p.empresa_id) === String(form._empresa_id));
+    }
+    return list;
+  }, [presupuestosDisp, form._empresa_id]);
+
+  const togglePresupuesto = (id) => {
+    setForm(prev => {
+      const yaEsta = prev.presupuesto_ids.includes(id);
+      return {
+        ...prev,
+        presupuesto_ids: yaEsta
+          ? prev.presupuesto_ids.filter(x => x !== id)
+          : [...prev.presupuesto_ids, id],
+      };
+    });
+  };
+
+  // Submit
+  const handleSave = async () => {
+    if (!form.numero || !form.fecha || !form.razon_social) {
+      toast.error("Número, fecha y razón social son obligatorios");
+      return;
+    }
+    const conceptosValidos = (form.conceptos || []).filter(c =>
+      c.descripcion && (parseFloat(c.cantidad) || 0) > 0 && (parseFloat(c.precio_unitario) || 0) > 0
+    );
+    if (conceptosValidos.length === 0) {
+      toast.error("Agregá al menos un ítem con descripción, cantidad y precio");
+      return;
+    }
+    if (form.moneda === "USD" && (!form.tipo_cambio || parseFloat(form.tipo_cambio) <= 0)) {
+      toast.error("Falta el tipo de cambio para una factura en USD");
+      return;
+    }
+    if (form.estado === "pagada" && !form.cuenta_id) {
+      toast.error("Si la factura está pagada, indicá en qué cuenta entró la plata");
+      return;
+    }
+
+    const conceptosOut = conceptosValidos.map(c => ({
+      descripcion: c.descripcion,
+      cantidad: parseFloat(c.cantidad) || 1,
+      precio_unitario: parseFloat(c.precio_unitario) || 0,
+      subtotal: (parseFloat(c.cantidad) || 1) * (parseFloat(c.precio_unitario) || 0),
+    }));
+    const montoTotal = conceptosOut.reduce((s, c) => s + c.subtotal, 0);
+    const conceptoTexto = conceptosOut.length === 1
+      ? conceptosOut[0].descripcion
+      : `${conceptosOut.length} ítems`;
+
+    const payload = {
+      logo_tipo: form.logo_tipo || logoTipo,
+      tipo: form.tipo || "emitida",
+      numero: form.numero,
+      fecha: form.fecha,
+      forma_pago: form.forma_pago || "contado",
+      razon_social: form.razon_social,
+      ruc: form.ruc || null,
+      empresa_id: form.empresa_id || form._empresa_id || null,
+      empresa_nombre: form.empresa_nombre || null,
+      concepto: conceptoTexto,
+      conceptos: conceptosOut,
+      monto: montoTotal,
+      moneda: form.moneda || "PYG",
+      tipo_cambio: form.tipo_cambio !== "" && form.tipo_cambio != null ? Number(form.tipo_cambio) : null,
+      estado: form.estado || "pendiente",
+      fecha_vencimiento: form.fecha_vencimiento || null,
+      fecha_pago: form.estado === "pagada" ? (form.fecha_pago || form.fecha) : null,
+      cuenta_id: form.estado === "pagada" ? (form.cuenta_id || null) : null,
+      cuenta_nombre: form.estado === "pagada" ? (form.cuenta_nombre || null) : null,
+      presupuesto_ids: form.presupuesto_ids || [],
+      notas: form.notas || null,
+    };
+
+    try {
+      setSaving(true);
+      const url = isEdit
+        ? `${API}/admin/facturas/${factura.id}`
+        : `${API}/admin/facturas`;
+      const method = isEdit ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      toast.success(isEdit ? "Factura actualizada" : "Factura creada");
+      if (onSaved) onSaved();
+    } catch (e) {
+      toast.error(e.message || "No se pudo guardar la factura");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // ── Render ─────────────────────────────────────────────────────
   const inputCls =
@@ -80,7 +279,7 @@ const FacturaFormModal = ({
   return (
     <div
       className="fixed inset-0 z-[200] flex items-start justify-center bg-black/70 backdrop-blur-sm overflow-y-auto py-6 px-4"
-      onClick={onClose}
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
         className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl"
@@ -102,7 +301,7 @@ const FacturaFormModal = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onMouseDown={(e) => e.target === e.currentTarget && onClose()}
             className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
           >
             <X className="w-5 h-5" />
@@ -168,6 +367,45 @@ const FacturaFormModal = ({
             </div>
           </div>
 
+          {/* Row 2.5: Datos de cobro — solo si estado=pagada */}
+          {form.estado === "pagada" && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
+              <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wider flex items-center gap-1.5">
+                💰 Datos de cobro
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={labelCls}>Cuenta donde entró la plata *</label>
+                  <select
+                    className={inputCls}
+                    value={form.cuenta_id}
+                    onChange={(e) => {
+                      const c = (cuentasDisp || []).find(c => c.id === e.target.value);
+                      setForm(prev => ({ ...prev, cuenta_id: e.target.value, cuenta_nombre: c?.nombre || "" }));
+                    }}
+                  >
+                    <option value="">Seleccionar cuenta...</option>
+                    {(cuentasDisp || []).map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.nombre} ({c.moneda}){c.es_predeterminada ? " ★" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelCls}>Fecha de cobro</label>
+                  <input
+                    type="date"
+                    className={inputCls}
+                    value={form.fecha_pago || form.fecha}
+                    onChange={(e) => set("fecha_pago", e.target.value)}
+                  />
+                  <p className="text-[11px] text-emerald-700 mt-1">Si lo dejás vacío usamos la fecha de la factura.</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Row 3: Moneda, Tipo de Cambio */}
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -212,7 +450,8 @@ const FacturaFormModal = ({
                 <option value="">— Seleccionar empresa (opcional) —</option>
                 {empresas.map((e) => (
                   <option key={e.id} value={e.id}>
-                    {e.razon_social || e.nombre}
+                    {e.nombre || e.razon_social}
+                    {e.razon_social && e.nombre && e.razon_social !== e.nombre ? ` (${e.razon_social})` : ""}
                     {e.ruc ? ` · ${e.ruc}` : ""}
                   </option>
                 ))}
@@ -408,7 +647,7 @@ const FacturaFormModal = ({
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
           <button
-            onClick={onClose}
+            onMouseDown={(e) => e.target === e.currentTarget && onClose()}
             className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-lg transition-colors"
           >
             Cancelar

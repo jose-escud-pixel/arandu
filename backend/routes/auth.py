@@ -25,7 +25,17 @@ async def login(credentials: UserLogin):
         raise HTTPException(status_code=401, detail="Credenciales incorrectas")
     if user.get("status") == "disabled":
         raise HTTPException(status_code=403, detail="Tu cuenta está deshabilitada. Contactá al administrador.")
-    token = create_token(user["id"])
+    # Sesión única: generamos un session_id nuevo y lo guardamos en el usuario.
+    # Cualquier token previo deja de ser válido.
+    session_id = str(uuid.uuid4())
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "active_session_id": session_id,
+            "last_login_at": datetime.now(timezone.utc).isoformat(),
+        }}
+    )
+    token = create_token(user["id"], session_id)
     await log_auditoria(user, "auth", "login", f"Inicio de sesion: {user['email']}", user["id"])
     return TokenResponse(
         access_token=token,
@@ -39,6 +49,17 @@ async def login(credentials: UserLogin):
             created_at=user["created_at"]
         )
     )
+
+@router.post("/auth/logout")
+async def logout(current_user: dict = Depends(get_current_user)):
+    """Cierra la sesión actual: limpia active_session_id en el usuario."""
+    await db.users.update_one(
+        {"id": current_user["id"]},
+        {"$unset": {"active_session_id": ""}}
+    )
+    await log_auditoria(current_user, "auth", "logout", f"Cierre de sesion: {current_user['email']}", current_user["id"])
+    return {"success": True}
+
 
 @router.get("/auth/me", response_model=UserResponse)
 async def get_me(current_user: dict = Depends(get_current_user)):

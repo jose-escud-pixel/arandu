@@ -60,7 +60,8 @@ class PagoProveedorUpdate(BaseModel):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 async def _aplicar_pagos_a_compras(compras_pagos: List[ComprasPagoItem], pago_proveedor_id: str,
-                                    moneda: str, tipo_cambio: Optional[float], fecha_pago: Optional[str]):
+                                    moneda: str, tipo_cambio: Optional[float], fecha_pago: Optional[str],
+                                    cuenta_id: Optional[str] = None, cuenta_nombre: Optional[str] = None):
     """Empuja un pago en cada compra del detalle, respetando el saldo real."""
     fecha = fecha_pago or datetime.now(timezone.utc).date().isoformat()
     for cp in compras_pagos:
@@ -84,6 +85,8 @@ async def _aplicar_pagos_a_compras(compras_pagos: List[ComprasPagoItem], pago_pr
             "fecha_pago": fecha,
             "notas": f"Pago registrado vía pago proveedor",
             "pago_proveedor_id": pago_proveedor_id,   # referencia para poder revertir
+            "cuenta_id": cuenta_id,
+            "cuenta_nombre": cuenta_nombre,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         await db.compras.update_one({"id": cp.compra_id}, {"$push": {"pagos": pago_doc}})
@@ -95,6 +98,21 @@ async def _revertir_pagos_compras(pago_proveedor_id: str):
         {"pagos.pago_proveedor_id": pago_proveedor_id},
         {"$pull": {"pagos": {"pago_proveedor_id": pago_proveedor_id}}}
     )
+
+
+def _validar_tipo_cambio(moneda: Optional[str], tipo_cambio: Optional[float],
+                          monto_gs: Optional[float], cuenta_pago: Optional[str]):
+    """Asegura que un movimiento en USD tenga TC (o monto_gs ya calculado) cuando
+    se paga desde cuenta en guaraníes. Si paga desde cuenta USD, no hace falta."""
+    if (moneda or "PYG").upper() != "USD":
+        return
+    if (cuenta_pago or "guaranies") == "dolares":
+        return  # no afecta a guaraníes
+    if not tipo_cambio and not monto_gs:
+        raise HTTPException(
+            status_code=400,
+            detail="Falta el tipo de cambio para un pago en USD desde cuenta en guaraníes.",
+        )
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -155,6 +173,8 @@ async def create_pago_proveedor(data: PagoProveedorCreate, user: dict = Depends(
     if not has_permission(user, "pagos_proveedores.crear"):
         raise HTTPException(status_code=403, detail="Sin permiso para registrar pagos")
 
+    _validar_tipo_cambio(data.moneda, data.tipo_cambio, data.monto_gs, data.cuenta_pago)
+
     pago_id = str(uuid.uuid4())
 
     # Usar compras_pagos si viene, sino construir desde compras_ids (backward compat)
@@ -187,7 +207,10 @@ async def create_pago_proveedor(data: PagoProveedorCreate, user: dict = Depends(
 
     # Aplicar pagos parciales/totales a cada compra
     if compras_pagos:
-        await _aplicar_pagos_a_compras(compras_pagos, pago_id, data.moneda, data.tipo_cambio, data.fecha_pago)
+        await _aplicar_pagos_a_compras(
+            compras_pagos, pago_id, data.moneda, data.tipo_cambio, data.fecha_pago,
+            cuenta_id=data.cuenta_id, cuenta_nombre=data.cuenta_nombre,
+        )
 
     await log_auditoria(user, "pagos_proveedores", "crear", f"Pago a '{data.proveedor_nombre}': {data.concepto}", pago_id)
     return {k: v for k, v in doc.items() if k != "_id"}
@@ -202,6 +225,13 @@ async def update_pago_proveedor(pago_id: str, data: PagoProveedorUpdate, user: d
     if not existing:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
 
+    _validar_tipo_cambio(
+        data.moneda or existing.get("moneda"),
+        data.tipo_cambio if data.tipo_cambio is not None else existing.get("tipo_cambio"),
+        data.monto_gs if data.monto_gs is not None else existing.get("monto_gs"),
+        data.cuenta_pago or existing.get("cuenta_pago"),
+    )
+
     update_fields = {k: v for k, v in data.dict(exclude_none=True).items() if k != "compras_pagos"}
 
     # Si vienen nuevos compras_pagos, revertir los anteriores y aplicar los nuevos
@@ -211,7 +241,9 @@ async def update_pago_proveedor(pago_id: str, data: PagoProveedorUpdate, user: d
             data.compras_pagos, pago_id,
             data.moneda or existing.get("moneda", "PYG"),
             data.tipo_cambio or existing.get("tipo_cambio"),
-            data.fecha_pago or existing.get("fecha_pago")
+            data.fecha_pago or existing.get("fecha_pago"),
+            cuenta_id=data.cuenta_id or existing.get("cuenta_id"),
+            cuenta_nombre=data.cuenta_nombre or existing.get("cuenta_nombre"),
         )
         update_fields["compras_pagos"] = [cp.dict() for cp in data.compras_pagos]
         # Recalcular monto total desde los nuevos pagos

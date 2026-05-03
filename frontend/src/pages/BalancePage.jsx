@@ -20,7 +20,8 @@ const MESES_LABEL = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct"
 const FUENTE_COLOR = {
   "Contratos":           "text-blue-400",
   "Facturas emitidas":   "text-cyan-400",
-  "Costos fijos":        "text-orange-400",
+  "Gastos":              "text-orange-400",
+  "Costos fijos":        "text-orange-400",  // legacy: por si vienen registros viejos
   "Sueldos":             "text-violet-400",
   "Facturas recibidas":  "text-red-400",
 };
