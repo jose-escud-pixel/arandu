@@ -3,12 +3,13 @@ import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users, Plus, ArrowLeft, Edit, Trash2, Shield, Save, X,
-  ChevronDown, ChevronUp, Building2, Check, Lock, Star
+  ChevronDown, ChevronUp, Building2, Check, Lock, Star, Search
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { AuthContext } from "../App";
 import { toast } from "sonner";
+import { DEFAULT_EMPRESA_MODULOS, PERMISO_A_MODULO_EMPRESA, modulosHabilitadosEmpresa } from "../lib/modulosEmpresa";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -20,8 +21,6 @@ const MODULOS_LABELS = {
   reportes: "Reportes",
   alertas: "Alertas",
   costos: "Costos",
-  estadisticas: "Estadísticas",
-  contratos: "Contratos",
   proveedores: "Proveedores",
   costos_fijos: "Costos fijos",
   empleados: "Empleados",
@@ -31,6 +30,12 @@ const MODULOS_LABELS = {
   pagos_proveedores: "Pagos a proveedores",
   compras: "Compras",
   recibos: "Recibos",
+  notas_credito: "Notas de crédito",
+  inventario_productos: "Inventario productos",
+  historial_stock: "Historial de stock",
+  bancos: "Bancos",
+  usuarios: "Usuarios",
+  auditoria: "Auditoría",
 };
 
 const ACCIONES_LABELS = {
@@ -39,8 +44,53 @@ const ACCIONES_LABELS = {
   editar: "Editar",
   eliminar: "Eliminar",
   exportar: "Exportar",
-  afectar_stock: "Afectar Stock",
+  afectar_stock: "Cambiar afectación stock",
+  modo_libre: "Modo libre",
 };
+
+function ChipSearch({ chips, setChips, inputVal, setInputVal, placeholder }) {
+  const addChip = () => {
+    const term = inputVal.trim().replace(/,$/, "");
+    if (term && !chips.includes(term)) setChips(prev => [...prev, term]);
+    setInputVal("");
+  };
+  return (
+    <div className="space-y-2">
+      {chips.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {chips.map((chip, idx) => (
+            <span key={chip} className="inline-flex items-center gap-1.5 bg-arandu-blue/15 border border-arandu-blue/30 text-arandu-blue rounded-full px-2.5 py-1 text-xs">
+              <Search className="w-3 h-3" />
+              {chip}
+              <button type="button" onClick={() => setChips(prev => prev.filter((_, i) => i !== idx))} className="hover:text-white"><X className="w-3 h-3" /></button>
+            </span>
+          ))}
+          <button type="button" onClick={() => setChips([])} className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1 rounded-full border border-white/10">Limpiar</button>
+        </div>
+      )}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+        <input
+          value={inputVal}
+          onChange={e => setInputVal(e.target.value)}
+          onKeyDown={e => {
+            if ((e.key === "Enter" || e.key === ",") && inputVal.trim()) { e.preventDefault(); addChip(); }
+            if (e.key === "Backspace" && !inputVal && chips.length) setChips(prev => prev.slice(0, -1));
+          }}
+          placeholder={placeholder}
+          className="w-full bg-arandu-dark-light border border-white/10 rounded-lg pl-9 pr-3 py-2.5 text-white text-sm focus:outline-none focus:border-arandu-blue/60"
+        />
+      </div>
+    </div>
+  );
+}
+
+function matchChips(chips, inputVal, texto) {
+  const terms = [...chips, ...(inputVal.trim() ? [inputVal.trim()] : [])];
+  if (!terms.length) return true;
+  const haystack = texto.toLowerCase();
+  return terms.every(term => haystack.includes(term.toLowerCase()));
+}
 
 const UsuariosPage = () => {
   const { token, user: currentUser } = useContext(AuthContext);
@@ -61,6 +111,33 @@ const UsuariosPage = () => {
     logos_asignados: []
   });
   const [expandedUser, setExpandedUser] = useState(null);
+  const [searchChips, setSearchChips] = useState([]);
+  const [searchInput, setSearchInput] = useState("");
+
+  const getModulosPermitidosPorLogos = (logos) => {
+    const ids = (logos || []).map(String);
+    if (!ids.length) return [];
+    const seleccionadas = empresasPropias.filter(ep => ids.includes(String(ep.id)));
+    return [...new Set(seleccionadas.flatMap(ep => modulosHabilitadosEmpresa(ep) || DEFAULT_EMPRESA_MODULOS))];
+  };
+
+  const modulosPermitidosForm = getModulosPermitidosPorLogos(formData.logos_asignados);
+  const permisoPermitidoPorEmpresa = (permiso) => {
+    const permisoModulo = String(permiso || "").split(".")[0];
+    const moduloEmpresa = PERMISO_A_MODULO_EMPRESA[permisoModulo];
+    if (!moduloEmpresa || !modulosPermitidosForm.includes(moduloEmpresa)) return false;
+    return currentUser?.role === "admin" || (currentUser?.permisos || []).includes(permiso);
+  };
+
+  const limpiarPermisosFueraDeModulos = (next) => ({
+    ...next,
+    permisos: (next.permisos || []).filter(permiso => {
+      const permisoModulo = String(permiso || "").split(".")[0];
+      const moduloEmpresa = PERMISO_A_MODULO_EMPRESA[permisoModulo];
+      const habilitado = !!moduloEmpresa && getModulosPermitidosPorLogos(next.logos_asignados).includes(moduloEmpresa);
+      return habilitado && (currentUser?.role === "admin" || (currentUser?.permisos || []).includes(permiso));
+    }),
+  });
 
   useEffect(() => {
     fetchAll();
@@ -110,6 +187,7 @@ const UsuariosPage = () => {
 
   const togglePermiso = (modulo, accion) => {
     const perm = `${modulo}.${accion}`;
+    if (!permisoPermitidoPorEmpresa(perm)) return;
     setFormData(prev => ({
       ...prev,
       permisos: prev.permisos.includes(perm)
@@ -121,6 +199,7 @@ const UsuariosPage = () => {
   const toggleAllModule = (modulo) => {
     const acciones = permisosDisponibles[modulo] || [];
     const modulePerms = acciones.map(a => `${modulo}.${a}`);
+    if (!modulePerms.some(permisoPermitidoPorEmpresa)) return;
     const allSelected = modulePerms.every(p => formData.permisos.includes(p));
 
     setFormData(prev => ({
@@ -161,12 +240,12 @@ const UsuariosPage = () => {
     setFormData(prev => {
       const current = (prev.logos_asignados || []).map(String);
       const id = String(logoId);
-      return {
+      return limpiarPermisosFueraDeModulos({
         ...prev,
         logos_asignados: current.includes(id)
           ? current.filter(x => x !== id)
           : [...current, id]
-      };
+      });
     });
   };
 
@@ -180,7 +259,7 @@ const UsuariosPage = () => {
 
     try {
       const payload = {
-        ...formData,
+        ...limpiarPermisosFueraDeModulos(formData),
         empresas_asignadas: (formData.empresas_asignadas || []).map(String),
         logos_asignados: (formData.logos_asignados || []).map(String)
       };
@@ -265,6 +344,17 @@ const UsuariosPage = () => {
     if (!found.length) return `${logos.length} empresa(s)`;
     return found.map(e => e.nombre).join(", ");
   };
+
+  const filteredUsuarios = usuarios.filter(usuario => {
+    const texto = [
+      usuario.name, usuario.email, usuario.role,
+      getLogosSummary(usuario.logos_asignados),
+      getEmpresasSummary(usuario.empresas_asignadas),
+      getPermisosSummary(usuario.permisos),
+      ...(usuario.permisos || [])
+    ].filter(Boolean).join(" ");
+    return matchChips(searchChips, searchInput, texto);
+  });
 
   return (
     <div className="min-h-screen bg-arandu-dark p-4 md:p-8">
@@ -358,19 +448,21 @@ const UsuariosPage = () => {
                   <div>
                     <label className="text-slate-400 text-sm mb-2 block">Rol *</label>
                     <div className="flex gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setFormData({ ...formData, role: "admin" })}
-                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border transition-all ${
-                          formData.role === "admin"
-                            ? "border-arandu-red bg-arandu-red/10 text-arandu-red"
-                            : "border-white/10 bg-arandu-dark text-slate-400 hover:border-white/20"
-                        }`}
-                        data-testid="role-admin-btn"
-                      >
-                        <Shield className="w-4 h-4" />
-                        Administrador
-                      </button>
+                      {currentUser?.role === "admin" && (
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, role: "admin" })}
+                          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border transition-all ${
+                            formData.role === "admin"
+                              ? "border-arandu-red bg-arandu-red/10 text-arandu-red"
+                              : "border-white/10 bg-arandu-dark text-slate-400 hover:border-white/20"
+                          }`}
+                          data-testid="role-admin-btn"
+                        >
+                          <Shield className="w-4 h-4" />
+                          Super admin
+                        </button>
+                      )}
 
                       <button
                         type="button"
@@ -523,7 +615,10 @@ const UsuariosPage = () => {
                         </div>
 
                         <div className="p-3 space-y-2">
-                          {Object.entries(permisosDisponibles).map(([modulo, acciones]) => {
+                          {Object.entries(permisosDisponibles).filter(([modulo]) => {
+                            const moduloEmpresa = PERMISO_A_MODULO_EMPRESA[modulo];
+                            return !!moduloEmpresa && modulosPermitidosForm.includes(moduloEmpresa);
+                          }).map(([modulo, acciones]) => {
                             const modulePerms = acciones.map(a => `${modulo}.${a}`);
                             const selectedCount = modulePerms.filter(p => formData.permisos.includes(p)).length;
                             const allSelected = selectedCount === modulePerms.length;
@@ -584,6 +679,11 @@ const UsuariosPage = () => {
                               </div>
                             );
                           })}
+                          {modulosPermitidosForm.length === 0 && (
+                            <div className="text-slate-500 text-sm bg-arandu-dark rounded-lg border border-white/5 px-3 py-4">
+                              Seleccioná al menos una empresa propia para habilitar permisos.
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -624,18 +724,28 @@ const UsuariosPage = () => {
           )}
         </AnimatePresence>
 
+        <div className="mb-4">
+          <ChipSearch
+            chips={searchChips}
+            setChips={setSearchChips}
+            inputVal={searchInput}
+            setInputVal={setSearchInput}
+            placeholder="Buscar usuario, email, rol, cliente, empresa o permiso... Enter para agregar"
+          />
+        </div>
+
         {loading ? (
           <div className="text-center py-12">
             <div className="text-arandu-blue animate-pulse">Cargando...</div>
           </div>
-        ) : usuarios.length === 0 ? (
+        ) : filteredUsuarios.length === 0 ? (
           <div className="text-center py-12 bg-arandu-dark-light rounded-xl border border-white/5">
             <Users className="w-12 h-12 mx-auto text-slate-600 mb-3" />
-            <p className="text-slate-400">No hay usuarios registrados</p>
+            <p className="text-slate-400">{usuarios.length ? "No hay usuarios que coincidan" : "No hay usuarios registrados"}</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {usuarios.map((usuario, index) => (
+            {filteredUsuarios.map((usuario, index) => (
               <motion.div
                 key={usuario.id}
                 initial={{ opacity: 0, y: 20 }}

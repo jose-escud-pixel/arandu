@@ -244,17 +244,7 @@ h1, h2, h3, h4, h5, h6 {
     color: #64748b !important;
 }
 
-/* Backgrounds blancos con texto oscuro: quitar text-white específicos para valores monetarios */
-[data-tema="claro-rojo"] .font-heading,
-[data-tema="claro-dorado"] .font-heading,
-[data-tema="claro-azul"]  .font-heading {
-    color: inherit;
-}
-
-/* Fondos oscuros locales en tema claro: mantener texto blanco visible */
-[data-tema="claro-rojo"] .bg-arandu-dark .text-white,
-[data-tema="claro-dorado"] .bg-arandu-dark .text-white,
-[data-tema="claro-azul"]  .bg-arandu-dark .text-white,
+/* Fondos slate realmente oscuros en tema claro: mantener texto blanco visible */
 [data-tema="claro-rojo"] [class*="bg-slate-8"] .text-white,
 [data-tema="claro-dorado"] [class*="bg-slate-8"] .text-white,
 [data-tema="claro-azul"]  [class*="bg-slate-8"] .text-white,
@@ -297,6 +287,144 @@ input[type="number"] {
 /* Tema oscuro rojo: un poco más de contraste en textos muted */
 [data-tema="oscuro-rojo"] .text-slate-400 {
     color: rgb(186 198 214) !important;
+}
+
+/* ── Capa final de contraste para temas claros ──────────────────────────────
+   El panel fue construido con utilidades de tema oscuro. En temas claros las
+   variables convierten bg-arandu-* en superficies claras, así que estas reglas
+   aseguran legibilidad sin reescribir cada módulo. */
+#arandu-admin-root[data-tema^="claro-"] {
+    color: #0f172a;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .bg-arandu-dark,
+#arandu-admin-root[data-tema^="claro-"] .bg-arandu-dark-light,
+#arandu-admin-root[data-tema^="claro-"] .bg-arandu-dark-lighter {
+    color: #0f172a;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-white {
+    color: #0f172a !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-slate-100,
+#arandu-admin-root[data-tema^="claro-"] .text-slate-200 {
+    color: #1e293b !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-slate-300 {
+    color: #334155 !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-slate-400 {
+    color: #475569 !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-slate-500 {
+    color: #64748b !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-slate-600 {
+    color: #475569 !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-blue-400,
+#arandu-admin-root[data-tema^="claro-"] .text-sky-400 {
+    color: #2563eb !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-cyan-400 {
+    color: #0e7490 !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-emerald-400,
+#arandu-admin-root[data-tema^="claro-"] .text-green-400,
+#arandu-admin-root[data-tema^="claro-"] .text-lime-400 {
+    color: #15803d !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-purple-400,
+#arandu-admin-root[data-tema^="claro-"] .text-violet-400 {
+    color: #7c3aed !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-pink-400,
+#arandu-admin-root[data-tema^="claro-"] .text-rose-400 {
+    color: #db2777 !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-amber-400,
+#arandu-admin-root[data-tema^="claro-"] .text-yellow-400 {
+    color: #b45309 !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-orange-400 {
+    color: #c2410c !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .text-red-400 {
+    color: #dc2626 !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .border-white\/5 {
+    border-color: rgba(15, 23, 42, 0.08) !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .border-white\/10 {
+    border-color: rgba(15, 23, 42, 0.12) !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .border-white\/20 {
+    border-color: rgba(15, 23, 42, 0.18) !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .bg-white\/5 {
+    background-color: rgba(15, 23, 42, 0.04) !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .bg-white\/10 {
+    background-color: rgba(15, 23, 42, 0.07) !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .hover\:bg-white\/5:hover {
+    background-color: rgba(15, 23, 42, 0.06) !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] .hover\:bg-white\/10:hover {
+    background-color: rgba(15, 23, 42, 0.1) !important;
+}
+
+#arandu-admin-root[data-tema^="claro-"] input,
+#arandu-admin-root[data-tema^="claro-"] textarea,
+#arandu-admin-root[data-tema^="claro-"] select {
+    color: #0f172a;
+}
+
+#arandu-admin-root[data-tema^="claro-"] input::placeholder,
+#arandu-admin-root[data-tema^="claro-"] textarea::placeholder {
+    color: #64748b;
+}
+
+/* Botones y badges con fondo sólido deben seguir teniendo texto blanco. */
+#arandu-admin-root[data-tema^="claro-"] .bg-arandu-blue.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-blue-500.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-blue-600.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-cyan-600.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-emerald-600.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-green-600.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-red-500.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-red-600.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-orange-500.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-orange-600.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-amber-600.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-purple-600.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-violet-600.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-rose-600.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-pink-600.text-white,
+#arandu-admin-root[data-tema^="claro-"] .bg-slate-700.text-white,
+#arandu-admin-root[data-tema^="claro-"] [class*="bg-slate-8"] .text-white,
+#arandu-admin-root[data-tema^="claro-"] [class*="bg-slate-9"] .text-white {
+    color: #ffffff !important;
 }
 
 @layer base {

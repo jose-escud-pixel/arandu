@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { AuthContext } from "../App";
 import { toast } from "sonner";
 import {
@@ -41,12 +41,12 @@ function fmtPYG(n) {
 }
 
 export default function ProductosPage() {
-  const { token, hasPermission, user } = useContext(AuthContext);
+  const { token, hasPermission, user, activeEmpresaPropia } = useContext(AuthContext);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [productos, setProductos] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState("");
-  const [logoFilter, setLogoFilter] = useState("todas");
-  const [categoriaFilter, setCategoriaFilter] = useState("");
+  const [chips, setChips] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [formData, setFormData] = useState(emptyForm);
@@ -66,22 +66,28 @@ export default function ProductosPage() {
   const fetchProductos = async () => {
     setLoading(true);
     const q = new URLSearchParams();
-    if (logoFilter !== "todas") q.set("logo_tipo", logoFilter);
-    if (search) q.set("search", search);
-    if (categoriaFilter) q.set("categoria", categoriaFilter);
+    if (activeEmpresaPropia?.slug) q.set("logo_tipo", activeEmpresaPropia.slug);
     const res = await fetch(`${API}/admin/productos?${q}`, { headers });
     if (res.ok) setProductos(await res.json());
     setLoading(false);
   };
 
-  useEffect(() => { fetchProductos(); }, [logoFilter, search, categoriaFilter]); // eslint-disable-line
+  useEffect(() => { fetchProductos(); }, [activeEmpresaPropia?.slug]); // eslint-disable-line
 
   // ── Form ─────────────────────────────────────────────────────
   const openNew = () => {
     setEditingId(null);
-    setFormData(emptyForm);
+    setFormData({ ...emptyForm, logo_tipo: activeEmpresaPropia?.slug || "arandujar" });
     setShowForm(true);
   };
+
+  useEffect(() => {
+    if (searchParams.get("nuevo") !== "producto") return;
+    if (hasPermission("inventario_productos.crear")) openNew();
+    const next = new URLSearchParams(searchParams);
+    next.delete("nuevo");
+    setSearchParams(next, { replace: true });
+  }, [searchParams]); // eslint-disable-line
   const openEdit = (p) => {
     setEditingId(p.id);
     setFormData({
@@ -106,7 +112,7 @@ export default function ProductosPage() {
       precio_venta: parseFloat(formData.precio_venta) || 0,
       stock_minimo: parseFloat(formData.stock_minimo) || 0,
       unidad: formData.unidad,
-      logo_tipo: formData.logo_tipo,
+      logo_tipo: activeEmpresaPropia?.slug || formData.logo_tipo,
       activo: formData.activo,
       ...(!editingId && { stock_actual: parseFloat(formData.stock_actual) || 0 }),
     };
@@ -163,8 +169,9 @@ export default function ProductosPage() {
       setShowMovForm(false);
       setMovForm(emptyMov);
       // Refresh producto y movimientos
+      const logoParam = activeEmpresaPropia?.slug ? `logo_tipo=${activeEmpresaPropia.slug}` : "";
       const [rP, rM] = await Promise.all([
-        fetch(`${API}/admin/productos?logo_tipo=${logoFilter !== "todas" ? logoFilter : ""}`, { headers }),
+        fetch(`${API}/admin/productos?${logoParam}`, { headers }),
         fetch(`${API}/admin/productos/${selectedProducto.id}/movimientos`, { headers }),
       ]);
       if (rP.ok) setProductos(await rP.json());
@@ -184,6 +191,17 @@ export default function ProductosPage() {
 
   // ── Derived ───────────────────────────────────────────────────
   const stockBajo = productos.filter(p => p.stock_minimo > 0 && p.stock_actual <= p.stock_minimo).length;
+  const filteredProductos = productos.filter(p => {
+    const active = [...chips, search].filter(Boolean);
+    if (active.length === 0) return true;
+    const text = [p.nombre, p.descripcion, p.sku, p.categoria, p.unidad, p.logo_tipo, String(p.stock_actual || ""), String(p.precio_venta || ""), p.activo ? "activo" : "inactivo"].filter(Boolean).join(" ").toLowerCase();
+    return active.every(ch => text.includes(String(ch).toLowerCase()));
+  });
+  const addChip = () => {
+    const v = search.trim();
+    if (v && !chips.includes(v)) setChips(prev => [...prev, v]);
+    setSearch("");
+  };
 
   return (
     <div className="min-h-screen bg-arandu-dark text-white">
@@ -220,36 +238,29 @@ export default function ProductosPage() {
       <div className="p-6 space-y-4">
         {/* Filtros */}
         <div className="flex flex-wrap gap-3 items-center">
-          <div className="flex gap-2 flex-wrap">
-            {LOGOS.map(l => (
-              <button key={l.value} onClick={() => setLogoFilter(l.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-body font-medium border transition-all ${
-                  logoFilter === l.value ? "bg-cyan-600 border-cyan-600 text-white" : "border-white/10 text-slate-400 hover:text-white bg-white/5"
-                }`}>
-                {l.label}
-              </button>
-            ))}
+          <div className="relative flex-1 min-w-[260px] bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+            <div className="flex flex-wrap gap-2 mb-2">
+              {chips.map(ch => (
+                <span key={ch} className="inline-flex items-center gap-1 bg-cyan-500/15 text-cyan-300 border border-cyan-500/25 rounded-full px-2 py-0.5 text-xs">
+                  {ch}
+                  <button onClick={() => setChips(prev => prev.filter(x => x !== ch))}><X className="w-3 h-3" /></button>
+                </span>
+              ))}
+            </div>
+            <Search className="absolute left-3 bottom-2.5 w-4 h-4 text-slate-500" />
+            <input value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addChip(); } }}
+              placeholder="Buscar por nombre, SKU, categoria, precio, stock... (Enter para agregar filtro)"
+              className="w-full bg-transparent pl-6 text-white text-sm font-body focus:outline-none" />
           </div>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-            <input value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar nombre, SKU..."
-              className="bg-white/5 border border-white/10 rounded-lg pl-9 pr-3 py-2 text-white text-sm font-body focus:outline-none focus:border-cyan-500 w-56" />
-          </div>
-          <select value={categoriaFilter} onChange={e => setCategoriaFilter(e.target.value)}
-            className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-body text-slate-300 focus:outline-none focus:border-cyan-500">
-            <option value="">Todas las categorías</option>
-            {CATEGORIAS_PRODUCTO.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
           <span className="text-slate-500 text-sm font-body ml-auto">
-            {productos.length} producto{productos.length !== 1 ? "s" : ""}
+            {filteredProductos.length} producto{filteredProductos.length !== 1 ? "s" : ""}
           </span>
         </div>
 
         {/* Tabla */}
         {loading ? (
           <div className="text-center py-12 text-slate-500 animate-pulse font-body">Cargando productos...</div>
-        ) : productos.length === 0 ? (
+        ) : filteredProductos.length === 0 ? (
           <div className="text-center py-16 text-slate-500 font-body">
             <Package className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p>{search ? "Sin coincidencias" : "No hay productos registrados"}</p>
@@ -275,7 +286,7 @@ export default function ProductosPage() {
                 </tr>
               </thead>
               <tbody>
-                {productos.map(p => {
+                {filteredProductos.map(p => {
                   const margen = p.precio_costo > 0
                     ? ((p.precio_venta - p.precio_costo) / p.precio_costo * 100).toFixed(0)
                     : null;
@@ -361,21 +372,6 @@ export default function ProductosPage() {
               <button onClick={() => setShowForm(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
             <form onSubmit={handleSave} className="p-5 space-y-4">
-              {/* Empresa */}
-              <div>
-                <label className="block text-slate-400 text-xs mb-1 font-body">Empresa</label>
-                <div className="flex gap-2">
-                  {LOGOS.filter(l => l.value !== "todas").map(l => (
-                    <button key={l.value} type="button"
-                      onClick={() => setFormData(f => ({ ...f, logo_tipo: l.value }))}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-body font-medium border transition-all ${
-                        formData.logo_tipo === l.value ? "bg-cyan-600 border-cyan-600 text-white" : "border-white/10 text-slate-400 hover:text-white bg-white/5"
-                      }`}>
-                      {l.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <label className="block text-slate-400 text-xs mb-1 font-body">Nombre *</label>

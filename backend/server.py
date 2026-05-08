@@ -15,7 +15,6 @@ from routes.presupuestos import router as presupuestos_router
 from routes.inventario import router as inventario_router
 from routes.alertas import router as alertas_router
 from routes.estadisticas import router as estadisticas_router
-from routes.contratos import router as contratos_router
 from routes.proveedores import router as proveedores_router
 from routes.costos_fijos import router as costos_fijos_router
 from routes.empleados import router as empleados_router
@@ -26,6 +25,8 @@ from routes.ingresos_varios import router as ingresos_varios_router
 from routes.recibos import router as recibos_router
 from routes.cuentas_bancarias import router as cuentas_bancarias_router
 from routes.compras import router as compras_router
+from routes.notas_credito import router as notas_credito_router
+from routes.productos import router as productos_router
 
 app = FastAPI(title="Arandu&JAR Informatica API")
 
@@ -58,7 +59,6 @@ app.include_router(estadisticas_router, prefix="/api")
 app.include_router(presupuestos_router, prefix="/api")
 app.include_router(inventario_router, prefix="/api")
 app.include_router(alertas_router, prefix="/api")
-app.include_router(contratos_router, prefix="/api")
 app.include_router(proveedores_router, prefix="/api")
 app.include_router(costos_fijos_router, prefix="/api")
 app.include_router(pagos_proveedores_router, prefix="/api")
@@ -69,6 +69,8 @@ app.include_router(cuentas_bancarias_router, prefix="/api")
 app.include_router(balance_router, prefix="/api")
 app.include_router(ingresos_varios_router, prefix="/api")
 app.include_router(compras_router, prefix="/api")
+app.include_router(notas_credito_router, prefix="/api")
+app.include_router(productos_router, prefix="/api")
 
 
 async def init_admin_user():

@@ -55,6 +55,39 @@ async def get_costos_fijos(logo_tipo: Optional[str] = None, user: dict = Depends
     return costos
 
 
+@router.get("/admin/costos-fijos-pagos")
+async def get_pagos_costos_fijos(
+    logo_tipo: Optional[str] = None,
+    mes: Optional[str] = None,
+    anio: Optional[str] = None,
+    user: dict = Depends(require_authenticated),
+):
+    if not has_permission(user, "costos_fijos.ver"):
+        raise HTTPException(status_code=403, detail="Sin permiso para ver costos fijos")
+
+    costo_query = {}
+    logo_q: dict = {}
+    await apply_logo_filter(logo_q, user, logo_tipo)
+    if is_forbidden(logo_q):
+        return []
+    costo_query.update(logo_q)
+    costos = await db.costos_fijos.find(costo_query, {"_id": 0, "id": 1, "nombre": 1, "logo_tipo": 1, "moneda": 1, "tipo_cambio": 1}).to_list(5000)
+    costo_map = {c["id"]: c for c in costos}
+    query = {"costo_fijo_id": {"$in": list(costo_map.keys())}}
+    if mes:
+        query["periodo"] = {"$regex": f"^{mes}"}
+    elif anio:
+        query["periodo"] = {"$regex": f"^{anio}"}
+    pagos = await db.pagos_costos_fijos.find(query, {"_id": 0}).sort("periodo", -1).to_list(5000)
+    for p in pagos:
+        c = costo_map.get(p.get("costo_fijo_id"), {})
+        p["costo_nombre"] = c.get("nombre")
+        p["logo_tipo"] = c.get("logo_tipo")
+        p["moneda"] = p.get("moneda") or c.get("moneda", "PYG")
+        p["tipo_cambio"] = p.get("tipo_cambio") or c.get("tipo_cambio")
+    return pagos
+
+
 @router.post("/admin/costos-fijos", response_model=CostoFijoResponse)
 async def create_costo_fijo(data: CostoFijoCreate, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "costos_fijos.crear"):

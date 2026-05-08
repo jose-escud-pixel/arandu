@@ -5,7 +5,7 @@ import jwt
 import bcrypt
 import uuid
 
-from config import db, JWT_SECRET, JWT_ALGORITHM
+from config import db, JWT_SECRET, JWT_ALGORITHM, DEFAULT_EMPRESA_MODULOS, PERMISO_A_MODULO_EMPRESA
 
 security = HTTPBearer()
 
@@ -51,11 +51,38 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
                 status_code=401,
                 detail="Tu sesión expiró. Iniciá sesión de nuevo.",
             )
+        if user.get("role") != "admin":
+            user = await _aplicar_modulos_empresa_al_usuario(user)
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expirado")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token invalido")
+
+
+async def _aplicar_modulos_empresa_al_usuario(user: dict) -> dict:
+    logos_ids = user.get("logos_asignados", []) or []
+    if not logos_ids:
+        user["permisos"] = []
+        return user
+
+    propias = await db.empresas_propias.find(
+        {"id": {"$in": list(map(str, logos_ids))}},
+        {"_id": 0, "modulos_habilitados": 1},
+    ).to_list(100)
+    modulos_habilitados = set()
+    for propia in propias:
+        modulos = propia.get("modulos_habilitados")
+        modulos_habilitados.update(modulos if modulos is not None else DEFAULT_EMPRESA_MODULOS)
+
+    permisos_filtrados = []
+    for permiso in user.get("permisos", []) or []:
+        permiso_modulo = permiso.split(".", 1)[0]
+        modulo_empresa = PERMISO_A_MODULO_EMPRESA.get(permiso_modulo)
+        if modulo_empresa and modulo_empresa in modulos_habilitados:
+            permisos_filtrados.append(permiso)
+    user["permisos"] = sorted(set(permisos_filtrados))
+    return user
 
 
 async def require_admin(current_user: dict = Depends(get_current_user)):

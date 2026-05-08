@@ -18,12 +18,13 @@ const PresupuestoFormModal = ({
   empresas,
   proveedores,
   productos,
+  productosHabilitados = true,
   activeEmpresaPropia,
   isAdmin,
   hasPermission
 }) => {
   const canModoLibre = isAdmin || hasPermission("presupuestos.modo_libre");
-  const defaultModo = canModoLibre ? "libre" : "productos";
+  const defaultModo = productosHabilitados ? (canModoLibre ? "libre" : "productos") : "libre";
 
   const getDefaultLogo = () => {
     if (!activeEmpresaPropia) return "arandujar";
@@ -74,7 +75,7 @@ const PresupuestoFormModal = ({
         fecha: presupuesto.fecha,
         validez_dias: validez,
         tipo_cambio: presupuesto.tipo_cambio || "",
-        modo: presupuesto.modo || "libre",
+        modo: productosHabilitados ? (presupuesto.modo || "libre") : "libre",
         items: presupuesto.items.map(item => ({
           ...item, moneda_item: item.moneda_item || "", tipo_cambio_item: item.tipo_cambio_item || "",
           proveedor_id: item.proveedor_id || "", proveedor_nombre: item.proveedor_nombre || "",
@@ -99,7 +100,7 @@ const PresupuestoFormModal = ({
         fecha: new Date().toISOString().split('T')[0],
         validez_dias: validez,
         tipo_cambio: presupuesto.tipo_cambio || "",
-        modo: presupuesto.modo || "libre",
+        modo: productosHabilitados ? (presupuesto.modo || "libre") : "libre",
         items: presupuesto.items.map(item => ({
           ...item, moneda_item: item.moneda_item || "", tipo_cambio_item: item.tipo_cambio_item || "",
           proveedor_id: item.proveedor_id || "", proveedor_nombre: item.proveedor_nombre || "",
@@ -329,7 +330,7 @@ const PresupuestoFormModal = ({
             <Calculator className="w-6 h-6 text-arandu-blue" />
             {editingId ? "Editar Presupuesto" : "Nuevo Presupuesto"}
           </h2>
-          <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="text-slate-400 hover:text-white">
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-white">
             <X className="w-6 h-6" />
           </button>
         </div>
@@ -491,7 +492,7 @@ const PresupuestoFormModal = ({
           </div>
 
           {/* Mode Toggle */}
-          {(isAdmin || hasPermission("presupuestos.modo_libre")) ? (
+          {productosHabilitados && (isAdmin || hasPermission("presupuestos.modo_libre")) ? (
             <div className="flex items-center gap-3 mb-1">
               <span className="text-slate-400 text-sm">Modo de carga:</span>
               <div className="flex gap-2">
@@ -770,7 +771,7 @@ const PresupuestoFormModal = ({
           <div className="flex gap-3 pt-4">
             <Button
               type="button"
-              onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+              onClick={onClose}
               variant="outline"
               className="flex-1 border-white/20 text-slate-300"
             >

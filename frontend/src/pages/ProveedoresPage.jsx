@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { AuthContext } from "../App";
 import { toast } from "sonner";
 import EmpresaSwitcher from "../components/EmpresaSwitcher";
@@ -45,8 +45,54 @@ function fmtCompact(n, moneda = "PYG", nUsd = 0) {
   return `₲ ${Math.round(n).toLocaleString("es-PY")}`;
 }
 
+function ChipSearch({ chips, setChips, inputVal, setInputVal, placeholder }) {
+  const addChip = () => {
+    const term = inputVal.trim().replace(/,$/, "");
+    if (term && !chips.includes(term)) setChips(prev => [...prev, term]);
+    setInputVal("");
+  };
+  return (
+    <div className="space-y-2 flex-1 max-w-xl">
+      {chips.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {chips.map((chip, idx) => (
+            <span key={chip} className="inline-flex items-center gap-1.5 bg-arandu-blue/15 border border-arandu-blue/30 text-arandu-blue-light rounded-full px-2.5 py-1 text-xs">
+              <Search className="w-3 h-3" />
+              {chip}
+              <button type="button" onClick={() => setChips(prev => prev.filter((_, i) => i !== idx))} className="hover:text-white"><X className="w-3 h-3" /></button>
+            </span>
+          ))}
+          <button type="button" onClick={() => setChips([])} className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1 rounded-full border border-white/10">Limpiar</button>
+        </div>
+      )}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+        <input
+          type="text"
+          value={inputVal}
+          onChange={e => setInputVal(e.target.value)}
+          onKeyDown={e => {
+            if ((e.key === "Enter" || e.key === ",") && inputVal.trim()) { e.preventDefault(); addChip(); }
+            if (e.key === "Backspace" && !inputVal && chips.length) setChips(prev => prev.slice(0, -1));
+          }}
+          placeholder={placeholder}
+          className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-3 py-2 text-white text-sm font-body focus:outline-none focus:border-arandu-blue"
+        />
+      </div>
+    </div>
+  );
+}
+
+function matchChips(chips, inputVal, texto) {
+  const terms = [...chips, ...(inputVal.trim() ? [inputVal.trim()] : [])];
+  if (!terms.length) return true;
+  const haystack = texto.toLowerCase();
+  return terms.every(term => haystack.includes(term.toLowerCase()));
+}
+
 export default function ProveedoresPage() {
   const { token, hasPermission, activeEmpresaPropia } = useContext(AuthContext);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Estas deben ir ANTES de los useState que las usan
   const logoActivo = activeEmpresaPropia?.slug || "arandujar";
@@ -60,7 +106,8 @@ export default function ProveedoresPage() {
 
   const [proveedores, setProveedores] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
+  const [searchChips, setSearchChips] = useState([]);
+  const [searchInput, setSearchInput] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [formData, setFormData] = useState(emptyForm());
@@ -139,12 +186,13 @@ export default function ProveedoresPage() {
 
   const filtered = proveedores.filter(p => {
     if (!showInactive && !p.activo) return false;
-    if (!search) return true;
-    const q = search.toLowerCase();
-    return (p.nombre || "").toLowerCase().includes(q) ||
-      (p.ruc || "").toLowerCase().includes(q) ||
-      (p.contacto || "").toLowerCase().includes(q) ||
-      (p.categoria || "").toLowerCase().includes(q);
+    const cr = comprasResumen[p.id] || comprasResumen[p.nombre];
+    const texto = [
+      p.nombre, p.ruc, p.contacto, p.telefono, p.email, p.direccion, p.categoria, p.notas,
+      p.activo ? "activo" : "inactivo",
+      cr?.cantidad_compras, cr?.total_comprado, cr?.deuda_actual, cr?.moneda_principal
+    ].filter(Boolean).join(" ");
+    return matchChips(searchChips, searchInput, texto);
   });
 
   const openNew = () => {
@@ -152,6 +200,14 @@ export default function ProveedoresPage() {
     setFormData({ ...emptyForm(), logo_tipo: logoActivo });
     setShowForm(true);
   };
+
+  useEffect(() => {
+    if (searchParams.get("nuevo") !== "proveedor") return;
+    if (hasPermission("proveedores.crear")) openNew();
+    const next = new URLSearchParams(searchParams);
+    next.delete("nuevo");
+    setSearchParams(next, { replace: true });
+  }, [searchParams]); // eslint-disable-line
 
   const openEdit = (p) => {
     setEditingId(p.id);
@@ -289,16 +345,13 @@ export default function ProveedoresPage() {
 
         {/* Búsqueda + inactivos */}
         <div className="flex items-center gap-3">
-          <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar proveedor..."
-              className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-3 py-2 text-white text-sm font-body focus:outline-none focus:border-arandu-blue"
-            />
-          </div>
+          <ChipSearch
+            chips={searchChips}
+            setChips={setSearchChips}
+            inputVal={searchInput}
+            setInputVal={setSearchInput}
+            placeholder="Buscar proveedor, RUC, contacto, deuda, compras... Enter para agregar"
+          />
           <button
             onClick={() => setShowInactive(v => !v)}
             className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-body border transition-colors ${
@@ -315,8 +368,8 @@ export default function ProveedoresPage() {
         {filtered.length === 0 ? (
           <div className="text-center py-16 text-slate-500 font-body">
             <Truck className="w-12 h-12 mx-auto mb-3 opacity-30" />
-            <p>{search ? "No hay proveedores que coincidan" : "No hay proveedores registrados"}</p>
-            {hasPermission("proveedores.crear") && !search && (
+            <p>{searchChips.length || searchInput ? "No hay proveedores que coincidan" : "No hay proveedores registrados"}</p>
+            {hasPermission("proveedores.crear") && !searchChips.length && !searchInput && (
               <button onClick={openNew} className="mt-3 text-arandu-blue-light hover:underline text-sm">
                 Agregar el primer proveedor
               </button>

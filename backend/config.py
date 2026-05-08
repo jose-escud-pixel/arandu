@@ -24,18 +24,49 @@ PERMISOS_DISPONIBLES = {
     "reportes": ["ver", "exportar"],
     "alertas": ["ver", "crear", "editar", "eliminar"],
     "costos": ["ver", "editar"],
-    "estadisticas": ["ver"],
-    "contratos": ["ver", "crear", "editar", "eliminar"],
     "proveedores": ["ver", "crear", "editar", "eliminar"],
     "costos_fijos": ["ver", "crear", "editar", "eliminar"],
     "empleados": ["ver", "crear", "editar", "eliminar"],
-    "facturas": ["ver", "crear", "editar", "eliminar", "modo_libre"],
+    "facturas": ["ver", "crear", "editar", "eliminar", "modo_libre", "afectar_stock"],
     "balance": ["ver", "editar"],
     "ingresos_varios": ["ver", "crear", "editar", "eliminar"],
     "pagos_proveedores": ["ver", "crear", "editar", "eliminar"],
     "compras": ["ver", "crear", "editar", "eliminar", "afectar_stock"],
     "recibos": ["ver", "crear", "editar", "eliminar"],
+    "notas_credito": ["ver", "crear", "editar", "eliminar"],
     "inventario_productos": ["ver", "crear", "editar", "eliminar"],
+    "historial_stock": ["ver"],
+    "bancos": ["ver", "crear", "editar", "eliminar"],
+    "usuarios": ["ver", "crear", "editar", "eliminar"],
+    "auditoria": ["ver"],
+}
+
+# Módulos que se pueden habilitar/deshabilitar por empresa propia.
+# Cada módulo agrupa uno o más módulos/permisos granulares existentes.
+EMPRESA_MODULOS_DISPONIBLES = {
+    "clientes": ["empresas"],
+    "bancos": ["bancos"],
+    "ventas_base": ["facturas", "recibos", "notas_credito"],
+    "presupuestos": ["presupuestos", "costos"],
+    "ingresos_varios": ["ingresos_varios"],
+    "egresos_base": ["compras", "costos_fijos"],
+    "proveedores": ["proveedores", "pagos_proveedores"],
+    "sueldos": ["empleados"],
+    "balance": ["balance"],
+    "inventario_tecnico": ["inventario", "credenciales", "alertas"],
+    "productos_stock": ["inventario_productos", "historial_stock"],
+    "reportes": ["reportes"],
+    "administracion": ["usuarios", "auditoria"],
+    "mensajes": ["mensajes"],
+}
+
+DEFAULT_EMPRESA_MODULOS = list(EMPRESA_MODULOS_DISPONIBLES.keys())
+EMPRESA_MODULOS_OBLIGATORIOS = ["clientes", "bancos"]
+
+PERMISO_A_MODULO_EMPRESA = {
+    permiso_modulo: modulo_empresa
+    for modulo_empresa, permisos_modulos in EMPRESA_MODULOS_DISPONIBLES.items()
+    for permiso_modulo in permisos_modulos
 }
 
 CATEGORIAS_DEFAULT = [

@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Server, Plus, Search, Edit, Trash2, Eye, EyeOff,
   X, Save, Monitor, Wifi, HardDrive, Globe, Key, Clock,
-  Building2, Copy, Settings, Download, Lock, History,
+  Building2, Copy, Settings, Lock, History,
   ArrowUpDown, ChevronUp, ChevronDown, Check, Laptop, Link2
 } from "lucide-react";
 import { Button } from "../components/ui/button";
@@ -38,6 +38,56 @@ const ipToNumber = (ip) => {
 
   return nums.reduce((acc, oct) => acc * 256 + oct, 0);
 };
+
+function ChipSearch({ chips, setChips, inputVal, setInputVal, placeholder }) {
+  const addChip = () => {
+    const term = inputVal.trim().replace(/,$/, "");
+    if (term && !chips.includes(term)) setChips(prev => [...prev, term]);
+    setInputVal("");
+  };
+  return (
+    <div className="space-y-2 flex-1 min-w-[260px]">
+      {chips.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {chips.map((chip, idx) => (
+            <span key={chip} className="inline-flex items-center gap-1.5 bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 rounded-full px-2.5 py-1 text-xs">
+              <Search className="w-3 h-3" />
+              {chip}
+              <button type="button" onClick={() => setChips(prev => prev.filter((_, i) => i !== idx))} className="hover:text-white">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+          <button type="button" onClick={() => setChips([])} className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1 rounded-full border border-white/10">
+            Limpiar
+          </button>
+        </div>
+      )}
+      <div className="relative">
+        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+        <input
+          type="text"
+          value={inputVal}
+          onChange={(e) => setInputVal(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.key === "Enter" || e.key === ",") && inputVal.trim()) { e.preventDefault(); addChip(); }
+            if (e.key === "Backspace" && !inputVal && chips.length) setChips(prev => prev.slice(0, -1));
+          }}
+          placeholder={placeholder}
+          className="w-full bg-arandu-dark border border-white/10 rounded-lg pl-10 pr-3 py-2 text-white text-sm focus:outline-none focus:border-cyan-500/60"
+          data-testid="inv-search"
+        />
+      </div>
+    </div>
+  );
+}
+
+function matchChips(chips, inputVal, texto) {
+  const terms = [...chips, ...(inputVal.trim() ? [inputVal.trim()] : [])];
+  if (!terms.length) return true;
+  const haystack = texto.toLowerCase();
+  return terms.every(term => haystack.includes(term.toLowerCase()));
+}
 
 // Campos personalizados por subtipo de Cuenta de Acceso
 const CAMPOS_CUENTA = {
@@ -124,13 +174,14 @@ const CAMPOS_CUENTA = {
 };
 
 const InventarioPage = () => {
-  const { token, user, hasPermission } = useContext(AuthContext);
+  const { token, user, hasPermission, activeEmpresaPropia } = useContext(AuthContext);
   const isAdmin = user?.role === "admin";
   const canCreate = hasPermission("inventario.crear");
   const canEdit = hasPermission("inventario.editar");
   const canDelete = hasPermission("inventario.eliminar");
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const empresaFromUrl = searchParams.get("empresa") || "";
+  const nuevoFromUrl = searchParams.get("nuevo") || "";
 
   const [activos, setActivos] = useState([]);
   const [empresas, setEmpresas] = useState([]);
@@ -140,7 +191,8 @@ const InventarioPage = () => {
   const [filterEmpresa, setFilterEmpresa] = useState(empresaFromUrl);
   const [filterCategoria, setFilterCategoria] = useState("");
   const [filterEstado, setFilterEstado] = useState("");
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchChips, setSearchChips] = useState([]);
+  const [searchInput, setSearchInput] = useState("");
   const [sortBy, setSortBy] = useState("nombre");
   const [sortDir, setSortDir] = useState("asc");
 
@@ -151,6 +203,8 @@ const InventarioPage = () => {
   const [showCategorias, setShowCategorias] = useState(false);
   const [showDetail, setShowDetail] = useState(null);
   const [detailPasswords, setDetailPasswords] = useState({});
+  const [detailCredenciales, setDetailCredenciales] = useState([]);
+  const [detailCredLoading, setDetailCredLoading] = useState(false);
 
   const [credenciales, setCredenciales] = useState([]);
   const [showPasswords, setShowPasswords] = useState({});
@@ -178,13 +232,26 @@ const InventarioPage = () => {
   const [duplicatingFromId, setDuplicatingFromId] = useState(null);
   const [expandedNvrGroups, setExpandedNvrGroups] = useState(new Set());
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => { fetchAll(); }, [activeEmpresaPropia]); // eslint-disable-line
+
+	  useEffect(() => {
+	    if (filterEmpresa && empresas.length && !empresas.some(e => e.id === filterEmpresa)) {
+	      setFilterEmpresa("");
+	    }
+	    if (filterEmpresa && empresas.length) {
+	      const emp = empresas.find(e => e.id === filterEmpresa);
+	      if (emp?.nombre) setSearchChips(prev => prev.includes(emp.nombre) ? prev : [...prev, emp.nombre]);
+	    }
+	  }, [empresas, filterEmpresa]);
 
   const fetchAll = async () => {
     try {
+      const params = new URLSearchParams();
+      if (activeEmpresaPropia?.slug) params.set("logo_tipo", activeEmpresaPropia.slug);
+      const qs = params.toString();
       const [actRes, empRes, catRes] = await Promise.all([
-        fetch(`${API}/admin/activos`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API}/admin/empresas`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/admin/activos${qs ? `?${qs}` : ""}`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/admin/empresas${activeEmpresaPropia?.slug ? `?logo_tipo=${activeEmpresaPropia.slug}` : ""}`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API}/admin/categorias`, { headers: { Authorization: `Bearer ${token}` } })
       ]);
       if (actRes.ok) setActivos(await actRes.json());
@@ -201,30 +268,12 @@ const InventarioPage = () => {
 
 const filteredActivos = useMemo(() => {
   let result = activos.filter(a => {
-    if (filterEmpresa && a.empresa_id !== filterEmpresa) return false;
-    if (filterCategoria && a.categoria !== filterCategoria) return false;
-    if (filterEstado && a.estado !== filterEstado) return false;
-
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      const allIps = [a.ip_local, a.ip_publica, ...(a.ips_locales || []), ...(a.ips_publicas || [])]
-        .join(" ")
-        .toLowerCase();
-      const cpVals = Object.values(a.campos_personalizados || {}).join(" ").toLowerCase();
-
-      return (
-        (a.nombre || "").toLowerCase().includes(term) ||
-        allIps.includes(term) ||
-        (a.dominio || "").toLowerCase().includes(term) ||
-        (a.descripcion || "").toLowerCase().includes(term) ||
-        (a.ubicacion || "").toLowerCase().includes(term) ||
-        (a.empresa_nombre || "").toLowerCase().includes(term) ||
-        (a.subtipo || "").toLowerCase().includes(term) ||
-        cpVals.includes(term)
-      );
-    }
-
-    return true;
+	    const texto = [
+      a.nombre, a.ip_local, a.ip_publica, ...(a.ips_locales || []), ...(a.ips_publicas || []),
+      a.dominio, a.descripcion, a.ubicacion, a.empresa_nombre, a.categoria, a.subtipo,
+      a.estado, ...Object.values(a.campos_personalizados || {})
+    ].filter(Boolean).join(" ");
+    return matchChips(searchChips, searchInput, texto);
   });
 
   result.sort((a, b) => {
@@ -248,7 +297,7 @@ const filteredActivos = useMemo(() => {
   });
 
   return result;
-}, [activos, filterEmpresa, filterCategoria, filterEstado, searchTerm, sortBy, sortDir]);
+	}, [activos, searchChips, searchInput, sortBy, sortDir]);
 
   const groupedByCategoria = useMemo(() => {
     const groups = {};
@@ -309,6 +358,14 @@ const filteredActivos = useMemo(() => {
     setShowForm(true);
   };
 
+  useEffect(() => {
+    if (nuevoFromUrl !== "dispositivo") return;
+    if (canCreate) openNewForm();
+    const next = new URLSearchParams(searchParams);
+    next.delete("nuevo");
+    setSearchParams(next, { replace: true });
+  }, [nuevoFromUrl]); // eslint-disable-line
+
   const openEditForm = (activo) => {
     setEditingActivo(activo);
     setDuplicatingFromId(null);
@@ -356,9 +413,17 @@ const filteredActivos = useMemo(() => {
 
   const addIp = (type) => {
     if (type === "local" && newIpLocal.trim()) {
+      if (formData.ips_locales.map(ip => ip.trim().toLowerCase()).includes(newIpLocal.trim().toLowerCase())) {
+        toast.error(`La IP ${newIpLocal.trim()} ya está cargada en este activo`);
+        return;
+      }
       setFormData(f => ({ ...f, ips_locales: [...f.ips_locales, newIpLocal.trim()] }));
       setNewIpLocal("");
     } else if (type === "publica" && newIpPublica.trim()) {
+      if (formData.ips_publicas.map(ip => ip.trim().toLowerCase()).includes(newIpPublica.trim().toLowerCase())) {
+        toast.error(`La IP ${newIpPublica.trim()} ya está cargada en este activo`);
+        return;
+      }
       setFormData(f => ({ ...f, ips_publicas: [...f.ips_publicas, newIpPublica.trim()] }));
       setNewIpPublica("");
     }
@@ -432,6 +497,27 @@ const filteredActivos = useMemo(() => {
     if (newIpPublica.trim()) {
       dataToSave.ips_publicas = [...dataToSave.ips_publicas, newIpPublica.trim()];
       setNewIpPublica("");
+    }
+    const ipsToSave = [
+      dataToSave.ip_local, dataToSave.ip_publica,
+      ...(dataToSave.ips_locales || []), ...(dataToSave.ips_publicas || [])
+    ].map(ip => String(ip || "").trim().toLowerCase()).filter(Boolean);
+    const repeatedInForm = [...new Set(ipsToSave)].find(ip => ipsToSave.filter(x => x === ip).length > 1);
+    if (repeatedInForm) {
+      toast.error(`La IP ${repeatedInForm} está repetida en este activo`);
+      return;
+    }
+    const duplicateIp = activos.find(a => {
+      if (a.id === editingActivo?.id || a.empresa_id !== dataToSave.empresa_id) return false;
+      const ips = [a.ip_local, a.ip_publica, ...(a.ips_locales || []), ...(a.ips_publicas || [])]
+        .map(ip => String(ip || "").trim().toLowerCase()).filter(Boolean);
+      return ips.some(ip => ipsToSave.includes(ip));
+    });
+    if (duplicateIp) {
+      const usedIp = [duplicateIp.ip_local, duplicateIp.ip_publica, ...(duplicateIp.ips_locales || []), ...(duplicateIp.ips_publicas || [])]
+        .map(ip => String(ip || "").trim().toLowerCase()).find(ip => ipsToSave.includes(ip));
+      toast.error(`La IP ${usedIp} ya está en uso en ${duplicateIp.nombre}`);
+      return;
     }
     setSaving(true);
     try {
@@ -518,9 +604,23 @@ const filteredActivos = useMemo(() => {
 
   const copyToClipboard = (text) => { navigator.clipboard.writeText(text); toast.success("Copiado"); };
 
+  const loadDetailCredenciales = async (activoId) => {
+    setDetailCredLoading(true);
+    setDetailCredenciales([]);
+    try {
+      const res = await fetch(`${API}/admin/activos/${activoId}/credenciales`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) setDetailCredenciales(await res.json());
+    } catch {
+      setDetailCredenciales([]);
+    } finally {
+      setDetailCredLoading(false);
+    }
+  };
+
   const openDetail = (activo) => {
     setShowDetail(activo);
     setDetailPasswords({});
+    loadDetailCredenciales(activo.id);
   };
 
   const navigateToActivo = (activoId) => {
@@ -528,6 +628,7 @@ const filteredActivos = useMemo(() => {
     if (target) {
       setShowDetail(target);
       setDetailPasswords({});
+      loadDetailCredenciales(target.id);
     }
   };
 
@@ -694,6 +795,125 @@ const filteredActivos = useMemo(() => {
     );
   };
 
+  const renderActivoRow = (activo, idx, options = {}) => {
+    const ips = allIps(activo);
+    const assignedCuentas = !isCuenta(activo.categoria) ? getCuentasForDevice(activo.id) : [];
+    const assignedDevices = getAssignedDeviceNames(activo);
+    const cp = activo.campos_personalizados || {};
+    const primaryLocalIp = ips.locals[0] || "-";
+    const primaryPublicIp = ips.publics[0] || "-";
+    const cuentaDato = Object.entries(cp).find(([k, v]) =>
+      v && !k.includes("contrasena") && !k.includes("secreto") && !k.includes("password")
+    );
+    const detalle = isCuenta(activo.categoria)
+      ? (cuentaDato ? `${cuentaDato[0].replace(/_/g, " ")}: ${cuentaDato[1]}` : "Cuenta de acceso")
+      : (activo.dominio || activo.ubicacion || activo.descripcion || "-");
+
+    const stop = (fn) => (e) => {
+      e.stopPropagation();
+      fn();
+    };
+
+    return (
+      <tr
+        key={activo.id}
+        onClick={() => openDetail(activo)}
+        className="border-t border-white/5 hover:bg-cyan-500/5 cursor-pointer transition-colors"
+        data-testid={`activo-row-${idx}`}
+      >
+        <td className="px-3 py-3 min-w-[260px]">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${options.indent ? "bg-cyan-500/5 text-cyan-300" : "bg-cyan-500/10 text-cyan-400"}`}>
+              {categoriaIconMap[activo.categoria] || <Server className="w-4 h-4" />}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                {options.indent && <span className="text-cyan-500 text-xs">-</span>}
+                <p className="text-white font-semibold text-sm truncate">{activo.nombre}</p>
+              </div>
+              <p className="text-slate-500 text-xs truncate">{activo.subtipo || activo.categoria || "-"}</p>
+            </div>
+          </div>
+        </td>
+        <td className="px-3 py-3 text-slate-300 text-sm min-w-[150px]">
+          <span className="font-mono">{primaryLocalIp}</span>
+          {ips.locals.length > 1 && <span className="ml-2 text-xs text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded-full">+{ips.locals.length - 1}</span>}
+        </td>
+        <td className="px-3 py-3 text-slate-400 text-sm min-w-[150px]">
+          <span className="font-mono">{primaryPublicIp}</span>
+          {ips.publics.length > 1 && <span className="ml-2 text-xs text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded-full">+{ips.publics.length - 1}</span>}
+        </td>
+        <td className="px-3 py-3 text-slate-300 text-sm min-w-[180px]">
+          <p className="truncate max-w-[240px]">{detalle}</p>
+          {activo.nvr_dvr_nombre && <p className="text-cyan-400 text-xs truncate">NVR/DVR: {activo.nvr_dvr_nombre}</p>}
+        </td>
+        <td className="px-3 py-3 text-sm min-w-[140px]">
+          <span className="text-arandu-blue truncate block">{activo.empresa_nombre || "-"}</span>
+        </td>
+        <td className="px-3 py-3 min-w-[120px]">
+          <span className={`text-xs px-2 py-0.5 rounded-full border ${estadoColors[activo.estado] || estadoColors.activo}`}>{activo.estado || "activo"}</span>
+        </td>
+        <td className="px-3 py-3 text-xs text-slate-400 min-w-[130px]">
+          <div className="flex items-center gap-2">
+            {!isCuenta(activo.categoria) && (
+              <span className="inline-flex items-center gap-1 text-amber-400"><Key className="w-3 h-3" /> {activo.credenciales_count || assignedCuentas.length || 0}</span>
+            )}
+            {isCuenta(activo.categoria) && assignedDevices.length > 0 && (
+              <span className="inline-flex items-center gap-1 text-purple-400"><Link2 className="w-3 h-3" /> {assignedDevices.length}</span>
+            )}
+            <span className="inline-flex items-center gap-1 text-purple-400"><History className="w-3 h-3" /></span>
+          </div>
+        </td>
+        <td className="px-3 py-3 min-w-[150px]">
+          <div className="flex items-center justify-end gap-1">
+            {!isCuenta(activo.categoria) && (
+              <button onClick={stop(() => openCredenciales(activo))} className="p-1.5 rounded text-slate-400 hover:text-amber-400 hover:bg-amber-500/10" title="Credenciales">
+                <Key className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <button onClick={stop(() => openHistorial(activo))} className="p-1.5 rounded text-slate-400 hover:text-purple-400 hover:bg-purple-500/10" title="Historial">
+              <History className="w-3.5 h-3.5" />
+            </button>
+            {canEdit && <button onClick={stop(() => duplicateActivo(activo))} title="Duplicar activo" className="p-1.5 rounded text-slate-400 hover:text-emerald-400 hover:bg-emerald-500/10"><Copy className="w-3.5 h-3.5" /></button>}
+            {canEdit && <button onClick={stop(() => openEditForm(activo))} className="p-1.5 rounded text-slate-400 hover:text-cyan-400 hover:bg-cyan-500/10" title="Editar"><Edit className="w-3.5 h-3.5" /></button>}
+            {canDelete && <button onClick={stop(() => deleteActivo(activo.id))} className="p-1.5 rounded text-slate-400 hover:text-red-400 hover:bg-red-500/10" title="Eliminar"><Trash2 className="w-3.5 h-3.5" /></button>}
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  const ActivosTable = ({ items, catName, title, compact = false, indentRows = false }) => (
+    <div className={compact ? "overflow-x-auto" : "bg-arandu-dark-light border border-white/5 rounded-xl overflow-hidden"}>
+      {title && (
+        <div className="flex items-center gap-2 px-3 py-3 border-b border-white/5">
+          <div className="text-cyan-400">{categoriaIconMap[catName] || <Server className="w-5 h-5" />}</div>
+          <h2 className="font-heading font-bold text-white text-base">{title}</h2>
+          <span className="text-slate-500 text-sm">({items.length})</span>
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-left">
+          <thead className="bg-arandu-dark/70 text-slate-400 text-xs uppercase">
+            <tr>
+              <th className="px-3 py-2 font-semibold">Activo</th>
+              <th className="px-3 py-2 font-semibold">IP local</th>
+              <th className="px-3 py-2 font-semibold">IP publica</th>
+              <th className="px-3 py-2 font-semibold">Detalle</th>
+              <th className="px-3 py-2 font-semibold">Cliente</th>
+              <th className="px-3 py-2 font-semibold">Estado</th>
+              <th className="px-3 py-2 font-semibold">Refs.</th>
+              <th className="px-3 py-2 font-semibold text-right">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((activo, idx) => renderActivoRow(activo, idx, { indent: indentRows }))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
   if (loading) return <div className="flex items-center justify-center h-screen"><div className="text-arandu-blue animate-pulse text-xl">Cargando inventario...</div></div>;
 
   const empresaName = filterEmpresa ? empresas.find(e => e.id === filterEmpresa)?.nombre : null;
@@ -719,11 +939,6 @@ const filteredActivos = useMemo(() => {
               <Settings className="w-4 h-4 mr-1 sm:mr-2" /> <span className="hidden sm:inline">Categorias</span><span className="sm:hidden">Cat.</span>
             </Button>
           )}
-          <Link to={`/admin/reportes${filterEmpresa ? `?empresa=${filterEmpresa}` : ""}`}>
-            <Button className="bg-amber-600 hover:bg-amber-700 text-white text-xs sm:text-sm" data-testid="export-btn">
-              <Download className="w-4 h-4 mr-1 sm:mr-2" /> Reportes
-            </Button>
-          </Link>
           {canCreate && (
             <Button onClick={openNewForm} className="bg-cyan-600 hover:bg-cyan-700 text-white text-xs sm:text-sm" data-testid="new-activo-btn">
               <Plus className="w-4 h-4 mr-1 sm:mr-2" /> Nuevo
@@ -734,25 +949,14 @@ const filteredActivos = useMemo(() => {
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row flex-wrap gap-2 sm:gap-3 mb-4">
-        <div className="relative flex-1 min-w-0">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-          <Input type="text" placeholder="Buscar..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="bg-arandu-dark border-white/10 text-white pl-10 text-sm" data-testid="inv-search" />
-        </div>
-        <select value={filterEmpresa} onChange={(e) => setFilterEmpresa(e.target.value)} className="bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-xs sm:text-sm" data-testid="inv-filter-empresa">
-          <option value="">Todas las empresas</option>
-          {empresas.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}
-        </select>
-        <select value={filterCategoria} onChange={(e) => setFilterCategoria(e.target.value)} className="bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-xs sm:text-sm">
-          <option value="">Todas las categorias</option>
-          {categorias.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
-        </select>
-        <select value={filterEstado} onChange={(e) => setFilterEstado(e.target.value)} className="bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-xs sm:text-sm">
-          <option value="">Todos</option>
-          <option value="activo">Activo</option>
-          <option value="inactivo">Inactivo</option>
-          <option value="mantenimiento">Mantenimiento</option>
-        </select>
-      </div>
+        <ChipSearch
+          chips={searchChips}
+          setChips={setSearchChips}
+          inputVal={searchInput}
+          setInputVal={setSearchInput}
+          placeholder="Buscar por cliente, IP, equipo, dominio, usuario, ubicación... Enter para agregar"
+        />
+	      </div>
 
 {/* Sort */}
 <div className="flex gap-1.5 sm:gap-2 mb-6 flex-wrap">
@@ -842,19 +1046,15 @@ const filteredActivos = useMemo(() => {
                       exit={{ opacity: 0, height: 0 }}
                       className="overflow-hidden"
                     >
-                      {/* NVR own card */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 mb-3">
-                        {renderActivoCard(nvr, 0)}
+                      <div className="mb-3">
+                        <ActivosTable items={[nvr]} compact />
                       </div>
-                      {/* Camera cards indented */}
                       {cameras.length > 0 && (
                         <div className="ml-4 border-l-2 border-cyan-500/20 pl-4 mb-2">
                           <p className="text-slate-500 text-xs mb-2 flex items-center gap-1.5">
                             <Monitor className="w-3 h-3" /> {cameras.length} camara(s) asociada(s)
                           </p>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                            {cameras.map((cam, i) => renderActivoCard(cam, i))}
-                          </div>
+                          <ActivosTable items={cameras} compact indentRows />
                         </div>
                       )}
                     </motion.div>
@@ -879,9 +1079,7 @@ const filteredActivos = useMemo(() => {
                   <h2 className="font-heading font-bold text-white text-base sm:text-lg">{catName}</h2>
                   <span className="text-slate-500 text-sm">({items.length})</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {items.map((activo, idx) => renderActivoCard(activo, idx))}
-                </div>
+                <ActivosTable items={items} compact />
               </div>
             ));
           })()}
@@ -890,14 +1088,7 @@ const filteredActivos = useMemo(() => {
         /* ===== NORMAL VIEW: grouped by categoria ===== */
         Object.entries(groupedByCategoria).map(([catName, items]) => (
           <div key={catName} className="mb-8" data-testid={`cat-group-${catName}`}>
-            <div className="flex items-center gap-2 mb-3">
-              <div className="text-cyan-400">{categoriaIconMap[catName] || <Server className="w-5 h-5" />}</div>
-              <h2 className="font-heading font-bold text-white text-base sm:text-lg">{catName}</h2>
-              <span className="text-slate-500 text-sm">({items.length})</span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {items.map((activo, idx) => renderActivoCard(activo, idx))}
-            </div>
+            <ActivosTable items={items} catName={catName} title={catName} />
           </div>
         ))
       )}
@@ -911,6 +1102,8 @@ const filteredActivos = useMemo(() => {
           const cp = d.campos_personalizados || {};
           const detailCuentas = !isCuenta(d.categoria) ? getCuentasForDevice(d.id) : [];
           const detailDevices = isCuenta(d.categoria) ? (d.activos_asignados || []).map(id => activos.find(a => a.id === id)).filter(Boolean) : [];
+          const detailCameras = !isCuenta(d.categoria) ? activos.filter(a => a.nvr_dvr_id === d.id) : [];
+          const detailParentNvr = d.nvr_dvr_id ? activos.find(a => a.id === d.nvr_dvr_id) : null;
           const camposDef = isCuenta(d.categoria) && d.subtipo ? (CAMPOS_CUENTA[d.subtipo] || []) : [];
           const empresa = empresas.find(e => e.id === d.empresa_id);
 
@@ -1001,11 +1194,114 @@ const filteredActivos = useMemo(() => {
                       {d.descripcion && <div className="bg-arandu-dark rounded-lg p-3 border border-white/5"><p className="text-slate-500 text-xs mb-1">Descripcion</p><p className="text-white text-sm">{d.descripcion}</p></div>}
                       {d.observaciones && <div className="bg-arandu-dark rounded-lg p-3 border border-white/5"><p className="text-slate-500 text-xs mb-1">Observaciones</p><p className="text-slate-300 text-sm">{d.observaciones}</p></div>}
 
-                      {/* CUENTAS DE ACCESO ASIGNADAS */}
+                      {/* CREDENCIALES DIRECTAS DEL DISPOSITIVO */}
                       <div className="border border-amber-500/20 rounded-lg overflow-hidden">
                         <div className="bg-amber-500/5 p-3 flex items-center gap-2 border-b border-amber-500/10">
                           <Key className="w-4 h-4 text-amber-400" />
-                          <span className="text-amber-400 font-semibold text-sm">Cuentas de Acceso Asignadas</span>
+                          <span className="text-amber-400 font-semibold text-sm">Credenciales directas</span>
+                          <span className="text-slate-500 text-xs">({detailCredenciales.length})</span>
+                        </div>
+                        {detailCredLoading ? (
+                          <div className="p-4 text-center"><p className="text-slate-500 text-sm">Cargando credenciales...</p></div>
+                        ) : detailCredenciales.length === 0 ? (
+                          <div className="p-4 text-center"><p className="text-slate-500 text-sm">Sin credenciales directas cargadas</p></div>
+                        ) : (
+                          <div className="p-3 space-y-2">
+                            {detailCredenciales.map((cred) => {
+                              const passKey = `cred_${cred.id}`;
+                              const visible = detailPasswords[passKey];
+                              return (
+                                <div key={cred.id} className="bg-arandu-dark rounded-lg p-3 border border-white/5">
+                                  <div className="flex items-start justify-between gap-3 mb-2">
+                                    <div className="min-w-0">
+                                      <span className="text-amber-400 font-semibold text-xs bg-amber-500/10 px-2 py-0.5 rounded">{cred.tipo_acceso || "Acceso"}</span>
+                                      {cred.url_acceso && (
+                                        <a href={cred.url_acceso} target="_blank" rel="noreferrer" className="block text-cyan-400 text-xs hover:underline truncate mt-1">
+                                          {cred.url_acceso}
+                                        </a>
+                                      )}
+                                    </div>
+                                    <button onClick={() => { setShowDetail(null); openCredenciales(d); }} className="text-slate-500 hover:text-amber-400 text-xs flex-shrink-0">Editar</button>
+                                  </div>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                      <p className="text-slate-500 text-xs mb-0.5">Usuario / ID</p>
+                                      <div className="flex items-center gap-2">
+                                        <p className="text-white text-sm font-mono truncate">{cred.usuario || "-"}</p>
+                                        {cred.usuario && <button onClick={() => copyToClipboard(cred.usuario)} className="text-slate-500 hover:text-cyan-400 flex-shrink-0"><Copy className="w-3 h-3" /></button>}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <p className="text-slate-500 text-xs mb-0.5">Contrasena</p>
+                                      <div className="flex items-center gap-2">
+                                        <p className="text-white text-sm font-mono truncate">{visible ? (cred.password || "-") : "********"}</p>
+                                        {cred.password && (
+                                          <>
+                                            <button onClick={() => setDetailPasswords(p => ({...p, [passKey]: !p[passKey]}))} className="text-slate-500 hover:text-amber-400 flex-shrink-0">{visible ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}</button>
+                                            <button onClick={() => copyToClipboard(cred.password)} className="text-slate-500 hover:text-cyan-400 flex-shrink-0"><Copy className="w-3 h-3" /></button>
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {cred.observaciones && <p className="text-slate-500 text-xs mt-2 italic">{cred.observaciones}</p>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ACTIVOS ASOCIADOS */}
+                      {(detailCameras.length > 0 || detailParentNvr) && (
+                        <div className="border border-cyan-500/20 rounded-lg overflow-hidden">
+                          <div className="bg-cyan-500/5 p-3 flex items-center gap-2 border-b border-cyan-500/10">
+                            <Link2 className="w-4 h-4 text-cyan-400" />
+                            <span className="text-cyan-400 font-semibold text-sm">Activos asociados</span>
+                            <span className="text-slate-500 text-xs">({detailCameras.length + (detailParentNvr ? 1 : 0)})</span>
+                          </div>
+                          <div className="p-3 space-y-2">
+                            {detailParentNvr && (
+                              <button onClick={() => navigateToActivo(detailParentNvr.id)}
+                                className="w-full bg-arandu-dark rounded-lg p-3 border border-white/5 hover:border-cyan-500/30 transition-all text-left flex items-center gap-3">
+                                <div className="w-9 h-9 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400 flex-shrink-0">
+                                  {categoriaIconMap[detailParentNvr.categoria] || <Server className="w-4 h-4" />}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-white text-sm font-medium truncate">{detailParentNvr.nombre}</p>
+                                  <p className="text-slate-500 text-xs">NVR/DVR asociado</p>
+                                </div>
+                                <Eye className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                              </button>
+                            )}
+                            {detailCameras.map(cam => {
+                              const camIps = allIps(cam);
+                              return (
+                                <button key={cam.id} onClick={() => navigateToActivo(cam.id)}
+                                  className="w-full bg-arandu-dark rounded-lg p-3 border border-white/5 hover:border-cyan-500/30 transition-all text-left flex items-center gap-3">
+                                  <div className="w-9 h-9 rounded-lg bg-cyan-500/10 flex items-center justify-center text-cyan-400 flex-shrink-0">
+                                    {categoriaIconMap[cam.categoria] || <Server className="w-4 h-4" />}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-white text-sm font-medium truncate">{cam.nombre}</p>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-slate-500 text-xs">{cam.subtipo || cam.categoria}</span>
+                                      {camIps.locals.length > 0 && <span className="text-slate-400 text-xs font-mono">{camIps.locals[0]}</span>}
+                                    </div>
+                                  </div>
+                                  <Eye className="w-4 h-4 text-slate-500 flex-shrink-0" />
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* CUENTAS DE ACCESO ASIGNADAS COMO ACTIVOS */}
+                      <div className="border border-amber-500/20 rounded-lg overflow-hidden">
+                        <div className="bg-amber-500/5 p-3 flex items-center gap-2 border-b border-amber-500/10">
+                          <Key className="w-4 h-4 text-amber-400" />
+                          <span className="text-amber-400 font-semibold text-sm">Cuentas de acceso asignadas como activos</span>
                           <span className="text-slate-500 text-xs">({detailCuentas.length})</span>
                         </div>
                         {detailCuentas.length === 0 ? (
@@ -1559,4 +1855,3 @@ const filteredActivos = useMemo(() => {
 };
 
 export default InventarioPage;
-

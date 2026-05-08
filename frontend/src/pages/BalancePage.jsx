@@ -24,6 +24,7 @@ const FUENTE_COLOR = {
   "Costos fijos":        "text-orange-400",  // legacy: por si vienen registros viejos
   "Sueldos":             "text-violet-400",
   "Facturas recibidas":  "text-red-400",
+  "Pago IVA":            "text-amber-400",
 };
 
 function getMesActual() {
@@ -103,9 +104,13 @@ export default function BalancePage() {
   // Cuentas bancarias (para mostrar desglose por banco)
   const [cuentasBancarias, setCuentasBancarias] = useState([]);
 
-  const [vistaIvaMode, setVistaIvaMode] = useState("mensual"); // "mensual" | "anual"
+  const [vistaIvaMode, setVistaIvaMode] = useState("mensual"); // "mensual" | "anual" | "todo"
   const [ivaAnualData, setIvaAnualData] = useState([]);
+  const [ivaResumen, setIvaResumen] = useState(null);
   const [loadingIvaAnual, setLoadingIvaAnual] = useState(false);
+  const [showPagoIvaModal, setShowPagoIvaModal] = useState(false);
+  const [pagoIvaForm, setPagoIvaForm] = useState({ descripcion: "", monto: "", fecha_pago: new Date().toISOString().slice(0, 10), periodo_iva: getMesActual(), cuenta_id: "", notas: "" });
+  const [savingPagoIva, setSavingPagoIva] = useState(false);
 
   // Conversiones de divisas
   const [conversiones, setConversiones] = useState([]);
@@ -171,24 +176,32 @@ export default function BalancePage() {
   const fetchIvaAnual = useCallback(async () => {
     setLoadingIvaAnual(true);
     try {
-      const logo = activeEmpresaPropia?.slug;
-      const promises = Array.from({ length: 12 }, (_, i) => {
-        const mes = `${anio}-${String(i + 1).padStart(2, "0")}`;
-        let q = `?periodo=${mes}`;
-        if (logo) q += `&logo_tipo=${logo}`;
-        return fetch(`${API}/admin/balance/iva${q}`, { headers }).then(r => r.ok ? r.json() : null);
-      });
-      const results = await Promise.all(promises);
-      setIvaAnualData(results.map((r, i) => ({
-        ...r,
-        periodo: `${anio}-${String(i + 1).padStart(2, "0")}`,
-        iva_debito: r?.iva_debito || 0,
-        iva_credito: r?.iva_credito || 0,
-        iva_neto: r?.iva_neto || 0,
-      })));
+      const q = new URLSearchParams({ anio: String(anio) });
+      if (activeEmpresaPropia?.slug) q.set("logo_tipo", activeEmpresaPropia.slug);
+      const res = await fetch(`${API}/admin/balance/iva/resumen?${q}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setIvaResumen(data);
+        setIvaAnualData(data.meses || []);
+      }
     } catch { toast.error("Error al cargar IVA anual"); }
     finally { setLoadingIvaAnual(false); }
   }, [anio, activeEmpresaPropia]); // eslint-disable-line
+
+  const fetchIvaTodo = useCallback(async () => {
+    setLoadingIvaAnual(true);
+    try {
+      const q = new URLSearchParams({ todo: "true" });
+      if (activeEmpresaPropia?.slug) q.set("logo_tipo", activeEmpresaPropia.slug);
+      const res = await fetch(`${API}/admin/balance/iva/resumen?${q}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setIvaResumen(data);
+        setIvaAnualData(data.meses || []);
+      }
+    } catch { toast.error("Error al cargar IVA"); }
+    finally { setLoadingIvaAnual(false); }
+  }, [activeEmpresaPropia]); // eslint-disable-line
 
   useEffect(() => {
     fetchCuentasBancarias();
@@ -199,9 +212,10 @@ export default function BalancePage() {
     else if (vista === "anual") fetchAnual();
     else if (vista === "iva") {
       if (vistaIvaMode === "mensual") fetchIva();
-      else fetchIvaAnual();
+      else if (vistaIvaMode === "anual") fetchIvaAnual();
+      else fetchIvaTodo();
     }
-  }, [vista, fetchMes, fetchAnual, fetchConversiones, fetchIva, vistaIvaMode, fetchIvaAnual]);
+  }, [vista, fetchMes, fetchAnual, fetchConversiones, fetchIva, vistaIvaMode, fetchIvaAnual, fetchIvaTodo]);
 
   // ── Conversiones ──────────────────────────────────────────
   const openConvModal = () => {
@@ -246,6 +260,59 @@ export default function BalancePage() {
       toast.success("Conversión eliminada");
       fetchConversiones();
     } catch { toast.error("Error al eliminar"); }
+  };
+
+  const openPagoIvaModal = () => {
+    const sugerido = ivaData?.saldo_pendiente_acumulado > 0
+      ? ivaData.saldo_pendiente_acumulado
+      : Math.max(0, ivaData?.iva_neto || 0);
+    const cuentaDefault = cuentasBancarias.find(c => c.moneda === "PYG" && c.activa !== false);
+    setPagoIvaForm({
+      descripcion: `Pago IVA ${mesLabel(periodo)}`,
+      monto: sugerido ? String(Math.round(sugerido)) : "",
+      fecha_pago: new Date().toISOString().slice(0, 10),
+      periodo_iva: periodo,
+      cuenta_id: cuentaDefault?.id || "",
+      notas: "",
+    });
+    setShowPagoIvaModal(true);
+  };
+
+  const handlePagoIva = async (e) => {
+    e.preventDefault();
+    if (!pagoIvaForm.monto || Number(pagoIvaForm.monto) <= 0) { toast.error("Completá el monto"); return; }
+    if (!pagoIvaForm.periodo_iva) { toast.error("Seleccioná el periodo IVA"); return; }
+    if (!pagoIvaForm.cuenta_id) { toast.error("Seleccioná la cuenta bancaria"); return; }
+    const cuenta = cuentasBancarias.find(c => c.id === pagoIvaForm.cuenta_id);
+    setSavingPagoIva(true);
+    try {
+      const res = await fetch(`${API}/admin/balance/iva/pagos`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          descripcion: pagoIvaForm.descripcion || `Pago IVA ${mesLabel(pagoIvaForm.periodo_iva)}`,
+          periodo_iva: pagoIvaForm.periodo_iva,
+          fecha_pago: pagoIvaForm.fecha_pago,
+          monto: Math.abs(Number(pagoIvaForm.monto)),
+          logo_tipo: activeEmpresaPropia?.slug || "arandujar",
+          cuenta_id: pagoIvaForm.cuenta_id,
+          cuenta_nombre: cuenta?.nombre || null,
+          notas: pagoIvaForm.notas || null,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Error al registrar pago");
+      }
+      toast.success("Pago IVA registrado");
+      setShowPagoIvaModal(false);
+      fetchIva();
+      if (vistaIvaMode === "anual") fetchIvaAnual();
+      if (vistaIvaMode === "todo") fetchIvaTodo();
+      fetchMes();
+      fetchCuentasBancarias();
+    } catch (e) { toast.error(e.message || "Error al registrar pago IVA"); }
+    finally { setSavingPagoIva(false); }
   };
 
   // ─── Helper UI ────────────────────────────────────────────
@@ -301,7 +368,7 @@ export default function BalancePage() {
           </div>
 
           {/* Navegación periodo */}
-          {vista === "mes" ? (
+          {(vista === "mes" || (vista === "iva" && vistaIvaMode === "mensual")) ? (
             <div className="flex items-center gap-2">
               <button onClick={() => setPeriodo(prevMes(periodo))} className="p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">
                 <ChevronLeft className="w-5 h-5" />
@@ -314,6 +381,8 @@ export default function BalancePage() {
                 Hoy
               </button>
             </div>
+          ) : vista === "iva" && vistaIvaMode === "todo" ? (
+            <div className="text-slate-500 text-sm px-2">Todo el tiempo</div>
           ) : (
             <div className="flex items-center gap-2">
               <button onClick={() => setAnio(a => a - 1)} className="p-1.5 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">
@@ -698,8 +767,12 @@ export default function BalancePage() {
             <div className="space-y-6">
               {/* Toggle mensual / anual */}
               <div className="flex gap-1 bg-white/5 rounded-xl p-1 w-fit">
-                {[{ key: "mensual", label: "Por mes" }, { key: "anual", label: "Por año" }].map(v => (
-                  <button key={v.key} onClick={() => { setVistaIvaMode(v.key); if (v.key === "mensual") fetchIva(); else fetchIvaAnual(); }}
+                {[
+                  { key: "mensual", label: "Por mes" },
+                  { key: "anual", label: "Por año" },
+                  { key: "todo", label: "Todo el tiempo" },
+                ].map(v => (
+                  <button key={v.key} onClick={() => setVistaIvaMode(v.key)}
                     className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${vistaIvaMode === v.key ? "bg-amber-600 text-white shadow" : "text-slate-400 hover:text-white"}`}>
                     {v.label}
                   </button>
@@ -714,7 +787,10 @@ export default function BalancePage() {
                   ) : ivaData ? (
                     <>
                       {/* Cards resumen */}
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      {(() => {
+                        const saldoActualIva = (ivaData.iva_neto || 0) - (ivaData.pagos_iva_mes || 0);
+                        return (
+                      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                         <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-5">
                           <p className="text-cyan-400 text-xs mb-1">IVA Débito Fiscal</p>
                           <p className="text-xs text-slate-500 mb-2">De facturas emitidas</p>
@@ -743,6 +819,16 @@ export default function BalancePage() {
                             {ivaData.a_favor ? "✓ A favor" : "⚠ A pagar"}
                           </span>
                         </div>
+                        <div className={`rounded-xl p-5 border ${saldoActualIva > 0 ? "bg-red-500/10 border-red-500/20" : saldoActualIva < 0 ? "bg-emerald-500/10 border-emerald-500/20" : "bg-slate-500/10 border-slate-500/20"}`}>
+                          <p className={`text-xs mb-1 ${saldoActualIva > 0 ? "text-red-400" : saldoActualIva < 0 ? "text-emerald-400" : "text-slate-400"}`}>Saldo actual</p>
+                          <p className="text-xs text-slate-500 mb-2">{saldoActualIva > 0 ? "Pendiente luego de pagos" : saldoActualIva < 0 ? "A favor luego de pagos" : "IVA al día"}</p>
+                          <p className={`font-heading font-bold text-2xl ${saldoActualIva > 0 ? "text-red-300" : saldoActualIva < 0 ? "text-emerald-300" : "text-slate-300"}`}>
+                            {fmtPYG(Math.abs(saldoActualIva))}
+                          </p>
+                          {(ivaData.pagos_iva_mes || 0) > 0 && (
+                            <p className="text-slate-500 text-xs mt-1">Pagado: {fmtPYG(ivaData.pagos_iva_mes)}</p>
+                          )}
+                        </div>
                         {/* Saldo acumulado desde enero */}
                         <div className={`rounded-xl p-5 border ${(ivaData.saldo_pendiente_acumulado || 0) > 0 ? "bg-orange-500/10 border-orange-500/30" : "bg-teal-500/10 border-teal-500/20"}`}>
                           <p className={`text-xs mb-1 ${(ivaData.saldo_pendiente_acumulado || 0) > 0 ? "text-orange-400" : "text-teal-400"}`}>
@@ -758,6 +844,45 @@ export default function BalancePage() {
                             <p className="text-slate-500 text-xs mt-1">Ya pagado: {fmtPYG(ivaData.iva_pagado_acumulado)}</p>
                           )}
                         </div>
+                      </div>
+                        );
+                      })()}
+
+                      <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+                        <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-2">
+                          <span className="text-amber-400 font-medium text-sm">Pagos directos a la SET ({mesLabel(ivaData.periodo)})</span>
+                          <span className="text-amber-300 font-heading font-bold text-sm">{fmtPYG(ivaData.pagos_iva_mes || 0)}</span>
+                        </div>
+                        {!ivaData.pagos_iva_detalle || ivaData.pagos_iva_detalle.length === 0 ? (
+                          <p className="text-slate-500 text-sm text-center py-5">Sin pagos registrados para este IVA</p>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full min-w-[620px] text-sm">
+                              <thead>
+                                <tr className="border-b border-white/10">
+                                  <th className="text-left text-slate-400 text-xs font-medium px-4 py-2">Fecha pago</th>
+                                  <th className="text-left text-slate-400 text-xs font-medium px-4 py-2">Descripcion</th>
+                                  <th className="text-left text-slate-400 text-xs font-medium px-4 py-2">Cuenta</th>
+                                  <th className="text-right text-slate-400 text-xs font-medium px-4 py-2">Monto</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {ivaData.pagos_iva_detalle.map((p, i) => (
+                                  <tr key={p.id || i} className="border-b border-white/5 hover:bg-white/3">
+                                    <td className="px-4 py-2 text-slate-300">{p.fecha_pago || "-"}</td>
+                                    <td className="px-4 py-2">
+                                      <p className="text-white">{p.descripcion || `Pago IVA ${p.periodo_iva || ivaData.periodo}`}</p>
+                                      {p.notas && <p className="text-slate-500 text-xs">{p.notas}</p>}
+                                      {p.legacy && <p className="text-amber-500 text-xs">Registro anterior</p>}
+                                    </td>
+                                    <td className="px-4 py-2 text-slate-400">{p.cuenta_nombre || "-"}</td>
+                                    <td className="px-4 py-2 text-right text-amber-300 font-medium">{fmtPYG(p.monto || 0)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
                       </div>
 
                       {/* Historial de IVA por mes (mini tabla) */}
@@ -921,26 +1046,38 @@ export default function BalancePage() {
                 </>
               )}
 
-              {/* VISTA ANUAL */}
-              {vistaIvaMode === "anual" && (
+              {/* VISTA ANUAL / TODO */}
+              {(vistaIvaMode === "anual" || vistaIvaMode === "todo") && (
                 <div className="space-y-4">
                   {loadingIvaAnual ? (
-                    <div className="text-slate-500 text-center py-12">Calculando IVA anual...</div>
+                    <div className="text-slate-500 text-center py-12">Calculando IVA...</div>
                   ) : (
                     <>
                       {/* Summary cards for year */}
-                      <div className="grid grid-cols-3 gap-4">
+                      {(() => {
+                        const totalDebito = ivaResumen?.total_debito ?? ivaAnualData.reduce((s, m) => s + m.iva_debito, 0);
+                        const totalCredito = ivaResumen?.total_credito ?? ivaAnualData.reduce((s, m) => s + m.iva_credito, 0);
+                        const totalPagado = ivaResumen?.total_pagado ?? ivaAnualData.reduce((s, m) => s + (m.pagos_iva || 0), 0);
+                        const totalNeto = ivaResumen?.total_neto ?? ivaAnualData.reduce((s, m) => s + m.iva_neto, 0);
+                        const saldoActual = totalNeto - totalPagado;
+                        return (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
                         {[
-                          { label: `Débito fiscal ${anio}`, value: fmtPYG(ivaAnualData.reduce((s, m) => s + m.iva_debito, 0)), color: "text-cyan-300", bg: "bg-cyan-500/10 border-cyan-500/20" },
-                          { label: `Crédito fiscal ${anio}`, value: fmtPYG(ivaAnualData.reduce((s, m) => s + m.iva_credito, 0)), color: "text-violet-300", bg: "bg-violet-500/10 border-violet-500/20" },
-                          { label: `IVA neto ${anio}`, value: fmtPYG(Math.abs(ivaAnualData.reduce((s, m) => s + m.iva_neto, 0))), color: ivaAnualData.reduce((s, m) => s + m.iva_neto, 0) > 0 ? "text-red-300" : "text-emerald-300", bg: ivaAnualData.reduce((s, m) => s + m.iva_neto, 0) > 0 ? "bg-red-500/10 border-red-500/20" : "bg-emerald-500/10 border-emerald-500/20" },
+                          { label: `Débito fiscal ${vistaIvaMode === "todo" ? "total" : anio}`, value: fmtPYG(totalDebito), color: "text-cyan-300", bg: "bg-cyan-500/10 border-cyan-500/20" },
+                          { label: `Crédito fiscal ${vistaIvaMode === "todo" ? "total" : anio}`, value: fmtPYG(totalCredito), color: "text-violet-300", bg: "bg-violet-500/10 border-violet-500/20" },
+                          { label: `IVA neto ${vistaIvaMode === "todo" ? "total" : anio}`, value: fmtPYG(Math.abs(totalNeto)), color: totalNeto > 0 ? "text-red-300" : "text-emerald-300", bg: totalNeto > 0 ? "bg-red-500/10 border-red-500/20" : "bg-emerald-500/10 border-emerald-500/20" },
+                          { label: `Pagado SET ${vistaIvaMode === "todo" ? "total" : anio}`, value: fmtPYG(totalPagado), color: "text-amber-300", bg: "bg-amber-500/10 border-amber-500/20" },
+                          { label: "Saldo actual", value: fmtPYG(Math.abs(saldoActual)), sub: saldoActual > 0 ? "Debe SET" : saldoActual < 0 ? "A favor" : "Al día", color: saldoActual > 0 ? "text-red-300" : saldoActual < 0 ? "text-emerald-300" : "text-slate-300", bg: saldoActual > 0 ? "bg-red-500/10 border-red-500/20" : saldoActual < 0 ? "bg-emerald-500/10 border-emerald-500/20" : "bg-slate-500/10 border-slate-500/20" },
                         ].map(card => (
                           <div key={card.label} className={`rounded-xl p-4 border ${card.bg}`}>
                             <p className="text-slate-400 text-xs mb-1">{card.label}</p>
                             <p className={`font-heading font-bold text-xl ${card.color}`}>{card.value}</p>
+                            {card.sub && <p className="text-slate-500 text-xs mt-1">{card.sub}</p>}
                           </div>
                         ))}
                       </div>
+                        );
+                      })()}
                       {/* Monthly IVA table */}
                       <div className="bg-white/5 border border-white/10 rounded-xl overflow-x-auto">
                         <table className="w-full min-w-[500px]">
@@ -950,6 +1087,7 @@ export default function BalancePage() {
                               <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">Débito</th>
                               <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">Crédito</th>
                               <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">IVA neto</th>
+                              <th className="text-right text-slate-400 text-xs font-medium px-4 py-3">Pagado</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -957,7 +1095,11 @@ export default function BalancePage() {
                               const isCurrentMes = m.periodo === getMesActual();
                               const neto = m.iva_neto || 0;
                               return (
-                                <tr key={m.periodo} className={`border-b border-white/5 ${isCurrentMes ? "bg-amber-500/5" : "hover:bg-white/3"}`}>
+                                <tr
+                                  key={m.periodo}
+                                  onClick={() => { setPeriodo(m.periodo); setVistaIvaMode("mensual"); }}
+                                  className={`border-b border-white/5 cursor-pointer ${isCurrentMes ? "bg-amber-500/5" : "hover:bg-white/3"}`}
+                                >
                                   <td className="px-4 py-3">
                                     <span className={`text-sm font-medium ${isCurrentMes ? "text-amber-300" : "text-white"}`}>
                                       {mesLabel(m.periodo)}
@@ -973,13 +1115,16 @@ export default function BalancePage() {
                                       </span>
                                     )}
                                   </td>
+                                  <td className="px-4 py-3 text-right text-amber-300 text-sm">
+                                    {m.pagos_iva ? fmtPYG(m.pagos_iva) : <span className="text-slate-600">—</span>}
+                                  </td>
                                 </tr>
                               );
                             })}
                           </tbody>
                           <tfoot>
                             <tr className="border-t border-white/20 bg-white/5">
-                              <td className="px-4 py-3 text-slate-300 text-sm font-medium">Total {anio}</td>
+                              <td className="px-4 py-3 text-slate-300 text-sm font-medium">Total {vistaIvaMode === "todo" ? "general" : anio}</td>
                               <td className="px-4 py-3 text-right text-cyan-300 font-heading font-bold">{fmtPYG(ivaAnualData.reduce((s, m) => s + m.iva_debito, 0))}</td>
                               <td className="px-4 py-3 text-right text-violet-300 font-heading font-bold">{fmtPYG(ivaAnualData.reduce((s, m) => s + m.iva_credito, 0))}</td>
                               <td className="px-4 py-3 text-right">
@@ -989,6 +1134,7 @@ export default function BalancePage() {
                                   </span>
                                 ); })()}
                               </td>
+                              <td className="px-4 py-3 text-right text-amber-300 font-heading font-bold">{fmtPYG(ivaAnualData.reduce((s, m) => s + (m.pagos_iva || 0), 0))}</td>
                             </tr>
                           </tfoot>
                         </table>
@@ -1003,6 +1149,87 @@ export default function BalancePage() {
           </>
         )}
       </div>
+
+      {/* ══ MODAL PAGO IVA ══ */}
+      {showPagoIvaModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onMouseDown={(e) => e.target === e.currentTarget && setShowPagoIvaModal(false)}>
+          <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-md">
+            <div className="flex items-center justify-between p-6 border-b border-white/10">
+              <div>
+                <h2 className="text-white font-heading font-bold text-lg">Registrar pago IVA</h2>
+                <p className="text-slate-400 text-sm mt-0.5">{mesLabel(periodo)}</p>
+              </div>
+              <button onClick={() => setShowPagoIvaModal(false)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handlePagoIva} className="p-6 space-y-4">
+              {ivaData?.saldo_pendiente_acumulado > 0 && (
+                <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-3 flex justify-between">
+                  <span className="text-orange-300 text-sm">Saldo IVA acumulado</span>
+                  <span className="text-orange-300 font-bold">{fmtPYG(ivaData.saldo_pendiente_acumulado)}</span>
+                </div>
+              )}
+              <div>
+                <label className="text-slate-400 text-xs block mb-1">Descripción</label>
+                <input value={pagoIvaForm.descripcion} onChange={e => setPagoIvaForm(f => ({ ...f, descripcion: e.target.value }))}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500"
+                />
+              </div>
+              <div>
+                <label className="text-slate-400 text-xs block mb-1">Monto (PYG) *</label>
+                <input type="number" min="0" step="1" value={pagoIvaForm.monto} onChange={e => setPagoIvaForm(f => ({ ...f, monto: e.target.value }))}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500"
+                  required
+                />
+              </div>
+	              <div className="grid grid-cols-2 gap-3">
+	                <div>
+	                  <label className="text-slate-400 text-xs block mb-1">Periodo IVA *</label>
+	                  <input type="month" value={pagoIvaForm.periodo_iva} onChange={e => setPagoIvaForm(f => ({ ...f, periodo_iva: e.target.value, descripcion: f.descripcion || `Pago IVA ${mesLabel(e.target.value)}` }))}
+	                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500"
+	                    required
+	                  />
+	                </div>
+	                <div>
+	                  <label className="text-slate-400 text-xs block mb-1">Fecha pago *</label>
+	                  <input type="date" value={pagoIvaForm.fecha_pago} onChange={e => setPagoIvaForm(f => ({ ...f, fecha_pago: e.target.value }))}
+	                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500"
+	                    required
+	                  />
+	                </div>
+	              </div>
+	              <div>
+	                <label className="text-slate-400 text-xs block mb-1">Cuenta *</label>
+	                <select value={pagoIvaForm.cuenta_id} onChange={e => setPagoIvaForm(f => ({ ...f, cuenta_id: e.target.value }))}
+	                  className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500"
+	                  required>
+	                  <option value="">Seleccionar</option>
+	                  {cuentasBancarias.filter(c => c.moneda === "PYG").map(c => (
+	                    <option key={c.id} value={c.id}>{c.nombre}</option>
+	                  ))}
+	                </select>
+	              </div>
+	              <div>
+                <label className="text-slate-400 text-xs block mb-1">Notas</label>
+                <input value={pagoIvaForm.notas} onChange={e => setPagoIvaForm(f => ({ ...f, notas: e.target.value }))}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500"
+                  placeholder="Comprobante, banco, referencia..."
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowPagoIvaModal(false)} className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm">
+                  Cancelar
+                </button>
+                <button type="submit" disabled={savingPagoIva} className="flex-1 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+                  {savingPagoIva ? "Guardando..." : "Registrar pago"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ══ MODAL CONVERSIÓN DE DIVISAS ══ */}
       {showConvModal && (

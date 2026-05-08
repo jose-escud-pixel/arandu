@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, TrendingDown, TrendingUp, ShoppingCart, Calendar, Users, Clock,
@@ -160,16 +160,12 @@ function calcularIPS(emp) {
   return Math.round(base*0.09);
 }
 function calcMontoAPagar(emp, adelantos, extras, descuentos) {
-  // Comportamiento simétrico:
-  //  - Adelantos: se le pagaron al empleado por adelantado → se descuentan acá.
-  //  - Extras:    se le pagaron al empleado en su fecha (egreso ya contado en
-  //    balance) → NO se vuelven a sumar al sueldo a fin de mes (sería pagar dos veces).
-  // Nota: dejamos `extras` como argumento para compatibilidad pero no lo usamos.
   const base = parseFloat(emp.sueldo_base)||0;
   const ips = emp.aplica_ips !== false ? calcularIPS(emp) : 0;
   const totAd = (adelantos||[]).reduce((s,a)=>s+(a.monto||0),0);
+  const totEx = (extras||[]).reduce((s,e)=>s+(e.monto||0),0);
   const totDe = (descuentos||[]).reduce((s,d)=>s+(parseFloat(d.monto)||0),0);
-  return Math.max(0, base-ips-totAd-totDe);
+  return Math.max(0, base+totEx-ips-totAd-totDe);
 }
 function fmtSueldo(monto, moneda="PYG") {
   if (!monto && monto!==0) return "-";
@@ -191,16 +187,16 @@ function SueldosTab({ sueldosVenc, loadingSueldos, empleados, loadingEmpleados,
   openSueldo, openAdelanto, openExtra, handleDeleteSueldo,
   openCreateEmpleado, openEditEmpleado, handleToggleEmpleado, handleDeleteEmpleado,
   openAumentoSueldo, openHistorialSueldos, openSueldoView, mesLabel }) {
-  const pagados    = sueldosVenc.filter(e => e.estado === "pagado");
-  const pendientes = sueldosVenc.filter(e => e.estado !== "pagado");
-  const montoPagado = pagados.reduce((s,e) => s + (e.sueldo_registrado?.monto_pagado || e.sueldo_base || 0), 0);
-  const vencidos   = sueldosVenc.filter(e => e.estado === "vencido").length;
-  const filtradosSueldos = sueldosVenc.filter(e => {
+  const sueldosSafe = Array.isArray(sueldosVenc) ? sueldosVenc : [];
+  const empleadosSafe = Array.isArray(empleados) ? empleados : [];
+  const adelantosSafe = adelantosMap || {};
+  const extrasSafe = extrasMap || {};
+  const filtradosSueldos = sueldosSafe.filter(e => {
     const texto = [e.nombre, e.apellido, e.cargo, String(e.sueldo_base||""), e.logo_tipo,
       LOGO_LABEL_EMP[e.logo_tipo]?.label||"", e.estado].filter(Boolean).join(" ");
     return matchChips(sueldosChips, sueldosInput, texto);
   });
-  const filtradosEmp = empleados.filter(e => {
+  const filtradosEmp = empleadosSafe.filter(e => {
     const texto = [e.nombre, e.apellido, e.cargo, e.logo_tipo, LOGO_LABEL_EMP[e.logo_tipo]?.label||"",
       String(e.sueldo_base||""), e.activo?"activo":"inactivo"].filter(Boolean).join(" ");
     return matchChips(sueldosChips, sueldosInput, texto);
@@ -243,24 +239,6 @@ function SueldosTab({ sueldosVenc, loadingSueldos, empleados, loadingEmpleados,
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-              <div className="bg-arandu-dark-light border border-white/5 rounded-xl p-4">
-                <p className="text-slate-400 text-xs mb-1">Empleados</p>
-                <p className="text-white font-bold text-2xl">{sueldosVenc.length}</p>
-              </div>
-              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
-                <p className="text-emerald-400 text-xs mb-1">Pagados</p>
-                <p className="text-emerald-300 font-bold text-2xl">{pagados.length}</p>
-              </div>
-              <div className={`border rounded-xl p-4 ${vencidos>0?"bg-red-500/10 border-red-500/20":"bg-amber-500/10 border-amber-500/20"}`}>
-                <p className={`text-xs mb-1 ${vencidos>0?"text-red-400":"text-amber-400"}`}>Pendientes{vencidos>0?` / ${vencidos} vencido${vencidos>1?"s":""}`:""}</p>
-                <p className={`font-bold text-2xl ${vencidos>0?"text-red-300":"text-amber-300"}`}>{pendientes.length}</p>
-              </div>
-              <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl p-4">
-                <p className="text-violet-400 text-xs mb-1">Total pagado</p>
-                <p className="text-violet-300 font-bold text-lg">{fmtSueldo(montoPagado,"PYG")}</p>
-              </div>
-            </div>
             {loadingSueldos ? (
               <div className="text-center py-10 text-violet-400 animate-pulse">Cargando sueldos...</div>
             ) : filtradosSueldos.length === 0 ? (
@@ -290,14 +268,14 @@ function SueldosTab({ sueldosVenc, loadingSueldos, empleados, loadingEmpleados,
                         <td className="px-4 py-3">
                           <p className="text-white font-medium">{emp.nombre} {emp.apellido}</p>
                           <div className="flex flex-wrap gap-1 mt-1">
-                            {adelantosMap[emp.id] && (
+                            {adelantosSafe[emp.id] && (
                               <span className="inline-flex items-center gap-1 bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs px-1.5 py-0.5 rounded-full">
-                                <DollarSign className="w-3 h-3"/> Adelanto: {fmtSueldo(adelantosMap[emp.id].reduce((s,a)=>s+(a.monto||0),0), adelantosMap[emp.id][0]?.moneda||"PYG")}
+                                <DollarSign className="w-3 h-3"/> Adelanto: {fmtSueldo(adelantosSafe[emp.id].reduce((s,a)=>s+(a.monto||0),0), adelantosSafe[emp.id][0]?.moneda||"PYG")}
                               </span>
                             )}
-                            {extrasMap[emp.id] && (
+                            {extrasSafe[emp.id] && (
                               <span className="inline-flex items-center gap-1 bg-green-500/15 border border-green-500/30 text-green-300 text-xs px-1.5 py-0.5 rounded-full">
-                                <Star className="w-3 h-3"/> Extra: {fmtSueldo(extrasMap[emp.id].reduce((s,e)=>s+(e.monto||0),0), extrasMap[emp.id][0]?.moneda||"PYG")}
+                                <Star className="w-3 h-3"/> Extra: {fmtSueldo(extrasSafe[emp.id].reduce((s,e)=>s+(e.monto||0),0), extrasSafe[emp.id][0]?.moneda||"PYG")}
                               </span>
                             )}
                           </div>
@@ -447,8 +425,11 @@ const emptyEmpleado = {
 function toFloatEmp(v) { const n = parseFloat(v); return isNaN(n) ? null : n; }
 // ─────────────────────────────────────────────────────────────────────────────
 const EgresosPage = () => {
-  const { token, user, hasPermission, activeEmpresaPropia } = useContext(AuthContext);
+  const { token, user, hasPermission, hasModule, activeEmpresaPropia } = useContext(AuthContext);
+  const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = user?.role === "admin";
+  const puedeUsarStockProductos = hasModule?.("productos_stock");
+  const puedeCambiarAfectaStockCompra = isAdmin || hasPermission("compras.afectar_stock");
 
   // ── Tab activo ──────────────────────────────────────────────────────────────
   const [tab, setTab] = useState("compras");
@@ -471,11 +452,16 @@ const EgresosPage = () => {
   const [productos, setProductos] = useState([]);
   const [showProductoBrowser, setShowProductoBrowser] = useState(false);
   const [productoSearch, setProductoSearch] = useState("");
+  const [notasCompra, setNotasCompra] = useState([]);
+  const [showNotaCompraForm, setShowNotaCompraForm] = useState(false);
+  const [editingNotaCompra, setEditingNotaCompra] = useState(null);
+  const [notaCompraForm, setNotaCompraForm] = useState({ numero: "", fecha: hoy(), compra_id: "", compra_numero_factura: "", proveedor_id: "", proveedor_nombre: "", motivo: "", monto: "", moneda: "PYG", tipo_cambio: "", notas: "" });
 
   // ── Costos Fijos state ──────────────────────────────────────────────────────
   const [costos, setCostos] = useState([]);
   const [loadingCostos, setLoadingCostos] = useState(false);
   const [vencimientos, setVencimientos] = useState([]);
+  const [pagosCostos, setPagosCostos] = useState([]);
   const [loadingVenc, setLoadingVenc] = useState(false);
   const [costosLogoFilter, setCostosLogoFilter] = useState("todas");
   const COSTOS_FRECUENCIAS = [
@@ -570,11 +556,13 @@ const EgresosPage = () => {
 
   // ── Pago IVA state ──────────────────────────────────────────────────────────
   const [ivaBalance, setIvaBalance] = useState(null);
+  const [ivaResumen, setIvaResumen] = useState(null);
   const [pagosIvaList, setPagosIvaList] = useState([]);
   const [loadingIva, setLoadingIva] = useState(false);
   const [periodoIva, setPeriodoIva] = useState(mesActual());
   const [showPagoIvaForm, setShowPagoIvaForm] = useState(false);
-  const [pagoIvaForm, setPagoIvaForm] = useState({ monto: "", fecha: hoy(), notas: "", descripcion: "" });
+  const [editingPagoIva, setEditingPagoIva] = useState(null);
+  const [pagoIvaForm, setPagoIvaForm] = useState({ descripcion: "", monto: "", fecha_pago: hoy(), periodo_iva: mesActual(), cuenta_id: "", cuenta_nombre: "", notas: "" });
 
   // ── Init ────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -585,12 +573,42 @@ const EgresosPage = () => {
   }, []);
 
   useEffect(() => {
-    if (tab === "compras") fetchCompras();
+    if (tab === "compras") { fetchCompras(); fetchNotasCompra(); }
     if (tab === "costos") { fetchCostos(); fetchVencimientos(filtroMes, filtroTipo, filtroAnio); }
     if (tab === "sueldos") { fetchEmpleados(); fetchSueldosVenc(filtroMes); }
     if (tab === "proveedores-pagos") fetchTodosPagosProveedores();
     if (tab === "pago-iva") fetchIvaData();
   }, [tab]);
+
+  useEffect(() => {
+    const nuevo = searchParams.get("nuevo");
+    if (!nuevo) return;
+    if (nuevo === "compra" && hasPermission("compras.crear")) {
+      setTab("compras");
+      openNewCompra();
+    } else if (nuevo === "gasto" && hasPermission("costos_fijos.crear")) {
+      setTab("costos");
+      setEditingCostoId(null);
+      setCostoFormData({ logo_tipo: activeEmpresaPropia?.slug || "arandujar", nombre: "", descripcion: "", categoria: "", monto: "", moneda: "PYG", tipo_cambio: "", frecuencia: "mensual", dia_vencimiento: 1, fecha_inicio: new Date().toISOString().slice(0,10), fecha_fin: "", activo: true, notas: "" });
+      setShowCostoForm(true);
+    } else if (nuevo === "pago_proveedor" && hasPermission("pagos_proveedores.crear")) {
+      setTab("proveedores-pagos");
+      setPagoProvForm(emptyPagoProvForm());
+      setEditingPagoProv(null);
+      setComprasProvList([]);
+      setShowPagoProvForm(true);
+    } else if (nuevo === "pago_iva" && hasPermission("balance.editar")) {
+      setTab("pago-iva");
+      setTimeout(() => openNewPagoIva(), 0);
+    } else if (nuevo === "empleado" && hasPermission("empleados.crear")) {
+      setTab("sueldos");
+      setSueldosSubTab("empleados");
+      openCreateEmpleado();
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("nuevo");
+    setSearchParams(next, { replace: true });
+  }, [searchParams]); // eslint-disable-line
 
   // ── Fetches ─────────────────────────────────────────────────────────────────
   const fetchCuentasDisp = async () => {
@@ -609,6 +627,10 @@ const EgresosPage = () => {
   };
 
   const fetchProveedores = async (logoTipo = null) => {
+    if (!hasPermission("proveedores.ver")) {
+      setProveedores([]);
+      return;
+    }
     try {
       const params = new URLSearchParams({ activo: "true" });
       if (logoTipo && logoTipo !== "todas") params.set("logo_tipo", logoTipo);
@@ -618,6 +640,10 @@ const EgresosPage = () => {
   };
 
   const fetchProductos = async () => {
+    if (!puedeUsarStockProductos) {
+      setProductos([]);
+      return;
+    }
     try {
       const res = await fetch(`${API}/admin/productos?limit=500`, { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) { const d = await res.json(); setProductos(d.productos || d || []); }
@@ -637,6 +663,18 @@ const EgresosPage = () => {
     finally { setLoadingCompras(false); }
   };
 
+  const fetchNotasCompra = async () => {
+    try {
+      if (!hasPermission("notas_credito.ver")) return;
+      const params = new URLSearchParams({ tipo: "compra" });
+      if (filtroTipo === "mes" && filtroMes) params.set("mes", filtroMes);
+      if (filtroTipo === "anio" && filtroAnio) params.set("anio", filtroAnio);
+      if (activeEmpresaPropia?.slug) params.set("logo_tipo", activeEmpresaPropia.slug);
+      const res = await fetch(`${API}/admin/notas-credito?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) setNotasCompra(await res.json());
+    } catch (e) {}
+  };
+
   const fetchCostos = async (logoFilter) => {
     setLoadingCostos(true);
     try {
@@ -652,14 +690,22 @@ const EgresosPage = () => {
     setLoadingVenc(true);
     const hdrs = { Authorization: `Bearer ${token}` };
     try {
+      const logo = activeEmpresaPropia?.slug;
+      const pagosParams = new URLSearchParams();
+      if (tipo === "mes" && periodo) pagosParams.set("mes", periodo);
+      if (tipo === "anio" && anio) pagosParams.set("anio", anio);
+      if (logo) pagosParams.set("logo_tipo", logo);
+      const pagosRes = await fetch(`${API}/admin/costos-fijos-pagos?${pagosParams}`, { headers: hdrs });
+      setPagosCostos(pagosRes.ok ? await pagosRes.json() : []);
+
       if (tipo === "todos") {
-        // Traer todos los costos (sin filtro de logo, el backend ya aplica permisos del user)
-        const res = await fetch(`${API}/admin/costos-fijos`, { headers: hdrs });
+        // Traer todos los costos de la empresa activa y cruzarlos con el mes actual.
+        const res = await fetch(`${API}/admin/costos-fijos${logo ? `?logo_tipo=${logo}` : ""}`, { headers: hdrs });
         if (res.ok) {
           const todos = await res.json();
           // Obtener estado del mes actual para cruzar
           const mesHoy = new Date().toISOString().slice(0, 7);
-          const resVenc = await fetch(`${API}/admin/costos-fijos/vencimientos?periodo=${mesHoy}`, { headers: hdrs });
+          const resVenc = await fetch(`${API}/admin/costos-fijos/vencimientos?periodo=${mesHoy}${logo ? `&logo_tipo=${logo}` : ""}`, { headers: hdrs });
           const vencActuales = resVenc.ok ? await resVenc.json() : [];
           const pagosMap = {};
           vencActuales.forEach(v => { pagosMap[v.costo_id] = v; });
@@ -676,7 +722,7 @@ const EgresosPage = () => {
         // 12 meses del año en paralelo
         const meses = Array.from({length:12}, (_,i) => `${anio}-${String(i+1).padStart(2,"0")}`);
         const results = await Promise.all(
-          meses.map(m => fetch(`${API}/admin/costos-fijos/vencimientos?periodo=${m}`, { headers: hdrs }).then(r => r.ok ? r.json() : []))
+          meses.map(m => fetch(`${API}/admin/costos-fijos/vencimientos?periodo=${m}${logo ? `&logo_tipo=${logo}` : ""}`, { headers: hdrs }).then(r => r.ok ? r.json() : []))
         );
         const seen = new Set();
         const all = results.flat().filter(v => {
@@ -689,11 +735,11 @@ const EgresosPage = () => {
         setVencimientos(all);
       } else {
         // Por mes
-        const res = await fetch(`${API}/admin/costos-fijos/vencimientos?periodo=${periodo}`, { headers: hdrs });
+        const res = await fetch(`${API}/admin/costos-fijos/vencimientos?periodo=${periodo}${logo ? `&logo_tipo=${logo}` : ""}`, { headers: hdrs });
         if (res.ok) setVencimientos(await res.json());
         else setVencimientos([]);
       }
-    } catch (e) { console.error("fetchVencimientos error:", e); setVencimientos([]); }
+    } catch (e) { console.error("fetchVencimientos error:", e); setVencimientos([]); setPagosCostos([]); }
     finally { setLoadingVenc(false); }
   };
 
@@ -780,8 +826,8 @@ const EgresosPage = () => {
         await Promise.all(data.map(async (emp) => {
           try {
             const [rAd, rEx] = await Promise.all([
-              fetch(`${API}/admin/empleados/${emp.id}/adelantos?periodo=${periodo}`, { headers: hdrs }),
-              fetch(`${API}/admin/empleados/${emp.id}/extras?periodo=${periodo}`, { headers: hdrs }),
+              fetch(`${API}/admin/empleados/${emp.id}/adelantos?periodo=${periodo}&incluir_consumidos=1`, { headers: hdrs }),
+              fetch(`${API}/admin/empleados/${emp.id}/extras?periodo=${periodo}&incluir_consumidos=1`, { headers: hdrs }),
             ]);
             if (rAd.ok) { const ads = await rAd.json(); if (ads.length) adMap[emp.id] = ads; }
             if (rEx.ok) { const exs = await rEx.json(); if (exs.length) exMap[emp.id] = exs; }
@@ -817,11 +863,15 @@ const EgresosPage = () => {
     setSavingSueldo(true);
     try {
       const montoPagado = calcMontoAPagar(selectedEmp, adelantosPeriodo, extrasPeriodo, formSueldo.descuentos_adicionales);
+      const totalExtras = extrasPeriodo.reduce((s,e)=>s+(e.monto||0),0);
+      const totalAdelantos = adelantosPeriodo.reduce((s,a)=>s+(a.monto||0),0);
       const payload = {
         periodo: formSueldo.periodo, monto_pagado: montoPagado, moneda: formSueldo.moneda,
         tipo_cambio: parseFloat(formSueldo.tipo_cambio)||null, fecha_pago: formSueldo.fecha_pago,
         descuento_ips: parseFloat(formSueldo.descuento_ips)||0,
         horas_extra: 0, monto_horas_extra: 0,
+        total_extras: totalExtras || null,
+        total_adelantos: totalAdelantos || null,
         descuentos_adicionales: formSueldo.descuentos_adicionales.reduce((s,d)=>s+(parseFloat(d.monto)||0),0)||null,
         notas: formSueldo.notas||null,
       };
@@ -1037,6 +1087,11 @@ const EgresosPage = () => {
 
 
   const fetchTodosPagosProveedores = async () => {
+    if (!hasPermission("pagos_proveedores.ver")) {
+      setTodosPagosProveedores([]);
+      setListaProveedores([]);
+      return;
+    }
     setLoadingTodosPagos(true);
     try {
       // Carga lista plana de todos los pagos + proveedores filtrados por empresa activa
@@ -1198,57 +1253,127 @@ const EgresosPage = () => {
   };
 
   // ── IVA ──────────────────────────────────────────────────────────────────────
-  const fetchIvaData = async () => {
-    setLoadingIva(true);
-    try {
-      const logo = activeEmpresaPropia?.slug;
-      const [ivaRes, pagosRes] = await Promise.all([
-        fetch(`${API}/admin/balance/iva?periodo=${periodoIva}${logo ? `&logo_tipo=${logo}` : ""}`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API}/admin/ingresos-varios?mes=${periodoIva}${logo ? `&logo_tipo=${logo}` : ""}`, { headers: { Authorization: `Bearer ${token}` } }),
-      ]);
-      if (ivaRes.ok) setIvaBalance(await ivaRes.json());
-      if (pagosRes.ok) {
-        const todos = await pagosRes.json();
-        setPagosIvaList(todos.filter(i => i.categoria === "Pago IVA" && i.monto < 0));
-      }
-    } catch (e) {}
-    finally { setLoadingIva(false); }
-  };
+	  const fetchIvaData = async () => {
+	    setLoadingIva(true);
+	    try {
+	      const logo = activeEmpresaPropia?.slug;
+	      if (filtroTipo === "mes") {
+	        const ivaRes = await fetch(`${API}/admin/balance/iva?periodo=${periodoIva}${logo ? `&logo_tipo=${logo}` : ""}`, { headers: { Authorization: `Bearer ${token}` } });
+	        if (ivaRes.ok) {
+	          const iva = await ivaRes.json();
+	          setIvaBalance(iva);
+	          setIvaResumen(null);
+	          setPagosIvaList(iva.pagos_iva_detalle || []);
+	        }
+	      } else {
+	        const params = new URLSearchParams();
+	        if (filtroTipo === "anio") params.set("anio", filtroAnio);
+	        if (filtroTipo === "todos") params.set("todo", "true");
+	        if (logo) params.set("logo_tipo", logo);
+	        const res = await fetch(`${API}/admin/balance/iva/resumen?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+	        if (res.ok) {
+	          const resumen = await res.json();
+	          setIvaResumen(resumen);
+	          setIvaBalance(null);
+	          setPagosIvaList((resumen.meses || []).flatMap(m => m.pagos_iva_detalle || []));
+	        }
+	      }
+	    } catch (e) {}
+	    finally { setLoadingIva(false); }
+	  };
 
-  const handlePagoIva = async (e) => {
-    e.preventDefault();
-    if (!pagoIvaForm.monto) { toast.error("Completá el monto"); return; }
-    try {
-      const res = await fetch(`${API}/admin/ingresos-varios`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          descripcion: pagoIvaForm.descripcion || `Pago IVA ${periodoIva}`,
-          categoria: "Pago IVA",
-          fecha: pagoIvaForm.fecha,
-          monto: -Math.abs(Number(pagoIvaForm.monto)),  // negativo = egreso
-          moneda: "PYG",
-          logo_tipo: activeEmpresaPropia?.slug || "arandujar",
-          notas: pagoIvaForm.notas || null,
-        }),
-      });
-      if (res.ok) {
-        toast.success("Pago IVA registrado — figura en balance como egreso");
-        setShowPagoIvaForm(false);
-        setPagoIvaForm({ monto: "", fecha: hoy(), notas: "", descripcion: "" });
-        fetchIvaData();
-      } else {
-        const err = await res.json();
-        toast.error(err.detail || "Error al registrar");
-      }
-    } catch (e) { toast.error("Error de conexión"); }
-  };
+	  const handlePagoIva = async (e) => {
+	    e.preventDefault();
+	    const monto = parseFloat(pagoIvaForm.monto) || 0;
+	    if (monto <= 0) { toast.error("Ingresá el monto del pago IVA"); return; }
+	    if (!pagoIvaForm.periodo_iva) { toast.error("Seleccioná el período IVA"); return; }
+	    if (!pagoIvaForm.fecha_pago) { toast.error("Seleccioná la fecha de pago"); return; }
+	    if (!pagoIvaForm.cuenta_id) { toast.error("Seleccioná la cuenta bancaria"); return; }
+	    const cuenta = cuentasDisp.find(c => c.id === pagoIvaForm.cuenta_id);
+	    try {
+	      const payload = {
+	        descripcion: pagoIvaForm.descripcion || `Pago IVA ${pagoIvaForm.periodo_iva}`,
+	        periodo_iva: pagoIvaForm.periodo_iva,
+	        fecha_pago: pagoIvaForm.fecha_pago,
+	        monto,
+	        logo_tipo: activeEmpresaPropia?.slug || "arandujar",
+	        cuenta_id: pagoIvaForm.cuenta_id,
+	        cuenta_nombre: cuenta?.nombre || pagoIvaForm.cuenta_nombre || null,
+	        notas: pagoIvaForm.notas || null,
+	      };
+	      const url = editingPagoIva ? `${API}/admin/balance/iva/pagos/${editingPagoIva.id}` : `${API}/admin/balance/iva/pagos`;
+	      const res = await fetch(url, {
+	        method: editingPagoIva ? "PUT" : "POST",
+	        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+	        body: JSON.stringify(payload),
+	      });
+	      if (!res.ok) {
+	        const err = await res.json().catch(() => ({}));
+	        throw new Error(err.detail || "Error al guardar pago IVA");
+	      }
+	      toast.success(editingPagoIva ? "Pago IVA actualizado" : "Pago IVA registrado");
+	      setShowPagoIvaForm(false);
+	      setEditingPagoIva(null);
+	      setPagoIvaForm({ descripcion: "", monto: "", fecha_pago: hoy(), periodo_iva: periodoIva, cuenta_id: "", cuenta_nombre: "", notas: "" });
+	      fetchIvaData();
+	    } catch (err) {
+	      toast.error(err.message || "Error al guardar pago IVA");
+	    }
+	  };
+
+	  const openNewPagoIva = () => {
+	    const cuentaDefault = cuentasDisp.find(c => c.moneda === "PYG" && c.activa !== false) || cuentasDisp[0];
+	    const sugerido = ivaBalance?.saldo_pendiente_acumulado > 0
+	      ? ivaBalance.saldo_pendiente_acumulado
+	      : Math.max(0, ivaBalance?.iva_neto || 0);
+	    setEditingPagoIva(null);
+	    setPagoIvaForm({
+	      descripcion: `Pago IVA ${periodoIva}`,
+	      monto: sugerido ? String(Math.round(sugerido)) : "",
+	      fecha_pago: hoy(),
+	      periodo_iva: periodoIva,
+	      cuenta_id: cuentaDefault?.id || "",
+	      cuenta_nombre: cuentaDefault?.nombre || "",
+	      notas: "",
+	    });
+	    setShowPagoIvaForm(true);
+	  };
+
+	  const openEditPagoIva = (pago) => {
+	    setEditingPagoIva(pago);
+	    setPagoIvaForm({
+	      descripcion: pago.descripcion || `Pago IVA ${pago.periodo_iva || periodoIva}`,
+	      monto: String(Math.abs(pago.monto || 0)),
+	      fecha_pago: pago.fecha_pago || hoy(),
+	      periodo_iva: pago.periodo_iva || periodoIva,
+	      cuenta_id: pago.cuenta_id || "",
+	      cuenta_nombre: pago.cuenta_nombre || "",
+	      notas: pago.notas || "",
+	    });
+	    setShowPagoIvaForm(true);
+	  };
+
+	  const handleDeletePagoIva = async (pagoId) => {
+	    if (!window.confirm("¿Eliminar este pago IVA?")) return;
+	    const res = await fetch(`${API}/admin/balance/iva/pagos/${pagoId}`, {
+	      method: "DELETE",
+	      headers: { Authorization: `Bearer ${token}` },
+	    });
+	    if (res.ok) {
+	      toast.success("Pago IVA eliminado");
+	      fetchIvaData();
+	    } else {
+	      toast.error("Error al eliminar pago IVA");
+	    }
+	  };
 
   useEffect(() => {
-    if (tab === "compras") fetchCompras();
+    if (tab === "compras") { fetchCompras(); fetchNotasCompra(); }
     if (tab === "costos") fetchVencimientos(filtroMes, filtroTipo, filtroAnio);
     if (tab === "sueldos") fetchSueldosVenc(filtroMes);
-  }, [filtroMes, filtroTipo, filtroAnio]); // eslint-disable-line
+    if (tab === "proveedores-pagos") fetchTodosPagosProveedores();
+    if (tab === "pago-iva") fetchIvaData();
+  }, [filtroMes, filtroTipo, filtroAnio, activeEmpresaPropia?.slug]); // eslint-disable-line
 
   useEffect(() => {
     if (tab === "pago-iva") fetchIvaData();
@@ -1262,7 +1387,7 @@ const EgresosPage = () => {
   // ── Compras CRUD ────────────────────────────────────────────────────────────
   const openNewCompra = () => {
     const logo = activeEmpresaPropia?.slug || "arandujar";
-    setCompraForm({ ...emptyCompra(), logo_tipo: logo });
+    setCompraForm({ ...emptyCompra(), logo_tipo: logo, afecta_stock: !!puedeUsarStockProductos });
     setEditingCompra(null);
     fetchProveedores(logo);
     setShowCompraForm(true);
@@ -1283,7 +1408,7 @@ const EgresosPage = () => {
       cuenta_id: c.cuenta_id || "",
       cuenta_nombre: c.cuenta_nombre || "",
       items: (c.items || []).map(it => ({ ...it, iva: it.iva ?? 10 })),
-      afecta_stock: c.afecta_stock !== false,
+      afecta_stock: !!puedeUsarStockProductos && (puedeCambiarAfectaStockCompra ? c.afecta_stock !== false : true),
       notas: c.notas || "",
       fecha_vencimiento: c.fecha_vencimiento || "",
     });
@@ -1320,6 +1445,7 @@ const EgresosPage = () => {
       monto_total: montoFinal,
       monto_iva: totalIvaAuto > 0 ? totalIvaAuto : null,
       tasa_iva: null, // ahora es por ítem
+      afecta_stock: !!puedeUsarStockProductos && (puedeCambiarAfectaStockCompra ? compraForm.afecta_stock : true),
       tipo_cambio: compraForm.tipo_cambio !== "" ? Number(compraForm.tipo_cambio) : null,
     };
     try {
@@ -1348,6 +1474,73 @@ const EgresosPage = () => {
     } catch (e) { toast.error("Error"); }
   };
 
+  const openNewNotaCompra = () => {
+    setEditingNotaCompra(null);
+    setNotaCompraForm({ numero: "", fecha: hoy(), compra_id: "", compra_numero_factura: "", proveedor_id: "", proveedor_nombre: "", motivo: "Devolucion de mercaderia", monto: "", moneda: "PYG", tipo_cambio: "", notas: "" });
+    setShowNotaCompraForm(true);
+  };
+
+  const openEditNotaCompra = (nota) => {
+    setEditingNotaCompra(nota);
+    setNotaCompraForm({
+      numero: nota.numero || "",
+      fecha: nota.fecha || hoy(),
+      compra_id: nota.compra_id || "",
+      compra_numero_factura: nota.compra_numero_factura || "",
+      proveedor_id: nota.proveedor_id || "",
+      proveedor_nombre: nota.proveedor_nombre || "",
+      motivo: nota.motivo || "",
+      monto: String(nota.monto || ""),
+      moneda: nota.moneda || "PYG",
+      tipo_cambio: nota.tipo_cambio ? String(nota.tipo_cambio) : "",
+      notas: nota.notas || "",
+    });
+    setShowNotaCompraForm(true);
+  };
+
+  const handleSaveNotaCompra = async (e) => {
+    e.preventDefault();
+    const monto = parseFloat(notaCompraForm.monto) || 0;
+    if (!notaCompraForm.numero.trim()) { toast.error("Ingresá el número de nota"); return; }
+    if (!notaCompraForm.fecha) { toast.error("Ingresá la fecha"); return; }
+    if (!notaCompraForm.proveedor_nombre.trim()) { toast.error("Seleccioná o escribí el proveedor"); return; }
+    if (monto <= 0) { toast.error("El monto debe ser mayor a 0"); return; }
+    const payload = {
+      ...notaCompraForm,
+      tipo: "compra",
+      monto,
+      tipo_cambio: notaCompraForm.tipo_cambio ? Number(notaCompraForm.tipo_cambio) : null,
+      logo_tipo: activeEmpresaPropia?.slug || "arandujar",
+    };
+    const url = editingNotaCompra ? `${API}/admin/notas-credito/${editingNotaCompra.id}` : `${API}/admin/notas-credito`;
+    const res = await fetch(url, {
+      method: editingNotaCompra ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      toast.success(editingNotaCompra ? "Nota de crédito actualizada" : "Nota de crédito registrada");
+      setShowNotaCompraForm(false);
+      fetchNotasCompra();
+      fetchIvaData();
+    } else {
+      const err = await res.json().catch(() => ({}));
+      toast.error(err.detail || "Error al guardar nota");
+    }
+  };
+
+  const handleDeleteNotaCompra = async (notaId) => {
+    if (!window.confirm("¿Eliminar esta nota de crédito?")) return;
+    const res = await fetch(`${API}/admin/notas-credito/${notaId}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) {
+      toast.success("Nota de crédito eliminada");
+      fetchNotasCompra();
+      fetchIvaData();
+    } else {
+      toast.error("Error al eliminar nota");
+    }
+  };
+
   const handlePagoCompra = async (e) => {
     e.preventDefault();
     if (!pagoForm.monto_pagado || !pagoForm.fecha_pago) { toast.error("Completá monto y fecha"); return; }
@@ -1366,14 +1559,126 @@ const EgresosPage = () => {
     } catch (e) { toast.error("Error"); }
   };
 
-  // ── Totales resumen ─────────────────────────────────────────────────────────
-  const totalComprasMes = compras
-    .filter(c => c.fecha?.startsWith(mesActual()))
-    .reduce((s, c) => s + (c.monto_total || 0), 0);
-  const totalDeuda = compras.reduce((s, c) => s + (c.saldo_pendiente || 0), 0);
-  const totalSueldos = empleados
-    .filter(e => e.activo)
-    .reduce((s, e) => s + (e.sueldo_base || 0), 0);
+	  // ── Estadísticas por pestaña ───────────────────────────────────────────────
+	  const egresoStatCards = (() => {
+	    const sumPYG = (items, field = "monto_total") => items.reduce((s, x) => {
+	      const monto = Number(x[field] || 0);
+	      if ((x.moneda || "PYG") === "PYG") return s + monto;
+	      const tc = Number(x.tipo_cambio || 0);
+	      return s + (tc > 0 ? monto * tc : 0);
+	    }, 0);
+	    const sumUSD = (items, field = "monto_total") => items.reduce((s, x) => {
+	      if ((x.moneda || "PYG") !== "USD" || Number(x.tipo_cambio || 0) > 0) return s;
+	      return s + Number(x[field] || 0);
+	    }, 0);
+	    const fmtMixed = (items, field = "monto_total") => {
+	      const pyg = sumPYG(items, field);
+	      const usd = sumUSD(items, field);
+	      return `${fmt(pyg)}${usd ? ` / USD ${usd.toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ""}`;
+	    };
+	    const compraIva = (c) => {
+	      const directo = Number(c.monto_iva || 0);
+	      if (directo > 0) return directo;
+	      const porItems = (c.items || []).reduce((s, it) => s + calcItemIva(it, c.moneda), 0);
+	      if (porItems > 0) return porItems;
+	      const total = Number(c.monto_total || 0);
+	      const tasa = Number(c.tasa_iva ?? 10);
+	      return tasa === 10 ? total / 11 : tasa === 5 ? total / 21 : 0;
+	    };
+	    const fmtIvaCompras = (items) => {
+	      const pyg = items.reduce((s, c) => {
+	        const iva = compraIva(c);
+	        if ((c.moneda || "PYG") === "PYG") return s + iva;
+	        const tc = Number(c.tipo_cambio || 0);
+	        return s + (tc > 0 ? iva * tc : 0);
+	      }, 0);
+	      const usd = items.reduce((s, c) => {
+	        if ((c.moneda || "PYG") !== "USD" || Number(c.tipo_cambio || 0) > 0) return s;
+	        return s + compraIva(c);
+	      }, 0);
+	      return `${fmt(pyg)}${usd ? ` / USD ${usd.toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ""}`;
+	    };
+	    const matchesPeriodoGlobal = (fecha) => {
+	      if (filtroTipo === "todos") return true;
+	      if (!fecha) return false;
+	      if (filtroTipo === "mes") return String(fecha).startsWith(filtroMes);
+	      if (filtroTipo === "anio") return String(fecha).startsWith(filtroAnio);
+	      return true;
+	    };
+	    if (tab === "compras") {
+	      const contado = compras.filter(c => (c.tipo_pago || "contado") === "contado");
+	      const credito = compras.filter(c => c.tipo_pago === "credito");
+	      const pendientes = compras.filter(c => ["pendiente", "vencido", "parcial"].includes(c.estado_pago));
+	      const conFactura = compras.filter(c => c.tiene_factura);
+	      return [
+	        { label: "Compras contado", value: contado.length, sub: fmtMixed(contado), icon: ShoppingCart, color: "text-orange-400" },
+	        { label: "Compras crédito", value: credito.length, sub: fmtMixed(credito), icon: CreditCard, color: "text-amber-400" },
+	        { label: "Pendientes", value: pendientes.length, sub: fmtMixed(pendientes, "saldo_pendiente"), icon: Clock, color: "text-red-400" },
+	        { label: "Con factura", value: conFactura.length, sub: fmtIvaCompras(conFactura), icon: FileText, color: "text-blue-400" },
+	      ];
+	    }
+	    if (tab === "costos") {
+	      const pagosPeriodo = pagosCostos.filter(p => matchesPeriodoGlobal(p.periodo || p.fecha_pago || p.created_at));
+	      const pagados = filtroTipo === "todos" ? pagosPeriodo : vencimientos.filter(v => v.estado === "pagado");
+	      const pendientes = vencimientos.filter(v => v.estado === "pendiente");
+	      const vencidos = vencimientos.filter(v => v.estado === "vencido");
+	      return [
+	        { label: "Gastos del período", value: vencimientos.length, sub: fmtMixed(vencimientos, "monto"), icon: Calendar, color: "text-blue-400" },
+	        { label: "Pagados", value: pagados.length, sub: fmt(filtroTipo === "todos" ? pagados.reduce((s, p) => s + (p.monto_pagado || 0), 0) : pagados.reduce((s, v) => s + (v.pago?.monto_pagado || 0), 0)), icon: CheckCircle, color: "text-emerald-400" },
+	        { label: "Pendientes", value: pendientes.length, sub: fmtMixed(pendientes, "monto"), icon: Clock, color: "text-amber-400" },
+	        { label: "Vencidos", value: vencidos.length, sub: fmtMixed(vencidos, "monto"), icon: AlertTriangle, color: "text-red-400" },
+	      ];
+	    }
+	    if (tab === "sueldos") {
+	      const activos = empleados.filter(e => e.activo);
+	      const pagados = sueldosVenc.filter(s => s.estado === "pagado");
+	      const pendientes = sueldosVenc.filter(s => s.estado !== "pagado");
+	      const adelantosFlat = [].concat(...Object.values(adelantosMap || {}));
+	      return [
+	        { label: "Empleados activos", value: activos.length, sub: fmt(activos.reduce((s, e) => s + (e.sueldo_base || 0), 0)), icon: Users, color: "text-purple-400" },
+	        { label: "Sueldos pagados", value: pagados.length, sub: fmt(pagados.reduce((s, e) => s + (e.sueldo_registrado?.monto_pagado || 0), 0)), icon: CheckCircle, color: "text-emerald-400" },
+	        { label: "Pendientes", value: pendientes.length, sub: fmt(pendientes.reduce((s, e) => s + (e.sueldo_base || 0), 0)), icon: Clock, color: "text-amber-400" },
+	        { label: "Adelantos", value: adelantosFlat.length, sub: fmt(adelantosFlat.reduce((s, a) => s + (a.monto || 0), 0)), icon: HandCoins, color: "text-blue-400" },
+	      ];
+	    }
+	    if (tab === "proveedores-pagos") {
+	      const pagosPeriodo = todosPagosProveedores.filter(p => matchesPeriodoGlobal(p.fecha_pago || p.fecha_vencimiento || p.created_at));
+	      const pagados = pagosPeriodo.filter(p => p.fecha_pago || p.estado === "pagado");
+	      const pendientes = pagosPeriodo.filter(p => !p.fecha_pago && p.estado !== "pagado");
+	      return [
+	        { label: "Pagos registrados", value: pagados.length, sub: fmt(pagados.reduce((s, p) => s + (p.monto_gs || p.monto || p.monto_pagado || 0), 0)), icon: Wallet, color: "text-violet-400" },
+	        { label: "Pendientes", value: pendientes.length, sub: fmt(pendientes.reduce((s, p) => s + (p.monto_gs || p.monto || p.monto_pagado || 0), 0)), icon: Clock, color: "text-amber-400" },
+	        { label: "Proveedores", value: listaProveedores.length, sub: "Activos", icon: Building2, color: "text-blue-400" },
+	        { label: "Compras crédito", value: compras.filter(c => c.tipo_pago === "credito").length, sub: fmt(compras.reduce((s, c) => s + (c.saldo_pendiente || 0), 0)), icon: CreditCard, color: "text-red-400" },
+	      ];
+	    }
+	    const ivaDebito = filtroTipo === "mes" ? (ivaBalance?.iva_debito || 0) : (ivaResumen?.total_debito || 0);
+	    const ivaCredito = filtroTipo === "mes" ? (ivaBalance?.iva_credito || 0) : (ivaResumen?.total_credito || 0);
+	    const ivaNeto = filtroTipo === "mes" ? (ivaBalance?.iva_neto || 0) : (ivaResumen?.total_neto || 0);
+	    const ivaPagado = filtroTipo === "mes" ? (ivaBalance?.pagos_iva_mes || 0) : (ivaResumen?.total_pagado || 0);
+	    const ivaSaldoActual = ivaNeto - ivaPagado;
+	    const cantFacturas = filtroTipo === "mes" ? (ivaBalance?.cantidad_facturas || 0) : (ivaResumen?.meses || []).reduce((s, m) => s + (m.cantidad_facturas || 0), 0);
+	    const cantCompras = filtroTipo === "mes" ? (ivaBalance?.cantidad_compras_con_factura || 0) : (ivaResumen?.meses || []).reduce((s, m) => s + (m.cantidad_compras_con_factura || 0), 0);
+	    return [
+	      { label: "IVA débito", value: fmt(ivaDebito), sub: `${cantFacturas} facturas`, icon: Receipt, color: "text-cyan-400" },
+	      { label: "IVA crédito", value: fmt(ivaCredito), sub: `${cantCompras} compras`, icon: FileText, color: "text-violet-400" },
+	      { label: "Pagado", value: fmt(ivaPagado), sub: `${pagosIvaList.length} pagos`, icon: CheckCircle, color: "text-amber-400" },
+	      { label: "Saldo actual", value: fmt(Math.abs(ivaSaldoActual)), sub: ivaSaldoActual > 0 ? "Debe SET" : ivaSaldoActual < 0 ? "A favor" : "Al día", icon: AlertCircle, color: ivaSaldoActual > 0 ? "text-red-400" : ivaSaldoActual < 0 ? "text-emerald-400" : "text-slate-300" },
+	    ];
+	  })();
+  const egresosTabs = [
+    { id: "compras", label: "Compras", icon: ShoppingCart, color: "bg-orange-500", perm: "compras.ver" },
+    { id: "costos", label: "Gastos", icon: Calendar, color: "bg-blue-600", perm: "costos_fijos.ver" },
+    { id: "sueldos", label: "Sueldos", icon: Users, color: "bg-purple-600", perm: "empleados.ver" },
+    { id: "proveedores-pagos", label: "Pag. Proveedores", icon: Wallet, color: "bg-violet-600", perm: "pagos_proveedores.ver" },
+    { id: "pago-iva", label: "IVA", icon: Receipt, color: "bg-amber-600", perm: "balance.ver" },
+  ].filter(t => hasPermission(t.perm));
+
+  useEffect(() => {
+    if (egresosTabs.length && !egresosTabs.some(t => t.id === tab)) {
+      setTab(egresosTabs[0].id);
+    }
+  }, [activeEmpresaPropia?.id, user?.permisos, tab]); // eslint-disable-line
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -1449,33 +1754,23 @@ const EgresosPage = () => {
           </button>
         </div>
 
-        {/* Resumen cards */}
-        <div className="grid grid-cols-2 md:grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-          {[
-            { label: "Compras este mes", value: fmt(totalComprasMes), icon: ShoppingCart, color: "text-orange-400" },
-            { label: "Deuda proveedores", value: fmt(totalDeuda), icon: CreditCard, color: "text-red-400" },
-            { label: "Sueldos mensuales", value: fmt(totalSueldos), icon: Users, color: "text-blue-400" },
-            { label: "Pagos pendientes", value: "−", icon: Clock, color: "text-amber-400", isCount: true },
-          ].map(({ label, value, icon: Icon, color, isCount }) => (
-            <div key={label} className="bg-arandu-dark-light border border-white/5 rounded-xl p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Icon className={`w-4 h-4 ${color}`} />
-                <span className="text-slate-500 text-xs">{label}</span>
-              </div>
-              <p className={`font-heading font-bold text-lg ${isCount ? color : "text-white"}`}>{value}</p>
-            </div>
-          ))}
-        </div>
+	        {/* Resumen cards */}
+	        <div className="grid grid-cols-2 md:grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+	          {egresoStatCards.map(({ label, value, sub, icon: Icon, color }) => (
+	            <div key={label} className="bg-arandu-dark-light border border-white/5 rounded-xl p-4">
+	              <div className="flex items-center gap-2 mb-2">
+	                <Icon className={`w-4 h-4 ${color}`} />
+	                <span className="text-slate-500 text-xs">{label}</span>
+	              </div>
+	              <p className={`font-heading font-bold text-lg ${color}`}>{value}</p>
+	              {sub && <p className="text-slate-500 text-xs mt-0.5">{sub}</p>}
+	            </div>
+	          ))}
+	        </div>
 
         {/* Tabs */}
         <div className="flex gap-1 bg-arandu-dark-light border border-white/5 rounded-xl p-1 mb-6 flex-wrap overflow-x-auto">
-          {[
-            { id: "compras", label: "Compras", icon: ShoppingCart, color: "bg-orange-500" },
-            { id: "costos", label: "Gastos", icon: Calendar, color: "bg-blue-600" },
-            { id: "sueldos", label: "Sueldos", icon: Users, color: "bg-purple-600" },
-            { id: "proveedores-pagos", label: "Pag. Proveedores", icon: Wallet, color: "bg-violet-600" },
-            { id: "pago-iva", label: "IVA", icon: Receipt, color: "bg-amber-600" },
-          ].map(t => (
+          {egresosTabs.map(t => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
@@ -1499,11 +1794,20 @@ const EgresosPage = () => {
                 inputVal={comprasInput} setInputVal={setComprasInput}
                 placeholder="Buscar por proveedor, monto, fecha, estado, factura, notas… (Enter para agregar filtro)"
                 accentColor="orange"
-                actionButton={hasPermission("compras.crear") ? (
-                  <Button onClick={openNewCompra} className="bg-orange-500 hover:bg-orange-600 text-white whitespace-nowrap">
-                    <Plus className="w-4 h-4 mr-2" /> Nueva Compra
-                  </Button>
-                ) : null}
+                actionButton={(
+                  <div className="flex gap-2">
+                    {hasPermission("notas_credito.crear") && (
+                      <Button onClick={openNewNotaCompra} className="bg-rose-600 hover:bg-rose-700 text-white whitespace-nowrap">
+                        <Receipt className="w-4 h-4 mr-2" /> Nota crédito
+                      </Button>
+                    )}
+                    {hasPermission("compras.crear") && (
+                      <Button onClick={openNewCompra} className="bg-orange-500 hover:bg-orange-600 text-white whitespace-nowrap">
+                        <Plus className="w-4 h-4 mr-2" /> Nueva Compra
+                      </Button>
+                    )}
+                  </div>
+                )}
               />
             </div>
 
@@ -1517,16 +1821,6 @@ const EgresosPage = () => {
                 ].filter(Boolean).join(" ");
                 return matchChips(comprasChips, comprasInput, texto);
               });
-              // Resumen: total / pagado / pendiente del período
-              let totalPYG = 0, totalUSD = 0, pagPYG = 0, pagUSD = 0;
-              comprasFiltradas.forEach(c => {
-                const m = c.monto_total || 0;
-                const pagado = c.tipo_pago === "contado" ? m : (c.total_pagado || 0);
-                if (c.moneda === "USD") { totalUSD += m; pagUSD += pagado; }
-                else { totalPYG += m; pagPYG += pagado; }
-              });
-              const pendCount = comprasFiltradas.filter(c => c.estado_pago === "pendiente" || c.estado_pago === "vencido" || c.estado_pago === "parcial").length;
-
               if (loadingCompras) {
                 return <div className="text-center py-12 text-orange-400 animate-pulse">Cargando...</div>;
               }
@@ -1545,30 +1839,6 @@ const EgresosPage = () => {
               }
               return (
                 <>
-                  {/* Summary cards */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-                    <div className="bg-arandu-dark-light border border-white/5 rounded-xl p-4">
-                      <p className="text-slate-500 text-xs mb-1">Total comprado</p>
-                      {totalPYG > 0 && <p className="font-bold text-white">{fmt(totalPYG)}</p>}
-                      {totalUSD > 0 && <p className="font-bold text-white">{fmt(totalUSD, "USD")}</p>}
-                      {totalPYG === 0 && totalUSD === 0 && <p className="font-bold text-white">₲ 0</p>}
-                    </div>
-                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
-                      <p className="text-emerald-400 text-xs mb-1">Pagado</p>
-                      {pagPYG > 0 && <p className="font-bold text-emerald-400">{fmt(pagPYG)}</p>}
-                      {pagUSD > 0 && <p className="font-bold text-emerald-400">{fmt(pagUSD, "USD")}</p>}
-                      {pagPYG === 0 && pagUSD === 0 && <p className="font-bold text-emerald-400">₲ 0</p>}
-                    </div>
-                    <div className={`border rounded-xl p-4 ${pendCount > 0 ? "bg-amber-500/10 border-amber-500/20" : "bg-arandu-dark-light border-white/5"}`}>
-                      <p className={`text-xs mb-1 ${pendCount > 0 ? "text-amber-400" : "text-slate-500"}`}>
-                        Pendiente {pendCount > 0 && `(${pendCount})`}
-                      </p>
-                      {(totalPYG - pagPYG) > 0 && <p className={`font-bold ${pendCount > 0 ? "text-amber-400" : "text-white"}`}>{fmt(totalPYG - pagPYG)}</p>}
-                      {(totalUSD - pagUSD) > 0 && <p className={`font-bold ${pendCount > 0 ? "text-amber-400" : "text-white"}`}>{fmt(totalUSD - pagUSD, "USD")}</p>}
-                      {(totalPYG - pagPYG) === 0 && (totalUSD - pagUSD) === 0 && <p className="font-bold text-white">₲ 0</p>}
-                    </div>
-                  </div>
-
                   {/* Tabla */}
                   {comprasFiltradas.length === 0 ? (
                     <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
@@ -1673,6 +1943,35 @@ const EgresosPage = () => {
                       </table>
                     </div>
                   )}
+                  {notasCompra.length > 0 && (
+                    <div className="mt-5 bg-rose-500/5 border border-rose-500/20 rounded-xl overflow-hidden">
+                      <div className="px-4 py-3 border-b border-rose-500/20 flex items-center justify-between">
+                        <p className="text-rose-300 text-sm font-medium">Notas de crédito de compras</p>
+                        <p className="text-rose-200 font-heading font-bold text-sm">{fmt(notasCompra.reduce((s, n) => s + (n.monto_pyg || (n.moneda === "PYG" ? n.monto || 0 : 0)), 0))}</p>
+                      </div>
+                      <table className="w-full text-sm">
+                        <tbody>
+                          {notasCompra.map(n => (
+                            <tr key={n.id} className="border-b border-white/5">
+                              <td className="px-4 py-3 text-slate-300 text-xs">{n.fecha}</td>
+                              <td className="px-4 py-3 text-white font-medium">{n.proveedor_nombre || "—"}</td>
+                              <td className="px-4 py-3 text-slate-400 text-xs">{n.numero}</td>
+                              <td className="px-4 py-3 text-slate-400 text-xs">{n.motivo}</td>
+                              <td className="px-4 py-3 text-right text-rose-300 font-bold">{fmt(n.monto, n.moneda)}</td>
+                              <td className="px-4 py-3 text-right">
+                                {hasPermission("notas_credito.editar") && (
+                                  <button onClick={() => openEditNotaCompra(n)} className="p-1 text-slate-400 hover:text-rose-300"><Edit className="w-4 h-4" /></button>
+                                )}
+                                {hasPermission("notas_credito.eliminar") && (
+                                  <button onClick={() => handleDeleteNotaCompra(n.id)} className="p-1 text-slate-400 hover:text-red-300"><Trash2 className="w-4 h-4" /></button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </>
               );
             })()}
@@ -1685,12 +1984,6 @@ const EgresosPage = () => {
             const texto = [v.nombre, v.logo_tipo, LOGO_LABEL_MAP[v.logo_tipo]||"", v.categoria, String(v.monto||""), v.moneda, v.estado, v.frecuencia].filter(Boolean).join(" ");
             return matchChips(costosChips, costosInput, texto);
           });
-          let totalPYG=0, totalUSD=0, pagadoPYG=0, pagadoUSD=0;
-          vencimientos.forEach(v => {
-            if (v.moneda==="USD") { totalUSD+=v.monto; if(v.estado==="pagado") pagadoUSD+=v.pago?.monto_pagado||0; }
-            else { totalPYG+=v.monto; if(v.estado==="pagado") pagadoPYG+=v.pago?.monto_pagado||0; }
-          });
-          const vencidos = vencimientos.filter(v => v.estado==="vencido").length;
           return (
             <div>
               {/* Buscador + botón nuevo */}
@@ -1712,30 +2005,6 @@ const EgresosPage = () => {
               {(() => {
               return (
                   <>
-                  {/* Summary cards */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-                    <div className="bg-arandu-dark-light border border-white/5 rounded-xl p-4">
-                      <p className="text-slate-500 text-xs mb-1">Total del período</p>
-                      {totalPYG > 0 && <p className="font-bold text-white">{fmt(totalPYG)}</p>}
-                      {totalUSD > 0 && <p className="font-bold text-white">{fmt(totalUSD, "USD")}</p>}
-                      {totalPYG === 0 && totalUSD === 0 && <p className="font-bold text-white">₲ 0</p>}
-                    </div>
-                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
-                      <p className="text-emerald-400 text-xs mb-1">Pagado</p>
-                      {pagadoPYG > 0 && <p className="font-bold text-emerald-400">{fmt(pagadoPYG)}</p>}
-                      {pagadoUSD > 0 && <p className="font-bold text-emerald-400">{fmt(pagadoUSD, "USD")}</p>}
-                      {pagadoPYG === 0 && pagadoUSD === 0 && <p className="font-bold text-emerald-400">$ 0</p>}
-                    </div>
-                    <div className={`border rounded-xl p-4 ${vencidos > 0 ? "bg-red-500/10 border-red-500/20" : "bg-arandu-dark-light border-white/5"}`}>
-                      <p className={`text-xs mb-1 ${vencidos > 0 ? "text-red-400" : "text-slate-500"}`}>
-                        Pendiente{vencidos > 0 ? ` / ${vencidos} vencido${vencidos !== 1 ? "s" : ""}` : " / Vencido"}
-                      </p>
-                      {(totalPYG - pagadoPYG) > 0 && <p className={`font-bold ${vencidos > 0 ? "text-red-400" : "text-white"}`}>{fmt(totalPYG - pagadoPYG)}</p>}
-                      {(totalUSD - pagadoUSD) > 0 && <p className={`font-bold ${vencidos > 0 ? "text-red-400" : "text-white"}`}>{fmt(totalUSD - pagadoUSD, "USD")}</p>}
-                      {(totalPYG - pagadoPYG) === 0 && (totalUSD - pagadoUSD) === 0 && <p className={`font-bold ${vencidos > 0 ? "text-red-400" : "text-white"}`}>₲ 0</p>}
-                    </div>
-                  </div>
-
                   {/* Tabla */}
                   {loadingVenc ? (
                     <div className="text-center py-10 text-blue-400 animate-pulse">Cargando vencimientos...</div>
@@ -2051,17 +2320,11 @@ const EgresosPage = () => {
                 <button onClick={() => setShowEmpleadoModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
               </div>
               <div className="p-6 space-y-4">
-                {/* Empresa */}
-                <div>
-                  <label className="text-slate-400 text-xs block mb-2">Empresa</label>
-                  <div className="flex gap-2 flex-wrap">
-                    {[["arandujar","Arandu&JAR","bg-blue-600"],["arandu","Arandu","bg-emerald-600"],["jar","JAR","bg-red-600"]].map(([v,l,c]) => (
-                      <button key={v} type="button" onClick={() => setFormEmp(f=>({...f,logo_tipo:v}))}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${formEmp.logo_tipo===v?`${c} text-white border-transparent`:"border-white/10 text-slate-400 hover:text-white"}`}>
-                        {l}
-                      </button>
-                    ))}
-                  </div>
+                <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                  <p className="text-slate-500 text-xs mb-0.5">Empresa activa</p>
+                  <p className="text-slate-200 text-sm font-medium">
+                    {LOGO_LABEL_MAP[formEmp.logo_tipo] || activeEmpresaPropia?.nombre || formEmp.logo_tipo || "Arandu&JAR"}
+                  </p>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -2201,6 +2464,7 @@ const EgresosPage = () => {
                 <div className="bg-white/5 border border-white/10 rounded-lg p-3 space-y-2 text-sm">
                   <p className="text-slate-400 text-xs font-medium mb-1">Desglose del pago</p>
                   <div className="flex justify-between text-slate-300"><span>Sueldo base</span><span>{fmtSueldo(parseFloat(selectedEmp.sueldo_base)||0, selectedEmp.moneda)}</span></div>
+                  {extrasPeriodo.length > 0 && <div className="flex justify-between text-green-300"><span>+ Extras ({extrasPeriodo.length})</span><span>+ {fmtSueldo(extrasPeriodo.reduce((s,e)=>s+(e.monto||0),0), selectedEmp.moneda)}</span></div>}
                   {selectedEmp.aplica_ips !== false && <div className="flex justify-between text-blue-300"><span>− IPS</span><span>− {fmtSueldo(parseFloat(formSueldo.descuento_ips)||0, "PYG")}</span></div>}
                   {adelantosPeriodo.length > 0 && <div className="flex justify-between text-amber-300"><span>− Adelantos ({adelantosPeriodo.length})</span><span>− {fmtSueldo(adelantosPeriodo.reduce((s,a)=>s+(a.monto||0),0), selectedEmp.moneda)}</span></div>}
                   {formSueldo.descuentos_adicionales.length > 0 && <div className="flex justify-between text-red-300"><span>− Descuentos adicionales</span><span>− {fmtSueldo(formSueldo.descuentos_adicionales.reduce((s,d)=>s+(parseFloat(d.monto)||0),0), "PYG")}</span></div>}
@@ -2208,15 +2472,6 @@ const EgresosPage = () => {
                     <span className="text-white">Total a pagar (sueldo)</span>
                     <span className="text-emerald-300">{fmtSueldo(calcMontoAPagar(selectedEmp, adelantosPeriodo, extrasPeriodo, formSueldo.descuentos_adicionales), selectedEmp.moneda)}</span>
                   </div>
-                  {extrasPeriodo.length > 0 && (
-                    <div className="border-t border-dashed border-white/10 pt-2 mt-2">
-                      <p className="text-green-300 text-[11px] font-medium mb-1">Extras del período (ya pagados — no se suman acá)</p>
-                      <div className="flex justify-between text-green-300/80 text-xs">
-                        <span>{extrasPeriodo.length} extra{extrasPeriodo.length>1?"s":""}</span>
-                        <span>{fmtSueldo(extrasPeriodo.reduce((s,e)=>s+(e.monto||0),0), selectedEmp.moneda)}</span>
-                      </div>
-                    </div>
-                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -2386,7 +2641,7 @@ const EgresosPage = () => {
                 <button onClick={() => setShowExtraModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5"/></button>
               </div>
               <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-xs text-green-300 mb-4">
-                Los extras se cuentan como <strong>egreso individual</strong> en su fecha (igual que un adelanto). NO se vuelven a sumar al sueldo a fin de mes.
+                Los extras se <strong>suman</strong> al sueldo al registrar el pago. En el balance entran dentro del sueldo pagado.
               </div>
 
               {/* Lista de extras existentes */}
@@ -2454,16 +2709,24 @@ const EgresosPage = () => {
             {/* Selector de período + buscador */}
             <div className="flex flex-col gap-3 mb-5">
               <div className="flex items-center gap-3 flex-wrap">
-                <input
-                  type="month"
-                  value={periodoIva}
-                  onChange={e => setPeriodoIva(e.target.value)}
-                  className="bg-arandu-dark-light border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500/50"
-                />
-                <span className="text-slate-500 text-sm">Período IVA</span>
-                {hasPermission("ingresos_varios.crear") && (
+                {filtroTipo === "mes" ? (
+                  <>
+                    <input
+                      type="month"
+                      value={periodoIva}
+                      onChange={e => { setPeriodoIva(e.target.value); setFiltroMes(e.target.value); }}
+                      className="bg-arandu-dark-light border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-amber-500/50"
+                    />
+                    <span className="text-slate-500 text-sm">Período IVA</span>
+                  </>
+                ) : (
+                  <span className="text-slate-400 text-sm">
+                    {filtroTipo === "anio" ? `IVA del año ${filtroAnio}` : "IVA de todo el tiempo"}
+                  </span>
+                )}
+                {hasPermission("balance.editar") && (
                   <button
-                    onClick={() => { setPagoIvaForm({ monto: ivaBalance?.iva_neto > 0 ? String(Math.round(ivaBalance.iva_neto)) : "", fecha: hoy(), notas: "", descripcion: `Pago IVA ${periodoIva}` }); setShowPagoIvaForm(true); }}
+                    onClick={openNewPagoIva}
                     className="ml-auto flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all"
                   >
                     <Plus className="w-4 h-4" /> Registrar pago IVA
@@ -2484,30 +2747,8 @@ const EgresosPage = () => {
               </div>
             ) : (
               <div className="space-y-5">
-                {/* Cards IVA */}
                 {ivaBalance && (
                   <>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-4">
-                        <p className="text-cyan-400 text-xs mb-1">IVA Débito (ventas)</p>
-                        <p className="text-cyan-300 font-heading font-bold text-xl">{fmtPYG(ivaBalance.iva_debito)}</p>
-                        <p className="text-slate-500 text-xs mt-1">{ivaBalance.cantidad_facturas || 0} factura{ivaBalance.cantidad_facturas !== 1 ? "s" : ""} emitida{ivaBalance.cantidad_facturas !== 1 ? "s" : ""}</p>
-                      </div>
-                      <div className="bg-violet-500/10 border border-violet-500/20 rounded-xl p-4">
-                        <p className="text-violet-400 text-xs mb-1">IVA Crédito (compras)</p>
-                        <p className="text-violet-300 font-heading font-bold text-xl">{fmtPYG(ivaBalance.iva_credito)}</p>
-                        <p className="text-slate-500 text-xs mt-1">{ivaBalance.cantidad_compras_con_factura || 0} compra{ivaBalance.cantidad_compras_con_factura !== 1 ? "s" : ""} con factura</p>
-                      </div>
-                      <div className={`rounded-xl p-4 border ${ivaBalance.iva_neto > 0 ? "bg-red-500/10 border-red-500/20" : ivaBalance.iva_neto < 0 ? "bg-emerald-500/10 border-emerald-500/20" : "bg-slate-500/10 border-slate-500/20"}`}>
-                        <p className={`text-xs mb-1 ${ivaBalance.iva_neto > 0 ? "text-red-400" : ivaBalance.iva_neto < 0 ? "text-emerald-400" : "text-slate-400"}`}>
-                          {ivaBalance.iva_neto > 0 ? "⚠ A pagar a la SET" : ivaBalance.iva_neto < 0 ? "✓ A favor" : "Sin movimientos"}
-                        </p>
-                        <p className={`font-heading font-bold text-xl ${ivaBalance.iva_neto > 0 ? "text-red-300" : ivaBalance.iva_neto < 0 ? "text-emerald-300" : "text-slate-400"}`}>
-                          {fmtPYG(Math.abs(ivaBalance.iva_neto))}
-                        </p>
-                      </div>
-                    </div>
-
                     {/* Saldo acumulado desde enero */}
                     {(ivaBalance.saldo_pendiente_acumulado > 0 || ivaBalance.saldo_a_favor_acumulado > 0) && (
                       <div className={`rounded-xl p-4 border flex items-center justify-between ${
@@ -2549,11 +2790,43 @@ const EgresosPage = () => {
                   </>
                 )}
 
+                {ivaResumen && (
+                  <div className="bg-arandu-dark-light border border-white/5 rounded-xl overflow-hidden">
+                    <div className="px-4 py-3 border-b border-white/10">
+                      <p className="text-amber-300 text-sm font-medium">Detalle IVA por mes</p>
+                    </div>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-white/10 text-slate-400 text-xs uppercase">
+                          <th className="px-4 py-3 text-left">Mes</th>
+                          <th className="px-4 py-3 text-right">Débito</th>
+                          <th className="px-4 py-3 text-right">Crédito</th>
+                          <th className="px-4 py-3 text-right">Neto</th>
+                          <th className="px-4 py-3 text-right">Pagado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(ivaResumen.meses || []).map(m => (
+                          <tr key={m.periodo} className="border-b border-white/5">
+                            <td className="px-4 py-3 text-white">{mesLabel(m.periodo)}</td>
+                            <td className="px-4 py-3 text-right text-cyan-300">{fmtPYG(m.iva_debito || 0)}</td>
+                            <td className="px-4 py-3 text-right text-violet-300">{fmtPYG(m.iva_credito || 0)}</td>
+                            <td className={`px-4 py-3 text-right ${(m.iva_neto || 0) > 0 ? "text-red-300" : "text-emerald-300"}`}>{fmtPYG(Math.abs(m.iva_neto || 0))}</td>
+                            <td className="px-4 py-3 text-right text-amber-300">{fmtPYG(m.pagos_iva || 0)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
                 {/* Pagos IVA registrados para este período */}
                 <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
                   <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10 bg-amber-500/5">
                     <Receipt className="w-4 h-4 text-amber-400" />
-                    <span className="text-amber-300 font-medium text-sm">Pagos IVA registrados — {periodoIva}</span>
+                    <span className="text-amber-300 font-medium text-sm">
+                      Pagos IVA registrados{filtroTipo === "mes" ? ` — ${periodoIva}` : ""}
+                    </span>
                     {pagosIvaList.length > 0 && (
                       <span className="ml-auto text-amber-300 font-heading font-bold text-sm">
                         {fmtPYG(pagosIvaList.reduce((s, p) => s + Math.abs(p.monto), 0))}
@@ -2569,18 +2842,31 @@ const EgresosPage = () => {
                     </div>
                   ) : (
                     <div className="divide-y divide-white/5">
-                      {pagosIvaList.filter(pago => {
-                        const texto = [pago.descripcion, pago.fecha, String(Math.abs(pago.monto)||""), pago.notas].filter(Boolean).join(" ");
-                        return matchChips(ivaChips, ivaInput, texto);
-                      }).map(pago => (
-                        <div key={pago.id} className="flex items-center justify-between px-4 py-3">
-                          <div>
-                            <p className="text-white text-sm font-medium">{pago.descripcion}</p>
-                            <p className="text-slate-500 text-xs">{pago.fecha}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-red-300 font-heading font-semibold">{fmtPYG(Math.abs(pago.monto))}</p>
-                            {pago.notas && <p className="text-slate-500 text-xs">{pago.notas}</p>}
+	                      {pagosIvaList.filter(pago => {
+	                        const texto = [pago.descripcion, pago.fecha_pago, pago.periodo_iva, pago.cuenta_nombre, String(Math.abs(pago.monto)||""), pago.notas].filter(Boolean).join(" ");
+	                        return matchChips(ivaChips, ivaInput, texto);
+	                      }).map(pago => (
+	                        <div key={pago.id} className="flex items-center justify-between gap-3 px-4 py-3">
+	                          <div>
+	                            <p className="text-white text-sm font-medium">{pago.descripcion}</p>
+	                            <p className="text-slate-500 text-xs">{pago.fecha_pago} · IVA {pago.periodo_iva || periodoIva}</p>
+	                            {pago.cuenta_nombre && <p className="text-slate-600 text-xs">{pago.cuenta_nombre}</p>}
+	                          </div>
+                          <div className="text-right flex items-center gap-3">
+                            <div>
+                              <p className="text-red-300 font-heading font-semibold">{fmtPYG(Math.abs(pago.monto))}</p>
+                              {pago.notas && <p className="text-slate-500 text-xs">{pago.notas}</p>}
+                            </div>
+                            {hasPermission("balance.editar") && (
+                              <div className="flex gap-1">
+                                <button onClick={() => openEditPagoIva(pago)} className="p-1.5 text-slate-400 hover:text-amber-300" title="Editar pago IVA">
+                                  <Edit className="w-4 h-4" />
+                                </button>
+                                <button onClick={() => handleDeletePagoIva(pago.id)} className="p-1.5 text-slate-400 hover:text-red-300" title="Eliminar pago IVA">
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -2610,10 +2896,15 @@ const EgresosPage = () => {
                   )}
                   <form onSubmit={handlePagoIva} className="space-y-4">
                     <div>
+                      <label className="text-slate-400 text-sm mb-1 block">Período IVA *</label>
+                      <input type="month" value={pagoIvaForm.periodo_iva} onChange={e => setPagoIvaForm(p => ({ ...p, periodo_iva: e.target.value, descripcion: p.descripcion || `Pago IVA ${e.target.value}` }))}
+                        className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-amber-500/50" required />
+                    </div>
+                    <div>
                       <label className="text-slate-400 text-sm mb-1 block">Descripción</label>
                       <input value={pagoIvaForm.descripcion} onChange={e => setPagoIvaForm(p => ({ ...p, descripcion: e.target.value }))}
                         className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-amber-500/50"
-                        placeholder={`Pago IVA ${periodoIva}`} />
+                        placeholder={`Pago IVA ${pagoIvaForm.periodo_iva || periodoIva}`} />
                     </div>
                     <div>
                       <label className="text-slate-400 text-sm mb-1 block">Monto (₲) *</label>
@@ -2625,8 +2916,21 @@ const EgresosPage = () => {
                     </div>
                     <div>
                       <label className="text-slate-400 text-sm mb-1 block">Fecha *</label>
-                      <input type="date" value={pagoIvaForm.fecha} onChange={e => setPagoIvaForm(p => ({ ...p, fecha: e.target.value }))}
+                      <input type="date" value={pagoIvaForm.fecha_pago} onChange={e => setPagoIvaForm(p => ({ ...p, fecha_pago: e.target.value }))}
                         className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-amber-500/50" required />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 text-sm mb-1 block">Cuenta bancaria *</label>
+                      <select value={pagoIvaForm.cuenta_id} onChange={e => {
+                        const cuenta = cuentasDisp.find(c => c.id === e.target.value);
+                        setPagoIvaForm(p => ({ ...p, cuenta_id: e.target.value, cuenta_nombre: cuenta?.nombre || "" }));
+                      }}
+                        className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-amber-500/50" required>
+                        <option value="">Seleccionar cuenta...</option>
+                        {cuentasDisp.filter(c => c.moneda === "PYG").map(c => (
+                          <option key={c.id} value={c.id}>{c.nombre}</option>
+                        ))}
+                      </select>
                     </div>
                     <div>
                       <label className="text-slate-400 text-sm mb-1 block">Notas</label>
@@ -2639,7 +2943,7 @@ const EgresosPage = () => {
                         className="flex-1 py-2.5 rounded-lg border border-white/10 text-slate-400 text-sm hover:text-white">Cancelar</button>
                       <button type="submit"
                         className="flex-1 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium flex items-center justify-center gap-2">
-                        <Check className="w-4 h-4" /> Registrar pago
+                        <Check className="w-4 h-4" /> {editingPagoIva ? "Actualizar" : "Registrar pago"}
                       </button>
                     </div>
                   </form>
@@ -2688,21 +2992,6 @@ const EgresosPage = () => {
               });
               return (
                 <>
-                  {pagosPorPeriodo.length > 0 && (
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
-                      {[
-                        { label: "Pendientes", val: pagosPorPeriodo.filter(p => p.estado === "pendiente").length, color: "text-blue-400" },
-                        { label: "Vencidos",   val: pagosPorPeriodo.filter(p => p.estado === "vencido").length,   color: "text-red-400" },
-                        { label: "Pagados",    val: pagosPorPeriodo.filter(p => p.estado === "pagado").length,    color: "text-emerald-400" },
-                      ].map(s => (
-                        <div key={s.label} className="bg-arandu-dark-light border border-white/5 rounded-xl p-3 text-center">
-                          <p className={`font-heading font-bold text-2xl ${s.color}`}>{s.val}</p>
-                          <p className="text-slate-500 text-xs mt-0.5">{s.label}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
                   {loadingTodosPagos ? (
                     <div className="flex items-center justify-center py-16 text-violet-400">
                       <Loader2 className="w-6 h-6 animate-spin mr-2" /> Cargando pagos...
@@ -2810,6 +3099,100 @@ const EgresosPage = () => {
         )}
       </div>
 
+      {/* ═══ MODAL: Nota de crédito de compra ═════════════════════════════════ */}
+      <AnimatePresence>
+        {showNotaCompraForm && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
+            onMouseDown={(e) => e.target === e.currentTarget && setShowNotaCompraForm(false)}
+          >
+            <motion.div initial={{ scale: 0.96, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, y: 12 }}
+              className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-lg p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-heading text-lg text-white">{editingNotaCompra ? "Editar nota de crédito" : "Nota de crédito de compra"}</h3>
+                <button onClick={() => setShowNotaCompraForm(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+              </div>
+              <form onSubmit={handleSaveNotaCompra} className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-slate-400 text-sm mb-1 block">Número *</label>
+                    <input value={notaCompraForm.numero} onChange={e => setNotaCompraForm(f => ({ ...f, numero: e.target.value }))}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm" required />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-sm mb-1 block">Fecha *</label>
+                    <input type="date" value={notaCompraForm.fecha} onChange={e => setNotaCompraForm(f => ({ ...f, fecha: e.target.value }))}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm" required />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-slate-400 text-sm mb-1 block">Compra relacionada</label>
+                  <select value={notaCompraForm.compra_id} onChange={e => {
+                    const c = compras.find(x => x.id === e.target.value);
+                    setNotaCompraForm(f => ({
+                      ...f,
+                      compra_id: e.target.value,
+                      compra_numero_factura: c?.numero_factura || "",
+                      proveedor_id: c?.proveedor_id || f.proveedor_id,
+                      proveedor_nombre: c?.proveedor_nombre || f.proveedor_nombre,
+                      moneda: c?.moneda || f.moneda,
+                      tipo_cambio: c?.tipo_cambio ? String(c.tipo_cambio) : f.tipo_cambio,
+                    }));
+                  }} className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm">
+                    <option value="">Sin vincular</option>
+                    {compras.filter(c => c.tiene_factura).map(c => (
+                      <option key={c.id} value={c.id}>{c.fecha} · {c.proveedor_nombre} · {c.numero_factura || fmt(c.monto_total, c.moneda)}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-slate-400 text-sm mb-1 block">Proveedor *</label>
+                  <input value={notaCompraForm.proveedor_nombre} onChange={e => setNotaCompraForm(f => ({ ...f, proveedor_nombre: e.target.value }))}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm" required />
+                </div>
+                <div>
+                  <label className="text-slate-400 text-sm mb-1 block">Motivo *</label>
+                  <input value={notaCompraForm.motivo} onChange={e => setNotaCompraForm(f => ({ ...f, motivo: e.target.value }))}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm" required />
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-slate-400 text-sm mb-1 block">Moneda</label>
+                    <select value={notaCompraForm.moneda} onChange={e => setNotaCompraForm(f => ({ ...f, moneda: e.target.value }))}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm">
+                      <option value="PYG">PYG</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-sm mb-1 block">Monto *</label>
+                    <input type="number" min="0" step="any" value={notaCompraForm.monto} onChange={e => setNotaCompraForm(f => ({ ...f, monto: e.target.value }))}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm" required />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-sm mb-1 block">TC</label>
+                    <input type="number" min="0" step="any" value={notaCompraForm.tipo_cambio} onChange={e => setNotaCompraForm(f => ({ ...f, tipo_cambio: e.target.value }))}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm" disabled={notaCompraForm.moneda === "PYG"} />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-slate-400 text-sm mb-1 block">Notas</label>
+                  <input value={notaCompraForm.notas} onChange={e => setNotaCompraForm(f => ({ ...f, notas: e.target.value }))}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm" />
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button type="button" onClick={() => setShowNotaCompraForm(false)} className="flex-1 py-2.5 border border-white/10 rounded-lg text-slate-400">Cancelar</button>
+                  <button type="submit" className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-medium">
+                    {editingNotaCompra ? "Actualizar" : "Registrar"}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ═══ MODAL: Formulario Compra ══════════════════════════════════════════ */}
       <AnimatePresence>
         {showCompraForm && (
@@ -2887,12 +3270,14 @@ const EgresosPage = () => {
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-slate-400 text-sm">Ítems de la compra</label>
                     <div className="flex gap-2">
-                      <button type="button"
-                        onClick={() => setShowProductoBrowser(true)}
-                        className="flex items-center gap-1.5 text-xs bg-blue-500/15 text-blue-400 border border-blue-500/30 rounded-lg px-3 py-1.5 hover:bg-blue-500/25 transition-all"
-                      >
-                        <Package className="w-3.5 h-3.5" /> Buscar producto
-                      </button>
+                      {puedeUsarStockProductos && (
+                        <button type="button"
+                          onClick={() => setShowProductoBrowser(true)}
+                          className="flex items-center gap-1.5 text-xs bg-blue-500/15 text-blue-400 border border-blue-500/30 rounded-lg px-3 py-1.5 hover:bg-blue-500/25 transition-all"
+                        >
+                          <Package className="w-3.5 h-3.5" /> Buscar producto
+                        </button>
+                      )}
                       <button type="button"
                         onClick={() => setCompraForm(p => ({ ...p, items: [...(p.items || []), emptyItem()] }))}
                         className="flex items-center gap-1.5 text-xs bg-orange-500/15 text-orange-400 border border-orange-500/30 rounded-lg px-3 py-1.5 hover:bg-orange-500/25 transition-all"
@@ -3032,11 +3417,13 @@ const EgresosPage = () => {
                 </div>
 
                 {/* Afecta stock toggle — visible para admin o usuarios con permiso */}
-                {(user?.role === "admin" || hasPermission("compras.afectar_stock")) && (
+                {puedeUsarStockProductos && (
                   <div className="bg-arandu-dark rounded-lg p-3 border border-white/5">
                     <button type="button"
-                      onClick={() => setCompraForm(p => ({ ...p, afecta_stock: !p.afecta_stock }))}
+                      onClick={() => puedeCambiarAfectaStockCompra && setCompraForm(p => ({ ...p, afecta_stock: !p.afecta_stock }))}
+                      disabled={!puedeCambiarAfectaStockCompra}
                       className="flex items-center gap-3 w-full"
+                      title={puedeCambiarAfectaStockCompra ? "Cambiar afectación de stock" : "Siempre afecta stock con productos vinculados"}
                     >
                       {compraForm.afecta_stock
                         ? <ToggleRight className="w-6 h-6 text-emerald-400 flex-shrink-0" />
@@ -3152,7 +3539,7 @@ const EgresosPage = () => {
 
       {/* ═══ MODAL: Buscador de productos ════════════════════════════════════ */}
       <AnimatePresence>
-        {showProductoBrowser && (
+        {showProductoBrowser && puedeUsarStockProductos && (
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4"
@@ -4119,6 +4506,7 @@ const EgresosPage = () => {
                       <p className="text-slate-500 text-xs font-medium mb-2">Desglose</p>
                       <div className="space-y-1.5">
                         <div className="flex justify-between text-slate-300"><span>Sueldo base</span><span>{fmtSueldo(base, moneda)}</span></div>
+                        {totEx > 0 && <div className="flex justify-between text-green-300"><span>+ Extras ({extras.length})</span><span>+ {fmtSueldo(totEx, moneda)}</span></div>}
                         {ips > 0 && <div className="flex justify-between text-blue-300"><span>− IPS</span><span>− {fmtSueldo(ips, "PYG")}</span></div>}
                         {totAd > 0 && <div className="flex justify-between text-amber-300"><span>− Adelantos ({adelantos.length})</span><span>− {fmtSueldo(totAd, moneda)}</span></div>}
                         {desAd > 0 && <div className="flex justify-between text-red-300"><span>− Descuentos adicionales</span><span>− {fmtSueldo(desAd, "PYG")}</span></div>}
@@ -4150,7 +4538,7 @@ const EgresosPage = () => {
                     {/* Extras del período */}
                     {extras.length > 0 && (
                       <div className="bg-green-900/20 border border-green-500/30 rounded-xl p-3 mb-4">
-                        <p className="text-green-300 text-xs font-medium mb-2">Extras del período ({extras.length}) — pagados aparte</p>
+                        <p className="text-green-300 text-xs font-medium mb-2">Extras incluidos en este sueldo ({extras.length})</p>
                         <div className="space-y-1.5">
                           {extras.map(e => (
                             <div key={e.id} className="flex items-center justify-between text-xs">

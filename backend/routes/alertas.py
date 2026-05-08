@@ -4,24 +4,66 @@ import uuid
 from typing import Optional
 
 from config import db
-from auth import require_admin, require_authenticated, has_permission, can_access_empresa, log_auditoria
+from auth import require_admin, require_authenticated, has_permission, can_access_empresa, log_auditoria, apply_logo_filter, is_forbidden
 from models.schemas import AlertaCreate
 
 router = APIRouter()
 
 
+async def _empresa_ids_por_logo(user: dict, logo_tipo: Optional[str]):
+    if not logo_tipo or logo_tipo == "todas":
+        return None
+    logo_query = {}
+    await apply_logo_filter(logo_query, user, logo_tipo)
+    if is_forbidden(logo_query):
+        return []
+    empresas = await db.empresas.find(logo_query, {"_id": 0, "id": 1}).to_list(1000)
+    return [e["id"] for e in empresas]
+
+
+def _aplicar_acceso_usuario(query: dict, user: dict):
+    if user.get("role") == "admin":
+        return True
+    asignadas = user.get("empresas_asignadas") or []
+    if not asignadas:
+        return False
+    if "empresa_id" not in query:
+        query["empresa_id"] = {"$in": asignadas}
+    elif isinstance(query["empresa_id"], dict) and "$in" in query["empresa_id"]:
+        query["empresa_id"]["$in"] = [eid for eid in query["empresa_id"]["$in"] if eid in asignadas]
+        if not query["empresa_id"]["$in"]:
+            return False
+    elif query["empresa_id"] not in asignadas:
+        return False
+    return True
+
+
+async def _get_alerta_accessible(alerta_id: str, user: dict):
+    alerta = await db.alertas.find_one({"id": alerta_id}, {"_id": 0})
+    if not alerta:
+        raise HTTPException(status_code=404, detail="Alerta no encontrada")
+    if not can_access_empresa(user, alerta.get("empresa_id")):
+        raise HTTPException(status_code=403, detail="No tiene acceso a esta alerta")
+    return alerta
+
+
 @router.get("/admin/alertas")
-async def get_alertas(empresa_id: Optional[str] = None, user: dict = Depends(require_authenticated)):
+async def get_alertas(empresa_id: Optional[str] = None, logo_tipo: Optional[str] = None, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "alertas.ver"):
         raise HTTPException(status_code=403, detail="No tiene permiso para ver alertas")
     query = {}
+    empresas_logo = await _empresa_ids_por_logo(user, logo_tipo)
+    if empresas_logo == []:
+        return []
     if empresa_id:
         if not can_access_empresa(user, empresa_id):
             return []
+        if empresas_logo is not None and empresa_id not in empresas_logo:
+            return []
         query["empresa_id"] = empresa_id
-    elif user.get("role") != "admin" and user.get("empresas_asignadas"):
-        query["empresa_id"] = {"$in": user["empresas_asignadas"]}
-    elif user.get("role") != "admin" and not user.get("empresas_asignadas"):
+    elif empresas_logo is not None:
+        query["empresa_id"] = {"$in": empresas_logo}
+    if not _aplicar_acceso_usuario(query, user):
         return []
     alertas = await db.alertas.find(query, {"_id": 0}).sort("fecha_vencimiento", 1).to_list(500)
     emp_ids = list(set(a["empresa_id"] for a in alertas))
@@ -54,12 +96,16 @@ async def create_alerta(data: AlertaCreate, user: dict = Depends(require_authent
 async def update_alerta(alerta_id: str, data: AlertaCreate, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "alertas.editar"):
         raise HTTPException(status_code=403, detail="No tiene permiso para editar alertas")
+    await _get_alerta_accessible(alerta_id, user)
+    if not can_access_empresa(user, data.empresa_id):
+        raise HTTPException(status_code=403, detail="No tiene acceso a esta empresa")
     await db.alertas.update_one({"id": alerta_id}, {"$set": data.dict()})
     await log_auditoria(user, "alertas", "editar", f"Alerta editada: {data.nombre}", alerta_id)
     return {"success": True}
 
 @router.put("/admin/alertas/{alerta_id}/estado")
 async def update_alerta_estado(alerta_id: str, body: dict, user: dict = Depends(require_authenticated)):
+    await _get_alerta_accessible(alerta_id, user)
     estado = body.get("estado", "activa")
     await db.alertas.update_one({"id": alerta_id}, {"$set": {"estado": estado}})
     await log_auditoria(user, "alertas", "cambiar_estado", f"Estado: {estado}", alerta_id)
@@ -69,17 +115,21 @@ async def update_alerta_estado(alerta_id: str, body: dict, user: dict = Depends(
 async def delete_alerta(alerta_id: str, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "alertas.eliminar"):
         raise HTTPException(status_code=403, detail="No tiene permiso para eliminar alertas")
+    await _get_alerta_accessible(alerta_id, user)
     await db.alertas.delete_one({"id": alerta_id})
     await log_auditoria(user, "alertas", "eliminar", "Alerta eliminada", alerta_id)
     return {"success": True}
 
 @router.get("/admin/alertas/proximas")
-async def get_alertas_proximas(user: dict = Depends(require_authenticated)):
+async def get_alertas_proximas(logo_tipo: Optional[str] = None, user: dict = Depends(require_authenticated)):
     now = datetime.now(timezone.utc)
     query = {"estado": "activa"}
-    if user.get("role") != "admin" and user.get("empresas_asignadas"):
-        query["empresa_id"] = {"$in": user["empresas_asignadas"]}
-    elif user.get("role") != "admin" and not user.get("empresas_asignadas"):
+    empresas_logo = await _empresa_ids_por_logo(user, logo_tipo)
+    if empresas_logo == []:
+        return []
+    if empresas_logo is not None:
+        query["empresa_id"] = {"$in": empresas_logo}
+    if not _aplicar_acceso_usuario(query, user):
         return []
     alertas = await db.alertas.find(query, {"_id": 0}).to_list(500)
     proximas = []

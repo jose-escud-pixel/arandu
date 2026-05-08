@@ -7,9 +7,9 @@ import {
   ArrowLeft, Plus, FileText, Receipt, TrendingUp,
   ChevronDown, ChevronLeft, ChevronRight, ExternalLink,
   CheckCircle, Clock, X, AlertCircle, Search,
-  DollarSign, BarChart3, ShoppingCart, ClipboardList,
-  Edit, Trash2, Copy, Wallet, Printer, Banknote, Save
-} from "lucide-react";
+	  DollarSign, BarChart3, ShoppingCart, ClipboardList,
+	  Edit, Trash2, Copy, Wallet, Printer, Banknote, Save, RotateCcw
+	} from "lucide-react";
 import EmpresaSwitcher from "../components/EmpresaSwitcher";
 import PresupuestoFormModal from "../components/PresupuestoFormModal";
 import PresupuestoCostosModal from "../components/PresupuestoCostosModal";
@@ -193,18 +193,26 @@ function StateDropdown({ estado, options, onChange, disabled = false }) {
 const TABS = [
   { id: "presupuestos", label: "Presupuestos", icon: FileText,      color: "blue" },
   { id: "facturas",     label: "Facturas",     icon: Receipt,       color: "emerald" },
-  { id: "ingresos",     label: "Ingresos",     icon: TrendingUp,    color: "violet" },
-  { id: "recibos",      label: "Recibos",      icon: Banknote,      color: "amber" },
-];
+	  { id: "ingresos",     label: "Ingresos",     icon: TrendingUp,    color: "violet" },
+	  { id: "recibos",      label: "Recibos",      icon: Banknote,      color: "amber" },
+	  { id: "notas",        label: "Notas crédito", icon: RotateCcw,     color: "rose" },
+	];
+const TAB_PERMISOS = {
+  presupuestos: "presupuestos.ver",
+  facturas: "facturas.ver",
+  ingresos: "ingresos_varios.ver",
+  recibos: "recibos.ver",
+  notas: "notas_credito.ver",
+};
 
 export default function VentasPage() {
-  const { token, user, hasPermission, empresasPropias, activeEmpresaPropia } = useContext(AuthContext);
+  const { token, user, hasPermission, hasModule, empresasPropias, activeEmpresaPropia } = useContext(AuthContext);
   const isAdmin = user?.role === "admin";
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(() => {
     const t = searchParams.get("tab");
-    return t && ["presupuestos", "facturas", "ingresos", "recibos"].includes(t) ? t : "presupuestos";
+	    return t && ["presupuestos", "facturas", "ingresos", "recibos", "notas"].includes(t) ? t : "presupuestos";
   });
   // Filtro temporal: "todos" | "mes" | "anio"
   const [filtroTipo, setFiltroTipo] = useState("todos");
@@ -218,9 +226,10 @@ export default function VentasPage() {
   const [sortBy, setSortBy] = useState({
     presupuestos: { key: "fecha", dir: "desc" },
     facturas:     { key: "fecha", dir: "desc" },
-    ingresos:     { key: "fecha", dir: "desc" },
-    recibos:      { key: "fecha_pago", dir: "desc" },
-  });
+	    ingresos:     { key: "fecha", dir: "desc" },
+	    recibos:      { key: "fecha_pago", dir: "desc" },
+	    notas:        { key: "fecha", dir: "desc" },
+	  });
   const toggleSort = (tabName, key) => {
     setSortBy(prev => ({
       ...prev,
@@ -332,16 +341,43 @@ export default function VentasPage() {
 
   // Data
   const [presupuestos, setPresupuestos] = useState([]);
-  const [facturas, setFacturas] = useState([]);
-  const [ingresos, setIngresos] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showIngForm, setShowIngForm] = useState(false);  // modal nuevo ingreso
-  const [ingFormItem, setIngFormItem] = useState(null);   // ingreso a editar
+	  const [facturas, setFacturas] = useState([]);
+	  const [ingresos, setIngresos] = useState([]);
+	  const [notasCredito, setNotasCredito] = useState([]);
+	  const [loading, setLoading] = useState(true);
+	  const [showIngForm, setShowIngForm] = useState(false);  // modal nuevo ingreso
+	  const [ingFormItem, setIngFormItem] = useState(null);   // ingreso a editar
+	  const [showNotaForm, setShowNotaForm] = useState(false);
+	  const [notaFormItem, setNotaFormItem] = useState(null);
 
   // Presupuesto form/costos modals
   const [presFormItem, setPresFormItem] = useState(null); // { presupuesto, mode }
   const [presCostosItem, setPresCostosItem] = useState(null); // presupuesto object
   const [presFacturarItem, setPresFacturarItem] = useState(null); // presupuesto for facturar modal
+
+  useEffect(() => {
+    const nuevo = searchParams.get("nuevo");
+    if (!nuevo) return;
+    if (nuevo === "presupuesto" && hasPermission("presupuestos.crear")) {
+      setTab("presupuestos");
+      setPresFormItem({ presupuesto: null, mode: "create" });
+    } else if (nuevo === "factura" && hasPermission("facturas.crear")) {
+      setTab("facturas");
+      setFacFormItem(null);
+      setShowFacForm(true);
+    } else if (nuevo === "ingreso" && hasPermission("ingresos_varios.crear")) {
+      setTab("ingresos");
+      setIngFormItem(null);
+      setShowIngForm(true);
+    } else if (nuevo === "nota_credito" && hasPermission("notas_credito.crear")) {
+      setTab("notas");
+      setNotaFormItem(null);
+      setShowNotaForm(true);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("nuevo");
+    setSearchParams(next, { replace: true });
+  }, [searchParams]); // eslint-disable-line
   // Facturar modal state
   const [facturaForm, setFacturaForm] = useState({ numero: "", fecha: new Date().toISOString().split('T')[0], forma_pago: "contado", notas: "" });
   const [facturaMode, setFacturaMode] = useState("nueva");
@@ -371,17 +407,23 @@ export default function VentasPage() {
       const logoQc = logoFilter !== "todas" ? `?logo_tipo=${logoFilter}` : "";
       const mesParam = filtroTipo === "mes" ? mes : "";
       const buildQ = (params) => { const p = Object.entries(params).filter(([,v]) => v != null && v !== "").map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join("&"); return p ? `?${p}` : ""; };
-      const [rPres, rFac, rIng, rEmp, rProv, rProd, rCuentas, rRecibos] = await Promise.all([
-        fetch(`${API}/admin/presupuestos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
-        fetch(`${API}/admin/facturas${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
-        fetch(`${API}/admin/ingresos-varios${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
+	      const [rPres, rFac, rIng, rEmp, rProv, rProd, rCuentas, rRecibos, rNotas] = await Promise.all([
+	        hasPermission("presupuestos.ver")
+            ? fetch(`${API}/admin/presupuestos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers })
+            : Promise.resolve({ ok: true, json: async () => [] }),
+	        fetch(`${API}/admin/facturas${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
+	        fetch(`${API}/admin/ingresos-varios${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
         fetch(`${API}/admin/empresas${logoQc}`, { headers }),
-        fetch(`${API}/admin/proveedores?activo=true`, { headers }),
-        fetch(`${API}/admin/productos`, { headers }),
-        fetch(`${API}/admin/cuentas-bancarias${logoQc}`, { headers }),
-        fetch(`${API}/admin/recibos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
-      ]);
+        hasPermission("proveedores.ver") ? fetch(`${API}/admin/proveedores?activo=true`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
+	        hasModule?.("productos_stock") ? fetch(`${API}/admin/productos`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
+	        fetch(`${API}/admin/cuentas-bancarias${logoQc}`, { headers }),
+	        fetch(`${API}/admin/recibos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
+	        hasPermission("notas_credito.ver")
+	          ? fetch(`${API}/admin/notas-credito${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers })
+	          : Promise.resolve({ ok: false }),
+	      ]);
       if (rPres.ok) setPresupuestos(await rPres.json());
+      else setPresupuestos([]);
       if (rFac.ok) {
         const data = await rFac.json();
         // Sanitize dates
@@ -396,8 +438,9 @@ export default function VentasPage() {
       if (rEmp.ok) setEmpresas(await rEmp.json());
       if (rProv.ok) setProveedores(await rProv.json());
       if (rProd.ok) setProductos(await rProd.json());
-      if (rCuentas.ok) setCuentasDisp(await rCuentas.json());
-      if (rRecibos.ok) setRecibos(await rRecibos.json());
+	      if (rCuentas.ok) setCuentasDisp(await rCuentas.json());
+	      if (rRecibos.ok) setRecibos(await rRecibos.json());
+	      if (rNotas.ok) setNotasCredito(await rNotas.json());
     } catch (e) {
       toast.error("Error al cargar datos");
     }
@@ -405,6 +448,13 @@ export default function VentasPage() {
   };
 
   useEffect(() => { fetchAll(); }, [mes, filtroTipo, activeEmpresaPropia]); // eslint-disable-line
+
+  const visibleTabs = TABS.filter(t => hasPermission(TAB_PERMISOS[t.id]));
+  useEffect(() => {
+    if (visibleTabs.length && !visibleTabs.some(t => t.id === tab)) {
+      setTab(visibleTabs[0].id);
+    }
+  }, [activeEmpresaPropia?.id, user?.permisos, tab]); // eslint-disable-line
 
 
 
@@ -775,42 +825,87 @@ export default function VentasPage() {
       const texto = [r.numero, r.factura_numero, r.razon_social, r.ruc, r.notas].filter(Boolean).join(" ").toLowerCase();
       return reciboAllChips.every(chip => texto.includes(chip.toLowerCase()));
     }), sortBy.recibos);
-  const filteredIng = sortList((Array.isArray(ingresos) ? ingresos : [])
-    .filter(i => i && matchesYear(i.fecha))
+	  const filteredIng = sortList((Array.isArray(ingresos) ? ingresos : [])
+	    .filter(i => i && matchesYear(i.fecha))
     .filter(i =>
       !q || (i.descripcion || "").toLowerCase().includes(q) ||
       (i.categoria || "").toLowerCase().includes(q) ||
       String(i.monto_pyg || i.monto || "").includes(q)
-    ).filter(i => logoFilter === "todas" || (i.logo_tipo || "arandujar") === logoFilter), sortBy.ingresos || { key: "fecha", dir: "desc" });
-  // ─── Stats ───────────────────────────────────────────────────
-  const totalFacturadoPYG = facturas
-    .filter(f => f.tipo === "emitida" && f.estado !== "anulada")
-    .reduce((s, f) => s + (f.monto_pyg || f.monto || 0), 0);
-
-  const totalCobradoPYG = facturas
-    .filter(f => f.tipo === "emitida" && (f.estado === "pagada" || f.estado === "parcial"))
-    .reduce((s, f) => {
-      // Para parcial: sumar solo lo cobrado (monto_pagado o suma de pagos del período)
-      if (f.estado === "parcial") {
-        // Si tiene pagos array, sumar los del período filtrado
-        const pagosArr = f.pagos || [];
-        if (pagosArr.length > 0) {
-          const mesFiltro = filtroTipo === "mes" ? mes : null;
-          const montoPagos = pagosArr
-            .filter(p => !mesFiltro || (p.fecha || "").startsWith(mesFiltro))
-            .reduce((ps, p) => ps + (p.monto || 0), 0);
-          return s + montoPagos;
-        }
-        return s + (f.monto_pagado || 0);
-      }
-      return s + (f.monto_pyg || f.monto || 0);
-    }, 0);
-
-  const presAprobados = presupuestos.filter(p => p.estado === "aprobado").length;
-  const presBorrador  = presupuestos.filter(p => p.estado === "borrador").length;
-
-  const totalIngresosPYG = ingresos
-    .reduce((s, i) => s + (i.monto_pyg || (i.moneda === "PYG" ? i.monto : 0) || 0), 0);
+	    ).filter(i => logoFilter === "todas" || (i.logo_tipo || "arandujar") === logoFilter), sortBy.ingresos || { key: "fecha", dir: "desc" });
+	  const filteredNotas = sortList((Array.isArray(notasCredito) ? notasCredito : [])
+	    .filter(n => n && matchesYear(n.fecha))
+	    .filter(n =>
+	      !q || (n.numero || "").toLowerCase().includes(q) ||
+	      (n.factura_numero || "").toLowerCase().includes(q) ||
+	      (n.razon_social || "").toLowerCase().includes(q) ||
+	      (n.motivo || "").toLowerCase().includes(q) ||
+	      String(n.monto || "").includes(q)
+	    ).filter(n => logoFilter === "todas" || (n.logo_tipo || "arandujar") === logoFilter), sortBy.notas || { key: "fecha", dir: "desc" });
+	  // ─── Stats ───────────────────────────────────────────────────
+	  const sumMonto = (items, field = "monto") => items.reduce((s, it) => s + (it.monto_pyg || ((it.moneda || "PYG") === "PYG" ? it[field] : 0) || 0), 0);
+	  const sumUSD = (items, field = "monto") => items.reduce((s, it) => s + ((it.moneda || "PYG") === "USD" ? (Number(it[field]) || 0) : 0), 0);
+	  const countMonto = (items, field = "monto") => ({ count: items.length, monto: sumMonto(items, field), monto_usd: sumUSD(items, field) });
+	  const totalCobradoFactura = (f) => (f.pagos || []).reduce((s, p) => s + (p.monto || 0), 0) || f.monto_pagado || (f.estado === "pagada" ? f.monto : 0) || 0;
+	  const statCards = (() => {
+	    if (tab === "presupuestos") {
+	      const aprob = countMonto(filteredPres.filter(p => p.estado === "aprobado"), "total");
+	      const rech = countMonto(filteredPres.filter(p => p.estado === "rechazado"), "total");
+	      const fact = countMonto(filteredPres.filter(p => p.estado === "facturado" || p.estado === "cobrado" || p.facturas_count > 0), "total");
+	      const falta = countMonto(filteredPres.filter(p => p.estado === "aprobado" && !p.facturas_count), "total");
+	      return [
+	        { label: "Aprobados", ...aprob, color: "text-blue-300" },
+	        { label: "Rechazados", ...rech, color: "text-red-300" },
+	        { label: "Facturados / cobrados", ...fact, color: "text-emerald-300" },
+	        { label: "Faltan facturar/cobrar", ...falta, color: "text-amber-300" },
+	      ];
+	    }
+	    if (tab === "facturas") {
+	      const emit = countMonto(filteredFac.filter(f => f.tipo === "emitida" && f.estado !== "anulada"));
+	      const pag = countMonto(filteredFac.filter(f => f.estado === "pagada"));
+	      const parc = countMonto(filteredFac.filter(f => f.estado === "parcial"));
+	      const pend = countMonto(filteredFac.filter(f => f.estado === "pendiente"));
+	      return [
+	        { label: "Emitidas", ...emit, color: "text-cyan-300" },
+	        { label: "Pagadas", ...pag, color: "text-emerald-300" },
+	        { label: "Parciales", ...parc, color: "text-blue-300", sub: `Cobrado ${fmtPYG(filteredFac.filter(f => f.estado === "parcial").reduce((s, f) => s + ((f.moneda || "PYG") === "PYG" ? totalCobradoFactura(f) : 0), 0))}${filteredFac.some(f => f.estado === "parcial" && f.moneda === "USD") ? ` / USD ${filteredFac.filter(f => f.estado === "parcial" && f.moneda === "USD").reduce((s, f) => s + totalCobradoFactura(f), 0).toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ""}` },
+	        { label: "Pendientes", ...pend, color: "text-amber-300" },
+	      ];
+	    }
+	    if (tab === "ingresos") {
+	      const total = countMonto(filteredIng);
+	      const transfer = countMonto(filteredIng.filter(i => (i.categoria || "").toLowerCase().includes("transfer")));
+	      const efectivo = countMonto(filteredIng.filter(i => (i.categoria || "").toLowerCase().includes("efectivo")));
+	      const otros = countMonto(filteredIng.filter(i => !(i.categoria || "").toLowerCase().includes("transfer") && !(i.categoria || "").toLowerCase().includes("efectivo")));
+	      return [
+	        { label: "Ingresos", ...total, color: "text-violet-300" },
+	        { label: "Transferencias", ...transfer, color: "text-blue-300" },
+	        { label: "Efectivo", ...efectivo, color: "text-emerald-300" },
+	        { label: "Otros", ...otros, color: "text-slate-300" },
+	      ];
+	    }
+	    if (tab === "recibos") {
+	      const total = countMonto(filteredRecibos);
+	      const pyg = countMonto(filteredRecibos.filter(r => (r.moneda || "PYG") === "PYG"));
+	      const usd = filteredRecibos.filter(r => r.moneda === "USD");
+	      const hoy = filteredRecibos.filter(r => r.fecha_pago === new Date().toISOString().slice(0, 10));
+	      return [
+	        { label: "Recibos", ...total, color: "text-amber-300" },
+	        { label: "En guaraníes", ...pyg, color: "text-emerald-300" },
+	        { label: "En USD", count: usd.length, monto: usd.reduce((s, r) => s + (r.monto || 0), 0), color: "text-blue-300", currency: "USD" },
+	        { label: "Hoy", ...countMonto(hoy), color: "text-cyan-300" },
+	      ];
+	    }
+	    const emit = countMonto(filteredNotas.filter(n => n.estado !== "anulada"));
+	    const anul = countMonto(filteredNotas.filter(n => n.estado === "anulada"));
+	    const vinculadas = countMonto(filteredNotas.filter(n => n.factura_id));
+	    const sueltas = countMonto(filteredNotas.filter(n => !n.factura_id));
+	    return [
+	      { label: "Notas emitidas", ...emit, color: "text-rose-300" },
+	      { label: "Vinculadas a factura", ...vinculadas, color: "text-amber-300" },
+	      { label: "Sin factura vinculada", ...sueltas, color: "text-slate-300" },
+	      { label: "Anuladas", ...anul, color: "text-red-300" },
+	    ];
+	  })();
 
   return (
     <div className="min-h-screen bg-arandu-dark text-white">
@@ -885,35 +980,28 @@ export default function VentasPage() {
           )}
         </div>
 
-        {/* Stats cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-            <p className="text-slate-400 text-xs font-body mb-1">Facturado</p>
-            <p className="text-emerald-300 font-heading font-bold text-lg">{fmtPYG(totalFacturadoPYG)}</p>
-            <p className="text-slate-500 text-xs font-body mt-0.5">Cobrado: {fmtPYG(totalCobradoPYG)}</p>
-          </div>
-          <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-            <p className="text-slate-400 text-xs font-body mb-1">Presupuestos</p>
-            <p className="text-blue-300 font-heading font-bold text-lg">{presupuestos.length}</p>
-            <p className="text-slate-500 text-xs font-body mt-0.5">{presAprobados} aprobados · {presBorrador} borrador</p>
-          </div>
-          <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-            <p className="text-slate-400 text-xs font-body mb-1">Facturas</p>
-            <p className="text-orange-300 font-heading font-bold text-lg">{facturas.filter(f => f.tipo === "emitida").length}</p>
-            <p className="text-slate-500 text-xs font-body mt-0.5">
-              {facturas.filter(f => f.estado === "pendiente" || f.estado === "parcial").length} pendientes de cobro
-            </p>
-          </div>
-          <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-            <p className="text-slate-400 text-xs font-body mb-1">Ingresos varios</p>
-            <p className="text-violet-300 font-heading font-bold text-lg">{fmtPYG(totalIngresosPYG)}</p>
-            <p className="text-slate-500 text-xs font-body mt-0.5">{ingresos.length} registros</p>
-          </div>
-        </div>
+	        {/* Estadísticas por pestaña */}
+	        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+	          {statCards.map(card => (
+	            <div key={card.label} className="bg-white/5 border border-white/10 rounded-xl p-4">
+	              <p className="text-slate-400 text-xs font-body mb-1">{card.label}</p>
+	              <p className={`${card.color} font-heading font-bold text-lg`}>{card.count}</p>
+	              <p className="text-slate-500 text-xs font-body mt-0.5">
+	                {card.currency === "USD" ? `USD ${Number(card.monto || 0).toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : fmtPYG(card.monto || 0)}
+	              </p>
+	              {!card.currency && card.monto_usd > 0 && (
+	                <p className="text-blue-500 text-xs font-body mt-0.5">
+	                  USD {Number(card.monto_usd || 0).toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+	                </p>
+	              )}
+	              {card.sub && <p className="text-slate-600 text-xs font-body mt-0.5">{card.sub}</p>}
+	            </div>
+	          ))}
+	        </div>
 
         {/* Tabs */}
         <div className="flex gap-1 border-b border-white/10 pb-0">
-          {TABS.map(t => {
+	          {visibleTabs.map(t => {
             const Icon = t.icon;
             const active = tab === t.id;
             return (
@@ -932,9 +1020,10 @@ export default function VentasPage() {
                   active ? `bg-${t.color}-500/20 text-${t.color}-300` : "bg-white/10 text-slate-500"
                 }`}>
                   {t.id === "presupuestos" ? filteredPres.length
-                   : t.id === "facturas" ? filteredFac.length
-                   : t.id === "recibos" ? filteredRecibos.length
-                   : filteredIng.length}
+	                   : t.id === "facturas" ? filteredFac.length
+	                   : t.id === "recibos" ? filteredRecibos.length
+	                   : t.id === "notas" ? filteredNotas.length
+	                   : filteredIng.length}
                 </span>
               </button>
             );
@@ -1023,16 +1112,24 @@ export default function VentasPage() {
                 className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-3 py-2 text-white text-sm font-body focus:outline-none focus:border-violet-500"
               />
             </div>
-            {tab === "ingresos" && hasPermission("facturas.crear") && (
-              <button
+	            {tab === "ingresos" && hasPermission("ingresos_varios.crear") && (
+	              <button
                 onClick={() => setShowIngForm(true)}
                 className="flex items-center gap-2 px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm rounded-lg transition-all font-body whitespace-nowrap"
               >
-                <Plus className="w-4 h-4" /> Nuevo ingreso
-              </button>
-            )}
-          </div>
-        )}
+	                <Plus className="w-4 h-4" /> Nuevo ingreso
+	              </button>
+	            )}
+	            {tab === "notas" && hasPermission("notas_credito.crear") && (
+	              <button
+	                onClick={() => { setNotaFormItem(null); setShowNotaForm(true); }}
+	                className="flex items-center gap-2 px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white text-sm rounded-lg transition-all font-body whitespace-nowrap"
+	              >
+	                <Plus className="w-4 h-4" /> Nueva nota
+	              </button>
+	            )}
+	          </div>
+	        )}
 
         {/* ── Tab: Presupuestos ─────────────────────────────────── */}
         {tab === "presupuestos" && (
@@ -1420,8 +1517,8 @@ export default function VentasPage() {
           </div>
         )}
 
-        {/* ── Tab: Recibos ─────────────────────────────────────── */}
-        {tab === "recibos" && (
+	        {/* ── Tab: Recibos ─────────────────────────────────────── */}
+	        {tab === "recibos" && (
           <div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-slate-500 text-xs font-body">{filteredRecibos.length} recibo{filteredRecibos.length !== 1 ? "s" : ""}</span>
@@ -1469,9 +1566,74 @@ export default function VentasPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
-            )}
-          </div>
+	          </div>
+	        )}
+
+	        {/* ── Tab: Notas de crédito ────────────────────────────── */}
+	        {tab === "notas" && (
+	          <div>
+	            <div className="flex items-center justify-between mb-3">
+	              <span className="text-slate-500 text-xs font-body">{filteredNotas.length} nota{filteredNotas.length !== 1 ? "s" : ""} de crédito</span>
+	            </div>
+	            {loading ? (
+	              <div className="text-center py-10 text-slate-500 animate-pulse font-body">Cargando...</div>
+	            ) : filteredNotas.length === 0 ? (
+	              <div className="text-center py-12 text-slate-500 font-body">
+	                <RotateCcw className="w-10 h-10 mx-auto mb-2 opacity-30" />
+	                <p>Sin notas de crédito para este período</p>
+	              </div>
+	            ) : (
+	              <div className="overflow-x-auto rounded-xl border border-white/10">
+	                <table className="w-full text-sm font-body">
+	                  <thead>
+	                    <tr className="border-b border-white/10 bg-white/3">
+	                      <SortTh label="N°" sortKey="numero" currentSort={sortBy.notas} onClick={(k) => toggleSort("notas", k)} className="text-left" />
+	                      <SortTh label="Factura" sortKey="factura_numero" currentSort={sortBy.notas} onClick={(k) => toggleSort("notas", k)} className="text-left" />
+	                      <SortTh label="Cliente" sortKey="razon_social" currentSort={sortBy.notas} onClick={(k) => toggleSort("notas", k)} className="text-left" />
+	                      <SortTh label="Fecha" sortKey="fecha" currentSort={sortBy.notas} onClick={(k) => toggleSort("notas", k)} className="text-left" />
+	                      <SortTh label="Monto" sortKey="monto" currentSort={sortBy.notas} onClick={(k) => toggleSort("notas", k)} className="text-right" />
+	                      <th className="px-4 py-3 text-right text-xs font-semibold text-slate-400 uppercase tracking-wider">Acciones</th>
+	                    </tr>
+	                  </thead>
+	                  <tbody>
+	                    {filteredNotas.map(n => (
+	                      <tr key={n.id} className={`border-b border-white/5 hover:bg-white/3 transition-colors ${n.estado === "anulada" ? "opacity-50" : ""}`}>
+	                        <td className="px-4 py-3"><span className="font-mono text-rose-300">{n.numero}</span></td>
+	                        <td className="px-4 py-3 text-slate-400">{n.factura_numero || "-"}</td>
+	                        <td className="px-4 py-3 max-w-[220px]">
+	                          <p className="text-slate-200 truncate">{n.razon_social || "-"}</p>
+	                          <p className="text-slate-500 text-xs truncate">{n.motivo}</p>
+	                        </td>
+	                        <td className="px-4 py-3 text-slate-400 text-xs">{n.fecha || "-"}</td>
+	                        <td className="px-4 py-3 text-right text-rose-300 font-medium">{fmtMonto(n.monto, n.moneda)}</td>
+	                        <td className="px-4 py-3 text-right">
+	                          <div className="flex items-center justify-end gap-2">
+	                            {hasPermission("notas_credito.editar") && (
+	                              <button onClick={() => { setNotaFormItem(n); setShowNotaForm(true); }} className="text-slate-400 hover:text-blue-400 transition-colors" title="Editar">
+	                                <Edit className="w-4 h-4" />
+	                              </button>
+	                            )}
+	                            {hasPermission("notas_credito.eliminar") && (
+	                              <button onClick={async () => {
+	                                if (!window.confirm("¿Eliminar esta nota de crédito?")) return;
+	                                const res = await fetch(`${API}/admin/notas-credito/${n.id}`, { method: "DELETE", headers });
+	                                if (res.ok) { toast.success("Nota eliminada"); fetchAll(); }
+	                                else toast.error("Error al eliminar");
+	                              }} className="text-slate-400 hover:text-red-400 transition-colors" title="Eliminar">
+	                                <Trash2 className="w-4 h-4" />
+	                              </button>
+	                            )}
+	                          </div>
+	                        </td>
+	                      </tr>
+	                    ))}
+	                  </tbody>
+	                </table>
+	              </div>
+	            )}
+	          </div>
+	        )}
+	      </div>
         )}
       </div>
 
@@ -1503,8 +1665,8 @@ export default function VentasPage() {
       )}
 
       {/* ── Nuevo / Editar Ingreso ── */}
-      {showIngForm && (
-        <IngresosFormModal
+	      {showIngForm && (
+	        <IngresosFormModal
           ingreso={ingFormItem}
           cuentasDisp={cuentasDisp}
           activeLogoTipo={activeEmpresaPropia?.slug || "arandujar"}
@@ -1512,8 +1674,20 @@ export default function VentasPage() {
           API={API}
           onClose={() => { setShowIngForm(false); setIngFormItem(null); }}
           onSaved={() => { setShowIngForm(false); setIngFormItem(null); fetchAll(); toast.success("Ingreso guardado"); }}
-        />
-      )}
+	        />
+	      )}
+
+	      {showNotaForm && (
+	        <NotaCreditoFormModal
+	          nota={notaFormItem}
+	          facturas={facturas.filter(f => f.tipo === "emitida" && f.estado !== "anulada")}
+	          activeLogoTipo={activeEmpresaPropia?.slug || "arandujar"}
+	          token={token}
+	          API={API}
+	          onClose={() => { setShowNotaForm(false); setNotaFormItem(null); }}
+	          onSaved={() => { setShowNotaForm(false); setNotaFormItem(null); fetchAll(); toast.success("Nota de crédito guardada"); }}
+	        />
+	      )}
 
       {/* Vista previa inline (facturas/ingresos) */}
       {previewItem && (
@@ -1540,6 +1714,7 @@ export default function VentasPage() {
           empresas={empresas}
           proveedores={proveedores}
           productos={productos}
+          productosHabilitados={hasModule?.("productos_stock")}
           activeEmpresaPropia={activeEmpresaPropia}
           isAdmin={user?.role === "admin"}
           hasPermission={hasPermission}
@@ -1610,9 +1785,11 @@ export default function VentasPage() {
           token={token}
           API={API}
           empresas={empresas}
-          presupuestosDisp={presupuestos}
+          presupuestosDisp={hasPermission("presupuestos.ver") ? presupuestos : []}
           activeEmpresaPropia={activeEmpresaPropia}
           hasPermission={hasPermission}
+          productos={productos}
+          productosHabilitados={hasModule?.("productos_stock")}
           cuentasDisp={cuentasDisp}
         />
       )}
@@ -3368,7 +3545,7 @@ function EditPagoModal({ factura: fac, pago, cuentasDisp, onClose, onSave, fmtMo
             <h2 className="font-bold text-gray-800 text-base">Editar pago</h2>
             <p className="text-xs text-gray-400 mt-0.5">Factura {fac?.numero} · {fac?.razon_social}</p>
           </div>
-          <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="text-gray-400 hover:text-gray-600 transition-colors">
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -3431,7 +3608,7 @@ function EditPagoModal({ factura: fac, pago, cuentasDisp, onClose, onSave, fmtMo
         </div>
 
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
-          <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition-colors">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition-colors">
             Cancelar
           </button>
           <button onClick={handleSave} disabled={saving}
@@ -3535,7 +3712,7 @@ function IngresosFormModal({ ingreso, cuentasDisp, activeLogoTipo, token, API, o
             </h2>
             <p className="text-xs text-gray-400 mt-0.5">Ingresos varios / sin factura</p>
           </div>
-          <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="text-gray-400 hover:text-gray-600 transition-colors">
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -3625,13 +3802,155 @@ function IngresosFormModal({ ingreso, cuentasDisp, activeLogoTipo, token, API, o
         </div>
 
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
-          <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition-colors">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition-colors">
             Cancelar
           </button>
           <button onClick={handleSave} disabled={saving}
             className="flex items-center gap-2 px-5 py-2 bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg shadow transition-all">
             <Save className="w-4 h-4" />
             {saving ? "Guardando..." : isEdit ? "Guardar cambios" : "Crear ingreso"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NotaCreditoFormModal({ nota, facturas, activeLogoTipo, token, API, onClose, onSaved }) {
+  const isEdit = !!nota;
+  const [saving, setSaving] = React.useState(false);
+  const [form, setForm] = React.useState({
+    numero: nota?.numero || "",
+    fecha: nota?.fecha || new Date().toISOString().slice(0, 10),
+    factura_id: nota?.factura_id || "",
+    motivo: nota?.motivo || "",
+    monto: nota?.monto || "",
+    moneda: nota?.moneda || "PYG",
+    tipo_cambio: nota?.tipo_cambio || "",
+    notas: nota?.notas || "",
+    estado: nota?.estado || "emitida",
+  });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const factura = facturas.find(f => f.id === form.factura_id);
+
+  React.useEffect(() => {
+    if (!factura || isEdit) return;
+    setForm(f => ({
+      ...f,
+      factura_id: factura.id,
+      moneda: factura.moneda || f.moneda,
+      tipo_cambio: factura.tipo_cambio || f.tipo_cambio,
+      monto: f.monto || factura.monto || "",
+    }));
+  }, [factura, isEdit]);
+
+  const handleSave = async () => {
+    if (!form.numero.trim()) { alert("El número es requerido"); return; }
+    if (!form.motivo.trim()) { alert("El motivo es requerido"); return; }
+    if (!form.monto || Number(form.monto) <= 0) { alert("El monto debe ser mayor a cero"); return; }
+    setSaving(true);
+    try {
+      const body = {
+        numero: form.numero.trim(),
+        fecha: form.fecha,
+        factura_id: factura?.id || form.factura_id || null,
+        factura_numero: factura?.numero || nota?.factura_numero || null,
+        empresa_id: factura?.empresa_id || nota?.empresa_id || null,
+        razon_social: factura?.razon_social || factura?.empresa_nombre || nota?.razon_social || null,
+        ruc: factura?.ruc || nota?.ruc || null,
+        motivo: form.motivo.trim(),
+        monto: Number(form.monto),
+        moneda: form.moneda,
+        tipo_cambio: form.tipo_cambio ? Number(form.tipo_cambio) : null,
+        logo_tipo: nota?.logo_tipo || factura?.logo_tipo || activeLogoTipo,
+        estado: form.estado,
+        notas: form.notas || null,
+      };
+      const url = isEdit ? `${API}/admin/notas-credito/${nota.id}` : `${API}/admin/notas-credito`;
+      const res = await fetch(url, {
+        method: isEdit ? "PUT" : "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || "Error al guardar"); }
+      onSaved();
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  };
+
+  const inp = "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 bg-white text-gray-800";
+  const lbl = "block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1";
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[200] flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <div>
+            <h2 className="font-bold text-gray-800 text-base">{isEdit ? "Editar nota de crédito" : "Nueva nota de crédito"}</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Ajuste o devolución sobre factura emitida</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={lbl}>Número *</label>
+              <input className={inp} value={form.numero} onChange={e => set("numero", e.target.value)} placeholder="NC-001-001..." />
+            </div>
+            <div>
+              <label className={lbl}>Fecha *</label>
+              <input type="date" className={inp} value={form.fecha} onChange={e => set("fecha", e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label className={lbl}>Factura vinculada</label>
+            <select className={inp} value={form.factura_id} onChange={e => set("factura_id", e.target.value)}>
+              <option value="">Sin vincular</option>
+              {facturas.map(f => (
+                <option key={f.id} value={f.id}>{f.numero} · {f.razon_social || f.empresa_nombre || "Cliente"} · {fmtMonto(f.monto, f.moneda)}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={lbl}>Motivo *</label>
+            <input className={inp} value={form.motivo} onChange={e => set("motivo", e.target.value)} placeholder="Devolución, descuento, anulación parcial..." />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className={lbl}>Moneda</label>
+              <select className={inp} value={form.moneda} onChange={e => set("moneda", e.target.value)}>
+                <option value="PYG">PYG</option>
+                <option value="USD">USD</option>
+                <option value="BRL">BRL</option>
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className={lbl}>Monto *</label>
+              <input type="number" min="0" step="any" className={inp} value={form.monto} onChange={e => set("monto", e.target.value)} />
+            </div>
+          </div>
+          {form.moneda !== "PYG" && (
+            <div>
+              <label className={lbl}>Tipo de cambio</label>
+              <input type="number" min="0" step="any" className={inp} value={form.tipo_cambio} onChange={e => set("tipo_cambio", e.target.value)} />
+            </div>
+          )}
+          <div>
+            <label className={lbl}>Estado</label>
+            <select className={inp} value={form.estado} onChange={e => set("estado", e.target.value)}>
+              <option value="emitida">Emitida</option>
+              <option value="anulada">Anulada</option>
+            </select>
+          </div>
+          <div>
+            <label className={lbl}>Notas</label>
+            <textarea className={inp + " resize-none min-h-[70px]"} value={form.notas} onChange={e => set("notas", e.target.value)} />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg">Cancelar</button>
+          <button onClick={handleSave} disabled={saving} className="flex items-center gap-2 px-5 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg shadow">
+            <Save className="w-4 h-4" /> {saving ? "Guardando..." : "Guardar"}
           </button>
         </div>
       </div>

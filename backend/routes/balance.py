@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime, timezone
 from typing import Optional, List
 import logging
+import uuid
 
 from config import db
 from auth import require_authenticated, has_permission
@@ -14,6 +15,14 @@ logger = logging.getLogger(__name__)
 #  Helpers
 # ─────────────────────────────────────────────
 
+def round_pyg(monto: Optional[float]) -> int:
+    """Guaraníes no manejan centavos; el balance suma enteros visibles."""
+    try:
+        return int(round(float(monto or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def to_pyg(monto: float, moneda: str, tipo_cambio: Optional[float]) -> float:
     """Convierte un monto a guaraníes usando el tipo de cambio.
 
@@ -25,7 +34,7 @@ def to_pyg(monto: float, moneda: str, tipo_cambio: Optional[float]) -> float:
       inflando el balance en Gs y haciendo que el USD se descuente "doble".)
     """
     if moneda == "PYG" or not moneda:
-        return monto or 0
+        return round_pyg(monto)
     try:
         tc = float(tipo_cambio) if tipo_cambio not in (None, "", 0) else 0.0
     except (TypeError, ValueError):
@@ -35,13 +44,48 @@ def to_pyg(monto: float, moneda: str, tipo_cambio: Optional[float]) -> float:
             "to_pyg: movimiento en %s sin tipo_cambio (monto=%s) — se omite del total Gs",
             moneda, monto,
         )
-        return 0.0
-    return (monto or 0) * tc
+        return 0
+    return round_pyg((monto or 0) * tc)
 
 
 def mes_range(periodo: str):
     """Devuelve el prefijo YYYY-MM para filtrar por mes."""
     return f"^{periodo}"
+
+
+async def _pagos_iva_periodo(periodo: str, logo_tipo: Optional[str]) -> List[dict]:
+    """Pagos aplicados al IVA de un periodo, incluyendo legacy."""
+    lt_query = {}
+    if logo_tipo and logo_tipo != "todas":
+        lt_query["logo_tipo"] = logo_tipo
+
+    pagos = await db.pagos_iva.find(
+        {**lt_query, "periodo_iva": periodo},
+        {"_id": 0}
+    ).sort("fecha_pago", -1).to_list(500)
+
+    legacy = await db.ingresos_varios.find(
+        {**lt_query, "categoria": "Pago IVA", "fecha": {"$regex": f"^{periodo}"}},
+        {"_id": 0, "id": 1, "descripcion": 1, "fecha": 1, "monto": 1, "cuenta_id": 1,
+         "cuenta_nombre": 1, "notas": 1, "logo_tipo": 1}
+    ).sort("fecha", -1).to_list(500)
+    for p in legacy:
+        monto = p.get("monto") or 0
+        if monto >= 0:
+            continue
+        pagos.append({
+            "id": p.get("id"),
+            "descripcion": p.get("descripcion") or f"Pago IVA {periodo}",
+            "periodo_iva": periodo,
+            "fecha_pago": p.get("fecha"),
+            "monto": abs(monto),
+            "cuenta_id": p.get("cuenta_id"),
+            "cuenta_nombre": p.get("cuenta_nombre"),
+            "notas": p.get("notas"),
+            "logo_tipo": p.get("logo_tipo"),
+            "legacy": True,
+        })
+    return pagos
 
 
 # ─────────────────────────────────────────────
@@ -284,34 +328,11 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
             if moneda_a == "USD":
                 egresos_usd.append({"fuente": "Adelantos sueldo", "monto_usd": adelanto["monto"]})
 
-    # ── EXTRAS DE SUELDO (igual tratamiento que adelantos) ──────
-    # Cuentan como egreso por su fecha. NO se vuelven a sumar al sueldo
-    # cuando se hace la liquidación a fin de mes (se asume que ya se le pagó
-    # al empleado el día de la fecha del extra).
-    # Para datos viejos: si el extra ya fue absorbido por un sueldo registrado
-    # (consumido_por_sueldo != null), no lo contamos acá para no duplicar.
-    extras = await db.extras_sueldos.find(
-        {"fecha": {"$regex": mes_range(periodo)},
-         "consumido_por_sueldo": {"$in": [None, False]}},
-        {"_id": 0}
-    ).to_list(1000)
-    if extras:
-        emp_ids_ex = list({e["empleado_id"] for e in extras})
-        empleados_ex = await db.empleados.find(
-            {"id": {"$in": emp_ids_ex}}, {"_id": 0, "id": 1, "logo_tipo": 1, "nombre": 1, "apellido": 1}
-        ).to_list(500)
-        emp_ex_map = {e["id"]: e for e in empleados_ex}
-        for extra in extras:
-            emp = emp_ex_map.get(extra["empleado_id"], {})
-            if logo_tipo and logo_tipo != "todas" and emp.get("logo_tipo") != logo_tipo:
-                continue
-            moneda_e = extra.get("moneda", "PYG")
-            monto_pyg = to_pyg(extra["monto"], moneda_e, extra.get("tipo_cambio"))
-            nombre = f"{emp.get('nombre', '')} {emp.get('apellido', '')}".strip() or extra.get("empleado_nombre", "")
-            descrip = extra.get("descripcion") or "Extra"
-            egresos.append({"fuente": "Extras sueldo", "descripcion": f"{nombre} — {descrip}", "monto_pyg": monto_pyg})
-            if moneda_e == "USD":
-                egresos_usd.append({"fuente": "Extras sueldo", "monto_usd": extra["monto"]})
+    # ── EXTRAS DE SUELDO ────────────────────────────────────────
+    # Los extras se liquidan dentro del sueldo pagado: el frontend calcula
+    # sueldo base + extras - adelantos - descuentos. Por eso no se agregan acá
+    # como egreso independiente; si se contaran también por `extras_sueldos`,
+    # el balance inflaría el gasto del período.
 
     # ── COMPRAS ──────────────────────────────────────────────────
     # IMPORTANTE: solo contamos compras tipo_pago = "contado" como egresos del
@@ -340,21 +361,18 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
         if moneda_c == "USD":
             egresos_usd.append({"fuente": "Compras", "monto_usd": monto_compra})
 
-    # ── FACTURAS RECIBIDAS PAGADAS ───────────────────────────────
-    fac_recibidas = await db.facturas.find(
-        {**lt_query, "tipo": "recibida", "estado": "pagada", "fecha": {"$regex": mes_range(periodo)}},
-        {"_id": 0}
-    ).to_list(1000)
-    for fac in fac_recibidas:
-        moneda_fr = fac.get("moneda", "PYG")
-        monto_pyg = to_pyg(fac["monto"], moneda_fr, fac.get("tipo_cambio"))
-        egresos.append({"fuente": "Facturas recibidas", "descripcion": f"{fac['numero']} – {fac['razon_social']}", "monto_pyg": monto_pyg})
-        if moneda_fr == "USD":
-            egresos_usd.append({"fuente": "Facturas recibidas", "monto_usd": fac["monto"]})
+    # ── FACTURAS RECIBIDAS LEGACY ────────────────────────────────
+    # Ya no se suman al balance. Las facturas recibidas se gestionan desde
+    # Compras: contado entra como "Compras" y crédito cuando se paga en
+    # "Pagos proveedores". Mantener este bloque sumando por fecha de factura
+    # duplicaba egresos en meses como marzo.
 
     # ── PAGOS A PROVEEDORES ──────────────────────────────────────
+    pagos_prov_query = {"fecha_pago": {"$regex": mes_range(periodo)}}
+    if logo_tipo and logo_tipo != "todas":
+        pagos_prov_query["logo_tipo"] = logo_tipo
     pagos_prov = await db.pagos_proveedores.find(
-        {"fecha_pago": {"$regex": mes_range(periodo)}},
+        pagos_prov_query,
         {"_id": 0}
     ).to_list(1000)
     if pagos_prov:
@@ -365,29 +383,46 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
         prov_map = {p["id"]: p for p in proveedores}
         for pago in pagos_prov:
             prov = prov_map.get(pago["proveedor_id"], {})
-            if logo_tipo and logo_tipo != "todas" and prov.get("logo_tipo") != logo_tipo:
+            pago_logo = pago.get("logo_tipo") or prov.get("logo_tipo")
+            if logo_tipo and logo_tipo != "todas" and pago_logo != logo_tipo:
                 continue
             moneda_pp = pago.get("moneda", "PYG")
             cuenta_pago = pago.get("cuenta_pago", "guaranies")
-            nombre_prov = prov.get("nombre", pago.get("proveedor_id", ""))
-            monto_usd = pago.get("monto", 0)
+            nombre_prov = pago.get("proveedor_nombre") or prov.get("nombre", pago.get("proveedor_id", ""))
+            compras_pagos = pago.get("compras_pagos") or []
+            monto_pago = sum(cp.get("monto_pagado", 0) for cp in compras_pagos) if compras_pagos else (
+                pago.get("monto") or pago.get("monto_pagado", 0)
+            )
 
             if moneda_pp == "USD" and cuenta_pago == "dolares":
                 # Pagado desde cuenta USD → descuenta saldo USD, NO el saldo en Gs
-                egresos_usd.append({"fuente": "Pagos proveedores", "monto_usd": monto_usd})
+                egresos_usd.append({"fuente": "Pagos proveedores", "monto_usd": monto_pago})
                 # No se suma a egresos en PYG (el dinero salió de la cuenta USD)
             elif moneda_pp == "USD":
                 # Pagado desde cuenta guaraníes (convertido) → descuenta PYG, NO el saldo USD
-                monto_pyg = pago.get("monto_gs") or to_pyg(monto_usd, "USD", pago.get("tipo_cambio"))
+                monto_pyg = pago.get("monto_gs") or to_pyg(monto_pago, "USD", pago.get("tipo_cambio"))
                 egresos.append({"fuente": "Pagos proveedores", "descripcion": nombre_prov, "monto_pyg": monto_pyg})
             else:
                 # Pago en guaraníes
                 monto_pyg = pago.get("monto_gs") or pago.get("monto_pyg") or to_pyg(
-                    pago.get("monto") or pago.get("monto_pagado", 0),
+                    monto_pago,
                     moneda_pp,
                     pago.get("tipo_cambio") or pago.get("tipo_cambio_real")
                 )
                 egresos.append({"fuente": "Pagos proveedores", "descripcion": nombre_prov, "monto_pyg": monto_pyg})
+
+    # ── PAGOS DE IVA ───────────────────────────────────────────────
+    pagos_iva_bal = await db.pagos_iva.find(
+        {**lt_query, "fecha_pago": {"$regex": mes_range(periodo)}},
+        {"_id": 0}
+    ).to_list(1000)
+    for pago in pagos_iva_bal:
+        monto_pyg = to_pyg(pago.get("monto", 0), pago.get("moneda", "PYG"), pago.get("tipo_cambio"))
+        egresos.append({
+            "fuente": "Pago IVA",
+            "descripcion": pago.get("descripcion") or f"IVA {pago.get('periodo_iva', '')}",
+            "monto_pyg": monto_pyg,
+        })
 
     # ── INGRESOS VARIOS (sin factura) ────────────────────────────
     ingresos_varios = await db.ingresos_varios.find(
@@ -412,8 +447,8 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
                 ingresos_usd.append({"fuente": "Ingresos varios", "monto_usd": iv["monto"]})
 
     # ── Totales ──────────────────────────────────────────────────
-    total_ingresos = sum(i["monto_pyg"] for i in ingresos)
-    total_egresos = sum(e["monto_pyg"] for e in egresos)
+    total_ingresos = sum(round_pyg(i.get("monto_pyg")) for i in ingresos)
+    total_egresos = sum(round_pyg(e.get("monto_pyg")) for e in egresos)
 
     # Agrupar por fuente
     def agrupar(items):
@@ -421,9 +456,9 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
         for item in items:
             f = item["fuente"]
             if f not in grupos:
-                grupos[f] = {"fuente": f, "cantidad": 0, "monto_pyg": 0.0, "items": []}
+                grupos[f] = {"fuente": f, "cantidad": 0, "monto_pyg": 0, "items": []}
             grupos[f]["cantidad"] += 1
-            grupos[f]["monto_pyg"] += item["monto_pyg"]
+            grupos[f]["monto_pyg"] += round_pyg(item.get("monto_pyg"))
             grupos[f]["items"].append(item.get("descripcion", ""))
         return list(grupos.values())
 
@@ -654,6 +689,24 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
             "moneda": moneda, "logo_tipo": f.get("logo_tipo", ""),
         })
 
+    notas_venta = await db.notas_credito.find(
+        {**lt_query, "estado": {"$ne": "anulada"}, "fecha": {"$regex": f"^{periodo}"},
+         "$or": [{"tipo": {"$exists": False}}, {"tipo": "venta"}]},
+        {"_id": 0, "numero": 1, "razon_social": 1, "monto": 1, "monto_pyg": 1,
+         "moneda": 1, "tipo_cambio": 1, "logo_tipo": 1}
+    ).to_list(1000)
+    for n in notas_venta:
+        monto_pyg = n.get("monto_pyg")
+        if monto_pyg is None:
+            monto_pyg = to_pyg(n.get("monto") or 0, n.get("moneda", "PYG"), n.get("tipo_cambio"))
+        iva_pyg = (monto_pyg or 0) / 11.0
+        debito_detalle.append({
+            "numero": n.get("numero", ""), "razon_social": n.get("razon_social", ""),
+            "monto_factura": -(monto_pyg or 0), "iva": -iva_pyg,
+            "iva_pyg": -iva_pyg, "moneda": "PYG", "logo_tipo": n.get("logo_tipo", ""),
+            "tipo_documento": "nota_credito",
+        })
+
     compras_f = await db.compras.find(
         {**lt_query, "tiene_factura": True, "fecha": {"$regex": f"^{periodo}"}},
         {"_id": 0, "numero_factura": 1, "proveedor_nombre": 1, "monto_total": 1,
@@ -675,6 +728,23 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
             "moneda": moneda, "logo_tipo": c.get("logo_tipo", ""),
         })
 
+    notas_compra = await db.notas_credito.find(
+        {**lt_query, "tipo": "compra", "estado": {"$ne": "anulada"}, "fecha": {"$regex": f"^{periodo}"}},
+        {"_id": 0, "numero": 1, "proveedor_nombre": 1, "monto": 1, "monto_pyg": 1,
+         "moneda": 1, "tipo_cambio": 1, "logo_tipo": 1}
+    ).to_list(1000)
+    for n in notas_compra:
+        monto_pyg = n.get("monto_pyg")
+        if monto_pyg is None:
+            monto_pyg = to_pyg(n.get("monto") or 0, n.get("moneda", "PYG"), n.get("tipo_cambio"))
+        iva_pyg = (monto_pyg or 0) / 11.0
+        credito_detalle.append({
+            "numero_factura": n.get("numero", ""), "proveedor": n.get("proveedor_nombre", ""),
+            "monto_compra": -(monto_pyg or 0), "iva": -iva_pyg,
+            "iva_pyg": -iva_pyg, "moneda": "PYG", "logo_tipo": n.get("logo_tipo", ""),
+            "tipo_documento": "nota_credito_compra",
+        })
+
     empresas_ret = await db.empresas.find(
         {"aplica_retencion": True},
         {"_id": 0, "razon_social": 1, "nombre": 1, "porcentaje_retencion": 1}
@@ -691,12 +761,8 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
         if pct and d.get("iva_pyg"):
             total_retenciones += d["iva_pyg"] * (pct / 100.0)
 
-    # Pagos IVA registrados como ingresos_varios negativos
-    pagos_iva_docs = await db.ingresos_varios.find(
-        {**lt_query, "categoria": "Pago IVA", "fecha": {"$regex": f"^{periodo}"}},
-        {"_id": 0, "monto": 1}
-    ).to_list(500)
-    total_pagos_iva = sum(abs(p.get("monto", 0)) for p in pagos_iva_docs if (p.get("monto") or 0) < 0)
+    pagos_iva_docs = await _pagos_iva_periodo(periodo, logo_tipo)
+    total_pagos_iva = sum(p.get("monto", 0) or 0 for p in pagos_iva_docs)
 
     total_debito = sum(d["iva_pyg"] for d in debito_detalle)
     total_credito = sum(c["iva_pyg"] for c in credito_detalle) + total_retenciones
@@ -706,6 +772,7 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
         "credito": total_credito,
         "retenciones": total_retenciones,
         "pagos_iva": total_pagos_iva,
+        "pagos_iva_detalle": pagos_iva_docs,
         "neto": total_debito - total_credito,
         "debito_detalle": debito_detalle,
         "credito_detalle": credito_detalle,
@@ -782,6 +849,7 @@ async def get_iva_mensual(
             "credito": r["credito"],
             "neto": r["neto"],
             "pagos_iva": r["pagos_iva"],
+            "pagos_iva_detalle": r.get("pagos_iva_detalle", []),
         })
 
     neto_acumulado = debito_acumulado - credito_acumulado
@@ -799,6 +867,7 @@ async def get_iva_mensual(
         "iva_neto": mes_data["neto"],
         "a_favor": mes_data["neto"] < 0,
         "pagos_iva_mes": mes_data["pagos_iva"],
+        "pagos_iva_detalle": mes_data.get("pagos_iva_detalle", []),
         "detalle_debito": mes_data["debito_detalle"],
         "detalle_credito": mes_data["credito_detalle"],
         "detalle_retenciones": retenciones_detalle,
@@ -814,3 +883,149 @@ async def get_iva_mensual(
         "saldo_a_favor_acumulado": max(0.0, -saldo_acumulado),
         "historial_meses": historial,
     }
+
+
+@router.get("/admin/balance/iva/resumen")
+async def get_iva_resumen(
+    anio: Optional[int] = None,
+    todo: bool = False,
+    logo_tipo: Optional[str] = None,
+    user: dict = Depends(require_authenticated),
+):
+    """Resumen mensual de IVA para un año o para todos los periodos con datos."""
+    if not has_permission(user, "balance.ver"):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+
+    if todo:
+        lt_query = {}
+        if logo_tipo and logo_tipo != "todas":
+            lt_query["logo_tipo"] = logo_tipo
+        fechas = []
+        for collection, field, query_extra in [
+            (db.facturas, "fecha", {"tipo": "emitida", "estado": {"$ne": "anulada"}}),
+            (db.compras, "fecha", {"tiene_factura": True}),
+            (db.pagos_iva, "periodo_iva", {}),
+            (db.ingresos_varios, "fecha", {"categoria": "Pago IVA"}),
+        ]:
+            docs = await collection.find(
+                {**lt_query, **query_extra},
+                {"_id": 0, field: 1}
+            ).to_list(10000)
+            fechas.extend((d.get(field) or "")[:7] for d in docs if d.get(field))
+        periodos = sorted({f for f in fechas if len(f) == 7}, reverse=True)
+    else:
+        year = anio or datetime.now(timezone.utc).year
+        periodos = [f"{year}-{str(m).zfill(2)}" for m in range(1, 13)]
+
+    resultados = []
+    for periodo in periodos:
+        r = await _calc_iva_periodo(periodo, logo_tipo)
+        resultados.append({
+            "periodo": periodo,
+            "iva_debito": r["debito"],
+            "iva_credito": r["credito"],
+            "iva_neto": r["neto"],
+            "pagos_iva": r["pagos_iva"],
+            "pagos_iva_detalle": r.get("pagos_iva_detalle", []),
+            "cantidad_facturas": r["cant_facturas"],
+            "cantidad_compras_con_factura": r["cant_compras"],
+        })
+
+    return {
+        "anio": anio,
+        "todo": todo,
+        "meses": resultados,
+        "total_debito": sum(r["iva_debito"] for r in resultados),
+        "total_credito": sum(r["iva_credito"] for r in resultados),
+        "total_neto": sum(r["iva_neto"] for r in resultados),
+        "total_pagado": sum(r["pagos_iva"] for r in resultados),
+    }
+
+
+@router.post("/admin/balance/iva/pagos", status_code=201)
+async def create_pago_iva(
+    data: dict,
+    user: dict = Depends(require_authenticated),
+):
+    if not has_permission(user, "balance.editar"):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+
+    periodo_iva = data.get("periodo_iva")
+    fecha_pago = data.get("fecha_pago")
+    monto = float(data.get("monto") or 0)
+    if not periodo_iva or len(periodo_iva) != 7:
+        raise HTTPException(status_code=400, detail="Periodo IVA inválido")
+    if not fecha_pago:
+        raise HTTPException(status_code=400, detail="Fecha de pago requerida")
+    if monto <= 0:
+        raise HTTPException(status_code=400, detail="Monto inválido")
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "descripcion": data.get("descripcion") or f"Pago IVA {periodo_iva}",
+        "periodo_iva": periodo_iva,
+        "fecha_pago": fecha_pago,
+        "monto": monto,
+        "moneda": "PYG",
+        "logo_tipo": data.get("logo_tipo") or "arandujar",
+        "cuenta_id": data.get("cuenta_id"),
+        "cuenta_nombre": data.get("cuenta_nombre"),
+        "notas": data.get("notas"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.pagos_iva.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.put("/admin/balance/iva/pagos/{pago_id}")
+async def update_pago_iva(
+    pago_id: str,
+    data: dict,
+    user: dict = Depends(require_authenticated),
+):
+    if not has_permission(user, "balance.editar"):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+
+    existing = await db.pagos_iva.find_one({"id": pago_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Pago IVA no encontrado")
+
+    periodo_iva = data.get("periodo_iva") or existing.get("periodo_iva")
+    fecha_pago = data.get("fecha_pago") or existing.get("fecha_pago")
+    monto = float(data.get("monto") if data.get("monto") is not None else existing.get("monto") or 0)
+    if not periodo_iva or len(periodo_iva) != 7:
+        raise HTTPException(status_code=400, detail="Periodo IVA inválido")
+    if not fecha_pago:
+        raise HTTPException(status_code=400, detail="Fecha de pago requerida")
+    if monto <= 0:
+        raise HTTPException(status_code=400, detail="Monto inválido")
+
+    updates = {
+        "descripcion": data.get("descripcion") or f"Pago IVA {periodo_iva}",
+        "periodo_iva": periodo_iva,
+        "fecha_pago": fecha_pago,
+        "monto": monto,
+        "moneda": "PYG",
+        "logo_tipo": data.get("logo_tipo") or existing.get("logo_tipo") or "arandujar",
+        "cuenta_id": data.get("cuenta_id"),
+        "cuenta_nombre": data.get("cuenta_nombre"),
+        "notas": data.get("notas"),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.pagos_iva.update_one({"id": pago_id}, {"$set": updates})
+    updated = await db.pagos_iva.find_one({"id": pago_id}, {"_id": 0})
+    return updated
+
+
+@router.delete("/admin/balance/iva/pagos/{pago_id}")
+async def delete_pago_iva(
+    pago_id: str,
+    user: dict = Depends(require_authenticated),
+):
+    if not has_permission(user, "balance.editar"):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+    result = await db.pagos_iva.delete_one({"id": pago_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Pago IVA no encontrado")
+    return {"success": True}

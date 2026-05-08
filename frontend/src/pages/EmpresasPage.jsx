@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2, Plus, Search, Edit, Trash2, Phone, Mail,
@@ -22,8 +22,54 @@ const toBase64 = (file) => new Promise((resolve, reject) => {
   reader.onerror = reject;
 });
 
+function ChipSearch({ chips, setChips, inputVal, setInputVal, placeholder }) {
+  const addChip = () => {
+    const term = inputVal.trim().replace(/,$/, "");
+    if (term && !chips.includes(term)) setChips(prev => [...prev, term]);
+    setInputVal("");
+  };
+  return (
+    <div className="space-y-2 flex-1">
+      {chips.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {chips.map((chip, idx) => (
+            <span key={chip} className="inline-flex items-center gap-1.5 bg-arandu-blue/15 border border-arandu-blue/30 text-arandu-blue rounded-full px-2.5 py-1 text-xs">
+              <Search className="w-3 h-3" />
+              {chip}
+              <button type="button" onClick={() => setChips(prev => prev.filter((_, i) => i !== idx))} className="hover:text-white"><X className="w-3 h-3" /></button>
+            </span>
+          ))}
+          <button type="button" onClick={() => setChips([])} className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1 rounded-full border border-white/10">Limpiar</button>
+        </div>
+      )}
+      <div className="relative">
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
+        <input
+          value={inputVal}
+          onChange={e => setInputVal(e.target.value)}
+          onKeyDown={e => {
+            if ((e.key === "Enter" || e.key === ",") && inputVal.trim()) { e.preventDefault(); addChip(); }
+            if (e.key === "Backspace" && !inputVal && chips.length) setChips(prev => prev.slice(0, -1));
+          }}
+          placeholder={placeholder}
+          className="w-full bg-arandu-dark-light border border-white/10 rounded-lg pl-12 pr-3 py-3 text-white text-sm focus:outline-none focus:border-arandu-blue/60"
+          data-testid="search-empresas"
+        />
+      </div>
+    </div>
+  );
+}
+
+function matchChips(chips, inputVal, texto) {
+  const terms = [...chips, ...(inputVal.trim() ? [inputVal.trim()] : [])];
+  if (!terms.length) return true;
+  const haystack = texto.toLowerCase();
+  return terms.every(term => haystack.includes(term.toLowerCase()));
+}
+
 const EmpresasPage = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { token, user, hasPermission, activeEmpresaPropia } = useContext(AuthContext);
   const isAdmin = user?.role === "admin";
   const canCreate = isAdmin || hasPermission("empresas.crear");
@@ -33,10 +79,28 @@ const EmpresasPage = () => {
   // ── Tab ────────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState("clientes");
 
+  useEffect(() => {
+    if (searchParams.get("nuevo") !== "cliente") return;
+    if (canCreate) {
+      setActiveTab("clientes");
+      setEditingEmpresa(null);
+      setFormData({
+        nombre: "", razon_social: "", ruc: "", direccion: "", telefono: "", email: "", contacto: "",
+        aplica_retencion: false, porcentaje_retencion: "", notas: "", logo_tipo: activeEmpresaPropia?.slug || "arandujar"
+      });
+      setShowForm(true);
+    }
+    const next = new URLSearchParams(searchParams);
+    next.delete("nuevo");
+    setSearchParams(next, { replace: true });
+  }, [searchParams]); // eslint-disable-line
+
   // ── Clientes (empresas) ────────────────────────────────────────────────────
   const [empresas, setEmpresas] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchChips, setSearchChips] = useState([]);
+  const [searchInput, setSearchInput] = useState("");
+  const [selectedEmpresa, setSelectedEmpresa] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editingEmpresa, setEditingEmpresa] = useState(null);
   const [formData, setFormData] = useState({
@@ -104,11 +168,15 @@ const EmpresasPage = () => {
   };
 
   // ── Clientes CRUD ──────────────────────────────────────────────────────────
-  const handleSearch = (e) => {
-    const value = e.target.value;
-    setSearchTerm(value);
-    fetchEmpresas(value);
-  };
+  const filteredEmpresas = empresas.filter(empresa => {
+    const texto = [
+      empresa.nombre, empresa.razon_social, empresa.ruc, empresa.direccion,
+      empresa.telefono, empresa.email, empresa.contacto, empresa.notas,
+      empresa.logo_tipo, empresa.aplica_retencion ? "retencion iva" : "",
+      empresa.porcentaje_retencion
+    ].filter(Boolean).join(" ");
+    return matchChips(searchChips, searchInput, texto);
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -322,17 +390,13 @@ const EmpresasPage = () => {
       {activeTab === "clientes" && (
         <>
           <div className="flex flex-col md:flex-row gap-4 mb-6">
-            <div className="relative flex-1">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
-              <Input
-                type="text"
-                placeholder="Buscar por nombre o RUC..."
-                value={searchTerm}
-                onChange={handleSearch}
-                className="bg-arandu-dark-light border-white/10 pl-12 py-6 text-white"
-                data-testid="search-empresas"
-              />
-            </div>
+            <ChipSearch
+              chips={searchChips}
+              setChips={setSearchChips}
+              inputVal={searchInput}
+              setInputVal={setSearchInput}
+              placeholder="Buscar cliente, RUC, contacto, email, empresa, retención... Enter para agregar"
+            />
             {canCreate && (
               <Button
                 onClick={() => {
@@ -565,16 +629,18 @@ const EmpresasPage = () => {
             )}
           </AnimatePresence>
 
-          {/* Clientes Grid */}
+          {/* Clientes */}
           {loading ? (
             <div className="text-center py-12">
               <div className="text-arandu-blue animate-pulse">Cargando...</div>
             </div>
-          ) : empresas.length === 0 ? (
+          ) : filteredEmpresas.length === 0 ? (
             <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
               <Building2 className="w-16 h-16 text-slate-700 mx-auto mb-4" />
-              <p className="text-slate-400 mb-4">No hay clientes registrados</p>
-              {canCreate && (
+              <p className="text-slate-400 mb-4">
+                {empresas.length === 0 ? "No hay clientes registrados" : "No hay clientes que coincidan"}
+              </p>
+              {canCreate && empresas.length === 0 && (
                 <Button onClick={() => setShowForm(true)} className="bg-arandu-blue hover:bg-arandu-blue-dark">
                   <Plus className="w-4 h-4 mr-2" />
                   Crear Primer Cliente
@@ -582,113 +648,195 @@ const EmpresasPage = () => {
               )}
             </div>
           ) : (
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {empresas.map((empresa) => (
-                <motion.div
-                  key={empresa.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="bg-arandu-dark-light border border-white/5 rounded-xl p-5 hover:border-arandu-blue/30 transition-all"
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-arandu-blue/20 rounded-lg flex items-center justify-center">
-                        <Building2 className="w-5 h-5 text-arandu-blue" />
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="font-heading font-semibold text-white">{empresa.nombre}</h3>
-                          {empresa.logo_tipo && (
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                              empresa.logo_tipo === "arandu" ? "bg-blue-500/20 text-blue-300" :
-                              empresa.logo_tipo === "jar" ? "bg-red-500/20 text-red-300" :
-                              "bg-purple-500/20 text-purple-300"
-                            }`}>
-                              {empresa.logo_tipo === "arandu" ? "Arandu" : empresa.logo_tipo === "jar" ? "JAR" : "Arandu&JAR"}
+            <div className="bg-arandu-dark-light border border-white/5 rounded-xl overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[980px]">
+                  <thead className="bg-white/[0.03] border-b border-white/5">
+                    <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
+                      <th className="px-4 py-3 font-medium">Cliente</th>
+                      <th className="px-4 py-3 font-medium">RUC</th>
+                      <th className="px-4 py-3 font-medium">Contacto</th>
+                      <th className="px-4 py-3 font-medium">Direccion</th>
+                      <th className="px-4 py-3 font-medium">IVA</th>
+                      <th className="px-4 py-3 font-medium text-right">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {filteredEmpresas.map((empresa) => (
+                      <motion.tr
+                        key={empresa.id}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        onClick={() => setSelectedEmpresa(empresa)}
+                        className="hover:bg-white/[0.03] cursor-pointer transition-colors"
+                      >
+                        <td className="px-4 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-arandu-blue/20 rounded-lg flex items-center justify-center shrink-0">
+                              <Building2 className="w-5 h-5 text-arandu-blue" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="font-heading font-semibold text-white truncate">{empresa.nombre}</p>
+                                {empresa.logo_tipo && (
+                                  <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                                    empresa.logo_tipo === "arandu" ? "bg-blue-500/20 text-blue-300" :
+                                    empresa.logo_tipo === "jar" ? "bg-red-500/20 text-red-300" :
+                                    "bg-purple-500/20 text-purple-300"
+                                  }`}>
+                                    {empresa.logo_tipo === "arandu" ? "Arandu" : empresa.logo_tipo === "jar" ? "JAR" : "Arandu&JAR"}
+                                  </span>
+                                )}
+                              </div>
+                              {empresa.razon_social && empresa.razon_social !== empresa.nombre && (
+                                <p className="text-slate-400 text-xs truncate">{empresa.razon_social}</p>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4 text-sm text-slate-300">{empresa.ruc || "-"}</td>
+                        <td className="px-4 py-4">
+                          <div className="space-y-1 text-sm">
+                            <p className="text-white">{empresa.contacto || "-"}</p>
+                            {empresa.telefono && <p className="text-slate-400">{empresa.telefono}</p>}
+                            {empresa.email && <p className="text-slate-500 truncate max-w-[190px]">{empresa.email}</p>}
+                          </div>
+                        </td>
+                        <td className="px-4 py-4 text-sm text-slate-400 max-w-[230px] truncate">{empresa.direccion || "-"}</td>
+                        <td className="px-4 py-4">
+                          {empresa.aplica_retencion ? (
+                            <span className="inline-flex items-center bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs px-2 py-1 rounded-full font-medium">
+                              Retencion {empresa.porcentaje_retencion}%
                             </span>
+                          ) : (
+                            <span className="text-sm text-slate-500">Sin retencion</span>
                           )}
-                        </div>
-                        {empresa.razon_social && empresa.razon_social !== empresa.nombre && (
-                          <p className="text-slate-400 text-xs">{empresa.razon_social}</p>
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                            <Link to={`/admin/presupuestos?empresa=${empresa.id}`}>
+                              <Button size="sm" variant="outline" className="border-arandu-blue/30 text-arandu-blue hover:bg-arandu-blue/10">
+                                <FileText className="w-4 h-4" />
+                              </Button>
+                            </Link>
+                            <Link to={`/admin/inventario?empresa=${empresa.id}`}>
+                              <Button size="sm" variant="outline" className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10">
+                                <Server className="w-4 h-4" />
+                              </Button>
+                            </Link>
+                            {canEdit && (
+                              <Button size="sm" onClick={() => handleEdit(empresa)} variant="ghost" className="text-slate-400 hover:text-white hover:bg-white/10">
+                                <Edit className="w-4 h-4" />
+                              </Button>
+                            )}
+                            {canDelete && (
+                              <Button size="sm" onClick={() => handleDelete(empresa.id)} variant="ghost" className="text-slate-400 hover:text-arandu-red hover:bg-arandu-red/10">
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </motion.tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <AnimatePresence>
+            {selectedEmpresa && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+                onClick={(e) => e.target === e.currentTarget && setSelectedEmpresa(null)}
+              >
+                <motion.div
+                  initial={{ scale: 0.95, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.95, opacity: 0 }}
+                  className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto"
+                >
+                  <div className="p-6 border-b border-white/10 flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-4 min-w-0">
+                      <div className="w-12 h-12 bg-arandu-blue/20 rounded-xl flex items-center justify-center shrink-0">
+                        <Building2 className="w-6 h-6 text-arandu-blue" />
+                      </div>
+                      <div className="min-w-0">
+                        <h2 className="font-heading text-2xl font-bold text-white truncate">{selectedEmpresa.nombre}</h2>
+                        {selectedEmpresa.razon_social && (
+                          <p className="text-slate-400 text-sm mt-1">{selectedEmpresa.razon_social}</p>
                         )}
-                        {empresa.ruc && <p className="text-slate-500 text-sm">RUC: {empresa.ruc}</p>}
                       </div>
                     </div>
+                    <button onClick={() => setSelectedEmpresa(null)} className="text-slate-400 hover:text-white">
+                      <X className="w-6 h-6" />
+                    </button>
                   </div>
 
-                  {empresa.aplica_retencion && (
-                    <div className="mb-2">
-                      <span className="inline-flex items-center gap-1 bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs px-2 py-0.5 rounded-full font-medium">
-                        🔒 Retención IVA {empresa.porcentaje_retencion}%
-                      </span>
+                  <div className="p-6 grid md:grid-cols-2 gap-4">
+                    <div className="bg-arandu-dark border border-white/5 rounded-xl p-4">
+                      <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">Datos fiscales</p>
+                      <div className="space-y-3 text-sm">
+                        <p className="flex justify-between gap-4"><span className="text-slate-400">RUC</span><span className="text-white text-right">{selectedEmpresa.ruc || "-"}</span></p>
+                        <p className="flex justify-between gap-4"><span className="text-slate-400">Empresa</span><span className="text-white text-right">{selectedEmpresa.logo_tipo || "-"}</span></p>
+                        <p className="flex justify-between gap-4"><span className="text-slate-400">Retencion IVA</span><span className="text-white text-right">{selectedEmpresa.aplica_retencion ? `${selectedEmpresa.porcentaje_retencion}%` : "No aplica"}</span></p>
+                      </div>
                     </div>
-                  )}
-
-                  <div className="space-y-2 mb-4 text-sm">
-                    {empresa.direccion && (
-                      <p className="text-slate-400 flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-slate-600" />
-                        {empresa.direccion}
+                    <div className="bg-arandu-dark border border-white/5 rounded-xl p-4">
+                      <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">Contacto</p>
+                      <div className="space-y-3 text-sm">
+                        <p className="flex items-start gap-2 text-slate-300"><User className="w-4 h-4 text-slate-600 mt-0.5" />{selectedEmpresa.contacto || "-"}</p>
+                        <p className="flex items-start gap-2 text-slate-300"><Phone className="w-4 h-4 text-slate-600 mt-0.5" />{selectedEmpresa.telefono || "-"}</p>
+                        <p className="flex items-start gap-2 text-slate-300 break-all"><Mail className="w-4 h-4 text-slate-600 mt-0.5" />{selectedEmpresa.email || "-"}</p>
+                      </div>
+                    </div>
+                    <div className="bg-arandu-dark border border-white/5 rounded-xl p-4 md:col-span-2">
+                      <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">Direccion</p>
+                      <p className="flex items-start gap-2 text-slate-300 text-sm">
+                        <MapPin className="w-4 h-4 text-slate-600 mt-0.5 shrink-0" />
+                        {selectedEmpresa.direccion || "-"}
                       </p>
-                    )}
-                    {empresa.telefono && (
-                      <p className="text-slate-400 flex items-center gap-2">
-                        <Phone className="w-4 h-4 text-slate-600" />
-                        {empresa.telefono}
-                      </p>
-                    )}
-                    {empresa.email && (
-                      <p className="text-slate-400 flex items-center gap-2">
-                        <Mail className="w-4 h-4 text-slate-600" />
-                        {empresa.email}
-                      </p>
-                    )}
-                    {empresa.contacto && (
-                      <p className="text-slate-400 flex items-center gap-2">
-                        <User className="w-4 h-4 text-slate-600" />
-                        {empresa.contacto}
-                      </p>
-                    )}
+                    </div>
+                    <div className="bg-arandu-dark border border-white/5 rounded-xl p-4 md:col-span-2">
+                      <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">Notas</p>
+                      <p className="text-slate-300 text-sm whitespace-pre-wrap">{selectedEmpresa.notas || "Sin notas"}</p>
+                    </div>
                   </div>
 
-                  <div className="flex flex-wrap gap-2 pt-3 border-t border-white/5">
-                    <Link to={`/admin/presupuestos?empresa=${empresa.id}`} className="flex-1 min-w-0">
-                      <Button variant="outline" className="w-full border-arandu-blue/30 text-arandu-blue hover:bg-arandu-blue/10 text-xs">
-                        <FileText className="w-3.5 h-3.5 mr-1" />
+                  <div className="p-6 border-t border-white/10 flex flex-wrap gap-3 justify-end">
+                    <Link to={`/admin/presupuestos?empresa=${selectedEmpresa.id}`}>
+                      <Button variant="outline" className="border-arandu-blue/30 text-arandu-blue hover:bg-arandu-blue/10">
+                        <FileText className="w-4 h-4 mr-2" />
                         Presupuestos
                       </Button>
                     </Link>
-                    <Link to={`/admin/inventario?empresa=${empresa.id}`} className="flex-1 min-w-0">
-                      <Button variant="outline" className="w-full border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 text-xs">
-                        <Server className="w-3.5 h-3.5 mr-1" />
+                    <Link to={`/admin/inventario?empresa=${selectedEmpresa.id}`}>
+                      <Button variant="outline" className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10">
+                        <Server className="w-4 h-4 mr-2" />
                         Inventario
                       </Button>
                     </Link>
-                    <Link to={`/admin/reportes?empresa=${empresa.id}`} className="flex-1 min-w-0">
-                      <Button variant="outline" className="w-full border-amber-500/30 text-amber-400 hover:bg-amber-500/10 text-xs">
-                        <Download className="w-3.5 h-3.5 mr-1" />
-                        Reportes
+                    {canEdit && (
+                      <Button
+                        onClick={() => {
+                          const empresa = selectedEmpresa;
+                          setSelectedEmpresa(null);
+                          handleEdit(empresa);
+                        }}
+                        className="bg-arandu-blue hover:bg-arandu-blue-dark text-white"
+                      >
+                        <Edit className="w-4 h-4 mr-2" />
+                        Editar
                       </Button>
-                    </Link>
-                    {(canEdit || canDelete) && (
-                      <>
-                        {canEdit && (
-                          <Button onClick={() => handleEdit(empresa)} variant="ghost" className="text-slate-400 hover:text-white hover:bg-white/10">
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                        )}
-                        {canDelete && (
-                          <Button onClick={() => handleDelete(empresa.id)} variant="ghost" className="text-slate-400 hover:text-arandu-red hover:bg-arandu-red/10">
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        )}
-                      </>
                     )}
                   </div>
                 </motion.div>
-              ))}
-            </div>
-          )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </>
       )}
 

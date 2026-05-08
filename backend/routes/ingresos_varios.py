@@ -21,6 +21,33 @@ from auth import require_authenticated, has_permission, get_logos_acceso
 router = APIRouter()
 
 
+def puede_crear_ingreso(user: dict) -> bool:
+    return (
+        user.get("role") == "admin"
+        or has_permission(user, "ingresos_varios.crear")
+        or has_permission(user, "balance.editar")
+        or has_permission(user, "facturas.crear")
+    )
+
+
+def puede_editar_ingreso(user: dict) -> bool:
+    return (
+        user.get("role") == "admin"
+        or has_permission(user, "ingresos_varios.editar")
+        or has_permission(user, "balance.editar")
+        or has_permission(user, "facturas.editar")
+    )
+
+
+def puede_eliminar_ingreso(user: dict) -> bool:
+    return (
+        user.get("role") == "admin"
+        or has_permission(user, "ingresos_varios.eliminar")
+        or has_permission(user, "balance.editar")
+        or has_permission(user, "facturas.eliminar")
+    )
+
+
 class IngresoCreate(BaseModel):
     descripcion: str
     categoria: Optional[str] = "Transferencia"
@@ -58,7 +85,7 @@ async def get_ingresos_varios(
     mes: Optional[str] = None,   # YYYY-MM
     user: dict = Depends(require_authenticated)
 ):
-    query = {}
+    query = {"categoria": {"$ne": "Pago IVA"}}
     logos_acceso = await get_logos_acceso(user)
     if logos_acceso is not None:
         query["logo_tipo"] = {"$in": logos_acceso}
@@ -93,9 +120,8 @@ async def create_ingreso(
     data: IngresoCreate,
     user: dict = Depends(require_authenticated)
 ):
-    if not has_permission(user, "facturas.crear"):
-        if user.get("role") != "admin":
-            raise HTTPException(status_code=403, detail="Sin permiso")
+    if not puede_crear_ingreso(user):
+        raise HTTPException(status_code=403, detail="Sin permiso")
 
     now = datetime.now(timezone.utc).isoformat()
 
@@ -134,9 +160,8 @@ async def update_ingreso(
     data: IngresoCreate,
     user: dict = Depends(require_authenticated)
 ):
-    if not has_permission(user, "facturas.editar"):
-        if user.get("role") != "admin":
-            raise HTTPException(status_code=403, detail="Sin permiso")
+    if not puede_editar_ingreso(user):
+        raise HTTPException(status_code=403, detail="Sin permiso")
 
     existing = await db.ingresos_varios.find_one({"id": ingreso_id}, {"_id": 0})
     if not existing:
@@ -173,9 +198,8 @@ async def delete_ingreso(
     ingreso_id: str,
     user: dict = Depends(require_authenticated)
 ):
-    if not has_permission(user, "facturas.eliminar"):
-        if user.get("role") != "admin":
-            raise HTTPException(status_code=403, detail="Sin permiso")
+    if not puede_eliminar_ingreso(user):
+        raise HTTPException(status_code=403, detail="Sin permiso")
 
     existing = await db.ingresos_varios.find_one({"id": ingreso_id}, {"_id": 0})
     if not existing:

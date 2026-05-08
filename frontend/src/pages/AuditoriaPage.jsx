@@ -2,11 +2,10 @@ import React, { useState, useEffect, useContext } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  ArrowLeft, Shield, User, Building2, FileText, Users,
-  Filter, Clock, Search, Server, ShoppingCart, Receipt,
+  ArrowLeft, Shield, Building2, FileText, Users,
+  Clock, Search, Server, ShoppingCart, Receipt, X, Eye,
   ClipboardList, DollarSign, Package, Banknote, BarChart3
 } from "lucide-react";
-import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { AuthContext } from "../App";
 
@@ -26,6 +25,9 @@ const moduloConfig = {
   empleados:         { icon: <Users className="w-4 h-4" />,        color: "text-pink-400",    bg: "bg-pink-500/10" },
   ingresos_varios:   { icon: <Banknote className="w-4 h-4" />,     color: "text-lime-400",    bg: "bg-lime-500/10" },
   pagos_proveedores: { icon: <Banknote className="w-4 h-4" />,     color: "text-yellow-400",  bg: "bg-yellow-500/10" },
+  notas_credito:     { icon: <Receipt className="w-4 h-4" />,      color: "text-rose-400",    bg: "bg-rose-500/10" },
+  inventario_productos: { icon: <Package className="w-4 h-4" />,   color: "text-cyan-400",    bg: "bg-cyan-500/10" },
+  historial_stock:   { icon: <BarChart3 className="w-4 h-4" />,    color: "text-cyan-300",    bg: "bg-cyan-500/10" },
 };
 
 const accionConfig = {
@@ -37,23 +39,24 @@ const accionConfig = {
   logout:   { color: "bg-slate-500/20 text-slate-300 border border-slate-500/30",     label: "Logout" },
   exportar: { color: "bg-violet-500/20 text-violet-400 border border-violet-500/30",  label: "Exportar" },
   pagar:    { color: "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30",        label: "Pagar" },
+  movimiento_manual: { color: "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30", label: "Movimiento" },
 };
 
 const AuditoriaPage = () => {
   const { token } = useContext(AuthContext);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filterModulo, setFilterModulo] = useState("");
+  const [chips, setChips] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedLog, setSelectedLog] = useState(null);
 
   useEffect(() => {
     fetchLogs();
-  }, [filterModulo]);
+  }, []);
 
   const fetchLogs = async () => {
     try {
       const params = new URLSearchParams();
-      if (filterModulo) params.set("modulo", filterModulo);
       params.set("limit", "200");
       const res = await fetch(`${API}/admin/auditoria?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -76,15 +79,17 @@ const AuditoriaPage = () => {
   };
 
   const filteredLogs = logs.filter(log => {
-    if (!searchTerm) return true;
-    const term = searchTerm.toLowerCase();
-    return (
-      (log.usuario_nombre || "").toLowerCase().includes(term) ||
-      (log.accion || "").toLowerCase().includes(term) ||
-      (log.detalle || "").toLowerCase().includes(term) ||
-      (log.modulo || "").toLowerCase().includes(term)
-    );
+    const active = [...chips, searchTerm].filter(Boolean).map(t => String(t).toLowerCase());
+    if (active.length === 0) return true;
+    const texto = [log.usuario_nombre, log.usuario_email, log.accion, log.detalle, log.modulo, log.entidad_id, log.fecha].filter(Boolean).join(" ").toLowerCase();
+    return active.every(term => texto.includes(term));
   });
+
+  const addChip = () => {
+    const v = searchTerm.trim();
+    if (v && !chips.includes(v)) setChips(prev => [...prev, v]);
+    setSearchTerm("");
+  };
 
   const getModuleStyle = (modulo) => moduloConfig[modulo] || { icon: <Shield className="w-4 h-4" />, color: "text-slate-400", bg: "bg-slate-500/10" };
   const getAccionStyle = (accion) => {
@@ -109,49 +114,27 @@ const AuditoriaPage = () => {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 mb-6">
-        <div className="relative flex-1 min-w-[200px] max-w-md">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+      {/* Buscador chip */}
+      <div className="mb-6">
+        <div className="relative bg-arandu-dark border border-white/10 rounded-xl px-3 py-2">
+          <div className="flex flex-wrap gap-2 mb-2">
+            {chips.map(chip => (
+              <span key={chip} className="inline-flex items-center gap-1 bg-amber-500/15 text-amber-300 border border-amber-500/25 rounded-full px-2 py-0.5 text-xs">
+                {chip}
+                <button onClick={() => setChips(prev => prev.filter(c => c !== chip))}><X className="w-3 h-3" /></button>
+              </span>
+            ))}
+          </div>
+          <Search className="w-4 h-4 absolute left-3 bottom-3 text-slate-500" />
           <Input
             type="text"
-            placeholder="Buscar por usuario, accion..."
+            placeholder="Buscar por usuario, modulo, accion, detalle, fecha... (Enter para agregar filtro)"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="bg-arandu-dark border-white/10 text-white pl-10"
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addChip(); } }}
+            className="bg-transparent border-0 text-white pl-7 focus-visible:ring-0"
             data-testid="audit-search"
           />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {[
-            { value: "", label: "Todos", icon: <Filter className="w-3 h-3" /> },
-            { value: "presupuestos", label: "Presupuestos", icon: <FileText className="w-3 h-3" /> },
-            { value: "facturas", label: "Facturas", icon: <Receipt className="w-3 h-3" /> },
-            { value: "contratos", label: "Contratos", icon: <ClipboardList className="w-3 h-3" /> },
-            { value: "compras", label: "Compras", icon: <ShoppingCart className="w-3 h-3" /> },
-            { value: "empresas", label: "Empresas", icon: <Building2 className="w-3 h-3" /> },
-            { value: "proveedores", label: "Proveedores", icon: <Package className="w-3 h-3" /> },
-            { value: "inventario", label: "Inventario", icon: <Server className="w-3 h-3" /> },
-            { value: "balance", label: "Balance", icon: <BarChart3 className="w-3 h-3" /> },
-            { value: "costos_fijos", label: "Costos Fijos", icon: <DollarSign className="w-3 h-3" /> },
-            { value: "empleados", label: "Empleados", icon: <Users className="w-3 h-3" /> },
-            { value: "usuarios", label: "Usuarios", icon: <Users className="w-3 h-3" /> },
-            { value: "auth", label: "Sesiones", icon: <Shield className="w-3 h-3" /> },
-          ].map(f => (
-            <button
-              key={f.value}
-              onClick={() => setFilterModulo(f.value)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-                filterModulo === f.value
-                  ? "bg-amber-500/20 text-amber-400 border border-amber-500/50"
-                  : "bg-arandu-dark-lighter text-slate-400 border border-white/5 hover:border-white/20"
-              }`}
-              data-testid={`audit-filter-${f.value || "all"}`}
-            >
-              {f.icon}
-              {f.label}
-            </button>
-          ))}
         </div>
       </div>
 
@@ -166,50 +149,63 @@ const AuditoriaPage = () => {
           <p className="text-slate-400">No hay registros de auditoria</p>
         </div>
       ) : (
-        <div className="space-y-2" data-testid="audit-logs-list">
+        <div className="bg-arandu-dark-light border border-white/5 rounded-xl overflow-hidden" data-testid="audit-logs-list">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/10 text-slate-400 text-xs uppercase">
+                <th className="px-4 py-3 text-left">Fecha</th>
+                <th className="px-4 py-3 text-left">Usuario</th>
+                <th className="px-4 py-3 text-left">Modulo</th>
+                <th className="px-4 py-3 text-left">Accion</th>
+                <th className="px-4 py-3 text-left">Detalle</th>
+                <th className="px-4 py-3 text-center">Ver</th>
+              </tr>
+            </thead>
+            <tbody>
           {filteredLogs.map((log, idx) => {
             const style = getModuleStyle(log.modulo);
+            const action = getAccionStyle(log.accion);
             return (
-              <motion.div
+              <motion.tr
                 key={log.id || idx}
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: idx * 0.02 }}
-                className="bg-arandu-dark-light border border-white/5 rounded-lg p-4 hover:border-white/10 transition-all"
+                onClick={() => setSelectedLog(log)}
+                className="border-b border-white/5 hover:bg-white/[0.03] cursor-pointer transition-all"
                 data-testid={`audit-log-${idx}`}
               >
-                <div className="flex items-start gap-3">
-                  <div className={`w-9 h-9 rounded-lg ${style.bg} flex items-center justify-center shrink-0 mt-0.5`}>
-                    <span className={style.color}>{style.icon}</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 mb-1">
-                      <span className="text-white font-medium text-sm">{log.usuario_nombre}</span>
-                      <span className={`${style.color} text-xs font-medium ${style.bg} px-2 py-0.5 rounded-full flex items-center gap-1`}>
-                        {style.icon}
-                        {log.modulo}
-                      </span>
-                      {(() => {
-                        const as = getAccionStyle(log.accion);
-                        return (
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${as.color}`}>
-                            {log.accion}
-                          </span>
-                        );
-                      })()}
-                    </div>
-                    {log.detalle && (
-                      <p className="text-slate-400 text-sm truncate">{log.detalle}</p>
-                    )}
-                  </div>
-                  <div className="text-slate-500 text-xs whitespace-nowrap flex items-center gap-1 shrink-0">
-                    <Clock className="w-3 h-3" />
-                    {formatDate(log.fecha)}
-                  </div>
-                </div>
-              </motion.div>
+                <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">{formatDate(log.fecha)}</td>
+                <td className="px-4 py-3 text-white font-medium">{log.usuario_nombre || "—"}</td>
+                <td className="px-4 py-3">
+                  <span className={`${style.color} ${style.bg} text-xs px-2 py-1 rounded-full inline-flex items-center gap-1`}>{style.icon}{log.modulo}</span>
+                </td>
+                <td className="px-4 py-3"><span className={`text-xs font-semibold px-2 py-1 rounded-full ${action.color}`}>{log.accion}</span></td>
+                <td className="px-4 py-3 text-slate-400 max-w-[360px] truncate">{log.detalle || "—"}</td>
+                <td className="px-4 py-3 text-center"><Eye className="w-4 h-4 text-slate-500 mx-auto" /></td>
+              </motion.tr>
             );
           })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {selectedLog && (
+        <div className="fixed inset-0 bg-black/75 z-50 flex items-center justify-center p-4" onMouseDown={(e) => e.target === e.currentTarget && setSelectedLog(null)}>
+          <div className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-white font-heading text-lg">Detalle de auditoria</h2>
+              <button onClick={() => setSelectedLog(null)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-3 text-sm">
+              {Object.entries(selectedLog).map(([k, v]) => (
+                <div key={k} className="grid grid-cols-3 gap-3 border-b border-white/5 pb-2">
+                  <span className="text-slate-500">{k}</span>
+                  <span className="col-span-2 text-slate-200 break-words">{typeof v === "object" ? JSON.stringify(v, null, 2) : String(v ?? "—")}</span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>

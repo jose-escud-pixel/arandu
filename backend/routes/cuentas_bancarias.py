@@ -180,6 +180,22 @@ async def get_saldos_cuentas(
     except Exception:
         pass
 
+    # ── EGRESOS: pagos de IVA ───────────────────────────────────────
+    try:
+        pagos_iva = await db.pagos_iva.find(
+            logo_filter, {"_id": 0, "cuenta_id": 1, "monto": 1, "fecha_pago": 1, "logo_tipo": 1}
+        ).to_list(5000)
+        for p in pagos_iva:
+            tagged = p.get("cuenta_id")
+            cid = resolve(tagged, p.get("logo_tipo", ""), "PYG")
+            if not cid:
+                continue
+            if not en_rango(cid, p.get("fecha_pago") or "", use_fecha_ini=bool(tagged)):
+                continue
+            saldos[cid] -= float(p.get("monto") or 0)
+    except Exception:
+        pass
+
     # ── EGRESOS: costos fijos ────────────────────────────────────
     try:
         pcf = await db.pagos_costos_fijos.find(

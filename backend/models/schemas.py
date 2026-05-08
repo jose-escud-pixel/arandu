@@ -21,6 +21,7 @@ class AdminUserCreate(BaseModel):
     permisos: List[str] = []
     empresas_asignadas: List[str] = []
     logos_asignados: List[str] = []
+    empresa_default: Optional[str] = None
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -35,6 +36,7 @@ class UserResponse(BaseModel):
     permisos: List[str] = []
     empresas_asignadas: List[str] = []
     logos_asignados: List[str] = []
+    empresa_default: Optional[str] = None
     created_at: str
 
 class ProfileUpdate(BaseModel):
@@ -114,6 +116,7 @@ class EmpresaPropiaCreate(BaseModel):
     logo_url: Optional[str] = None
     color: Optional[str] = "#3b82f6"
     tema: Optional[str] = "oscuro-azul"
+    modulos_habilitados: List[str] = []
 
     @field_validator("tema", mode="before")
     @classmethod
@@ -133,6 +136,7 @@ class EmpresaPropiaResponse(BaseModel):
     logo_url: Optional[str] = None
     color: Optional[str] = "#3b82f6"
     tema: str = "oscuro-azul"
+    modulos_habilitados: List[str] = []
     created_at: str
 
 
@@ -145,6 +149,7 @@ class PresupuestoItem(BaseModel):
     margen: float = 0
     precio_unitario: float
     subtotal: float
+    producto_id: Optional[str] = None
     observacion: Optional[str] = None
     moneda_item: Optional[str] = None
     tipo_cambio_item: Optional[float] = None
@@ -531,6 +536,8 @@ class SueldoCreate(BaseModel):
     fecha_pago: str           # YYYY-MM-DD
     horas_extra: Optional[float] = None          # deprecated, kept for compat
     monto_horas_extra: Optional[float] = None    # deprecated, kept for compat
+    total_extras: Optional[float] = None
+    total_adelantos: Optional[float] = None
     descuento_ips: Optional[float] = None
     descuentos_adicionales: Optional[float] = None  # suma total de descuentos extra
     notas: Optional[str] = None
@@ -546,6 +553,8 @@ class SueldoResponse(BaseModel):
     fecha_pago: str
     horas_extra: Optional[float] = None
     monto_horas_extra: Optional[float] = None
+    total_extras: Optional[float] = None
+    total_adelantos: Optional[float] = None
     descuento_ips: Optional[float] = None
     descuentos_adicionales: Optional[float] = None
     notas: Optional[str] = None
@@ -614,6 +623,8 @@ class FacturaCreate(BaseModel):
     empresa_nombre: Optional[str] = None  # snapshot del nombre/apodo al crear
     concepto: str
     conceptos: Optional[List[dict]] = None  # detalle de ítems (cuando viene del form nuevo)
+    modo: str = "libre"                     # libre | productos
+    afecta_stock: bool = False              # descuenta inventario si hay producto_id
     monto: float
     moneda: str = "PYG"
     tipo_cambio: Optional[float] = None
@@ -656,6 +667,8 @@ class FacturaResponse(BaseModel):
     empresa_nombre: Optional[str] = None
     concepto: str
     conceptos: Optional[List[dict]] = None
+    modo: str = "libre"
+    afecta_stock: bool = False
     monto: float
     moneda: str
     tipo_cambio: Optional[float] = None

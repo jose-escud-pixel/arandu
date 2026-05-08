@@ -162,6 +162,10 @@ def _exigir_tc_si_usd_contado(moneda: Optional[str], tipo_cambio: Optional[float
         )
 
 
+def _tiene_productos_vinculados_items(items: List[dict]) -> bool:
+    return any(item.get("producto_id") for item in (items or []))
+
+
 @router.post("/admin/compras")
 async def create_compra(data: CompraCreate, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "compras.crear"):
@@ -174,6 +178,9 @@ async def create_compra(data: CompraCreate, user: dict = Depends(require_authent
     for item in data.items:
         subtotal = item.cantidad * item.precio_unitario
         items.append({**item.dict(), "subtotal": subtotal})
+    afecta_stock = data.afecta_stock
+    if _tiene_productos_vinculados_items(items) and not has_permission(user, "compras.afectar_stock"):
+        afecta_stock = True
 
     doc = {
         "id": str(uuid.uuid4()),
@@ -190,7 +197,7 @@ async def create_compra(data: CompraCreate, user: dict = Depends(require_authent
         "monto_iva": data.monto_iva,
         "tasa_iva": data.tasa_iva,
         "items": items,
-        "afecta_stock": data.afecta_stock,
+        "afecta_stock": afecta_stock,
         "notas": data.notas,
         "fecha_vencimiento": data.fecha_vencimiento,
         "cuenta_id": data.cuenta_id if data.tipo_pago == "contado" else None,
@@ -203,7 +210,7 @@ async def create_compra(data: CompraCreate, user: dict = Depends(require_authent
     await log_auditoria(user, "compras", "crear", f"Compra a {data.proveedor_nombre} por {data.monto_total}", doc["id"])
 
     # ── Procesar stock automático para ítems vinculados a productos ──
-    if data.afecta_stock:
+    if afecta_stock:
         for item in items:
             pid = item.get("producto_id")
             if pid:
@@ -250,6 +257,9 @@ async def update_compra(compra_id: str, data: CompraUpdate, user: dict = Depends
     tc_final = update_data.get("tipo_cambio", existing_compra.get("tipo_cambio"))
     tipo_pago_final = update_data.get("tipo_pago", existing_compra.get("tipo_pago"))
     _exigir_tc_si_usd_contado(moneda_final, tc_final, tipo_pago_final)
+    if "items" in update_data and "afecta_stock" in update_data and not has_permission(user, "compras.afectar_stock"):
+        if _tiene_productos_vinculados_items(update_data.get("items") or []):
+            update_data["afecta_stock"] = True
 
     result = await db.compras.update_one({"id": compra_id}, {"$set": update_data})
     if result.matched_count == 0:

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime, timezone, timedelta
 import uuid
-from typing import Optional
+from typing import Optional, List
 
 from config import db
 from auth import require_admin, require_authenticated, has_permission, can_access_empresa, log_auditoria, log_historial
@@ -137,17 +137,53 @@ async def migrar_categorias(admin: dict = Depends(require_admin)):
 
 # ================== ACTIVOS ==================
 
+def _ips_from_activo(activo: dict) -> List[str]:
+    raw = [
+        activo.get("ip_local"),
+        activo.get("ip_publica"),
+        *(activo.get("ips_locales") or []),
+        *(activo.get("ips_publicas") or []),
+    ]
+    return [str(ip).strip().lower() for ip in raw if str(ip or "").strip()]
+
+
+async def _validar_ips_unicas(data: ActivoCreate, exclude_id: Optional[str] = None):
+    ips = _ips_from_activo(data.dict())
+    repeated_in_form = next((ip for ip in set(ips) if ips.count(ip) > 1), None)
+    if repeated_in_form:
+        raise HTTPException(status_code=400, detail=f"La IP {repeated_in_form} está repetida en este activo.")
+
+    if not ips:
+        return
+
+    query = {"empresa_id": data.empresa_id}
+    if exclude_id:
+        query["id"] = {"$ne": exclude_id}
+    otros = await db.activos.find(query, {"_id": 0, "id": 1, "nombre": 1, "ip_local": 1, "ip_publica": 1, "ips_locales": 1, "ips_publicas": 1}).to_list(5000)
+    for otro in otros:
+        for ip in _ips_from_activo(otro):
+            if ip in ips:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"La IP {ip} ya está en uso en {otro.get('nombre', 'otro activo')}.",
+                )
+
+
 @router.get("/admin/activos")
 async def get_activos(
     empresa_id: Optional[str] = None, categoria: Optional[str] = None,
     estado: Optional[str] = None, ubicacion: Optional[str] = None,
-    search: Optional[str] = None, user: dict = Depends(require_authenticated)
+    search: Optional[str] = None, logo_tipo: Optional[str] = None,
+    user: dict = Depends(require_authenticated)
 ):
     if not has_permission(user, "inventario.ver"):
         raise HTTPException(status_code=403, detail="No tiene permiso para ver inventario")
     query = {}
     if empresa_id:
         query["empresa_id"] = empresa_id
+    elif logo_tipo and logo_tipo != "todas":
+        empresas_logo = await db.empresas.find({"logo_tipo": logo_tipo}, {"_id": 0, "id": 1}).to_list(1000)
+        query["empresa_id"] = {"$in": [e["id"] for e in empresas_logo]}
     if categoria:
         query["categoria"] = categoria
     if estado:
@@ -166,6 +202,12 @@ async def get_activos(
     if user.get("role") != "admin" and user.get("empresas_asignadas"):
         if "empresa_id" not in query:
             query["empresa_id"] = {"$in": user["empresas_asignadas"]}
+        elif isinstance(query["empresa_id"], dict) and "$in" in query["empresa_id"]:
+            query["empresa_id"]["$in"] = [eid for eid in query["empresa_id"]["$in"] if eid in user["empresas_asignadas"]]
+        elif query["empresa_id"] not in user["empresas_asignadas"]:
+            return {"activos": [], "cuentas_asociadas": [], "detalle_cuentas": []}
+        elif isinstance(query["empresa_id"], dict) and "$in" in query["empresa_id"]:
+            query["empresa_id"]["$in"] = [eid for eid in query["empresa_id"]["$in"] if eid in user["empresas_asignadas"]]
         elif query["empresa_id"] not in user["empresas_asignadas"]:
             return []
     activos = await db.activos.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
@@ -211,6 +253,7 @@ async def create_activo(data: ActivoCreate, user: dict = Depends(require_authent
         raise HTTPException(status_code=403, detail="No tiene permiso para crear activos")
     if not can_access_empresa(user, data.empresa_id):
         raise HTTPException(status_code=403, detail="No tiene acceso a esta empresa")
+    await _validar_ips_unicas(data)
     activo_id = str(uuid.uuid4())
     doc = {"id": activo_id, **data.dict(), "created_at": datetime.now(timezone.utc).isoformat()}
     await db.activos.insert_one(doc)
@@ -228,6 +271,9 @@ async def update_activo(activo_id: str, data: ActivoCreate, user: dict = Depends
         raise HTTPException(status_code=404, detail="Activo no encontrado")
     if not can_access_empresa(user, existing["empresa_id"]):
         raise HTTPException(status_code=403, detail="No tiene acceso a esta empresa")
+    if not can_access_empresa(user, data.empresa_id):
+        raise HTTPException(status_code=403, detail="No tiene acceso a la empresa destino")
+    await _validar_ips_unicas(data, exclude_id=activo_id)
     update = data.dict()
     await db.activos.update_one({"id": activo_id}, {"$set": update})
     changes = [k for k in update if str(update[k]) != str(existing.get(k, ""))]
@@ -326,6 +372,7 @@ async def get_historial(activo_id: str, user: dict = Depends(require_authenticat
 async def export_inventario(
     empresa_id: Optional[str] = None, empresa_ids: Optional[str] = None,
     incluir_credenciales: bool = False, ordenar_por: str = "nombre",
+    logo_tipo: Optional[str] = None,
     user: dict = Depends(require_authenticated)
 ):
     if not has_permission(user, "inventario.ver"):
@@ -339,6 +386,9 @@ async def export_inventario(
             query["empresa_id"] = {"$in": ids_list}
     elif empresa_id:
         query["empresa_id"] = empresa_id
+    elif logo_tipo and logo_tipo != "todas":
+        empresas_logo = await db.empresas.find({"logo_tipo": logo_tipo}, {"_id": 0, "id": 1}).to_list(1000)
+        query["empresa_id"] = {"$in": [e["id"] for e in empresas_logo]}
     if user.get("role") != "admin" and user.get("empresas_asignadas"):
         if "empresa_id" not in query:
             query["empresa_id"] = {"$in": user["empresas_asignadas"]}

@@ -9,6 +9,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { AuthContext } from "../App";
 import { toast } from "sonner";
+import { DEFAULT_EMPRESA_MODULOS, EMPRESA_MODULOS, EMPRESA_MODULOS_OBLIGATORIOS, modulosHabilitadosEmpresa } from "../lib/modulosEmpresa";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -108,6 +109,7 @@ const EmpresasPropiasPage = () => {
     slug: "",
     color: "#3b82f6",
     tema: "oscuro-azul",
+    modulos_habilitados: [...DEFAULT_EMPRESA_MODULOS],
   });
   const [form, setForm] = useState(emptyForm());
   const [logoPreview, setLogoPreview] = useState(null); // base64 preview antes de subir
@@ -131,7 +133,13 @@ const EmpresasPropiasPage = () => {
   };
 
   const openEdit = (ep) => {
-    setForm({ nombre: ep.nombre, slug: ep.slug, color: ep.color || "#3b82f6", tema: ep.tema || "oscuro-azul" });
+    setForm({
+      nombre: ep.nombre,
+      slug: ep.slug,
+      color: ep.color || "#3b82f6",
+      tema: ep.tema || "oscuro-azul",
+      modulos_habilitados: modulosHabilitadosEmpresa(ep),
+    });
     setLogoPreview(ep.logo_url || null);
     setEditingId(ep.id);
     setShowForm(true);
@@ -146,7 +154,10 @@ const EmpresasPropiasPage = () => {
       const res = await fetch(url, {
         method: editingId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          modulos_habilitados: [...new Set([...EMPRESA_MODULOS_OBLIGATORIOS, ...(form.modulos_habilitados || [])])],
+        }),
       });
       if (res.ok) {
         const saved = await res.json();
@@ -220,6 +231,18 @@ const EmpresasPropiasPage = () => {
   };
 
   const temaInfo = (slug) => TEMAS.find(t => t.id === slug) || TEMAS[0];
+  const toggleModulo = (modulo) => {
+    if (EMPRESA_MODULOS_OBLIGATORIOS.includes(modulo)) return;
+    setForm(prev => {
+      const current = prev.modulos_habilitados || [];
+      return {
+        ...prev,
+        modulos_habilitados: current.includes(modulo)
+          ? current.filter(m => m !== modulo)
+          : [...current, modulo],
+      };
+    });
+  };
 
   return (
     <div className="min-h-screen bg-arandu-dark p-4 md:p-8">
@@ -286,6 +309,10 @@ const EmpresasPropiasPage = () => {
                           <div className="flex items-center gap-1.5 bg-arandu-dark rounded-lg px-2.5 py-1">
                             <div className="w-3 h-3 rounded-full" style={{ backgroundColor: tema.preview.accent }} />
                             <span className="text-xs text-slate-400">{tema.label}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 bg-arandu-dark rounded-lg px-2.5 py-1">
+                            <Check className="w-3 h-3 text-emerald-400" />
+                            <span className="text-xs text-slate-400">{modulosHabilitadosEmpresa(ep).length} módulos</span>
                           </div>
                         </div>
                       </div>
@@ -426,6 +453,59 @@ const EmpresasPropiasPage = () => {
                   {/* Descripción del tema seleccionado */}
                   <div className="mt-3 p-3 bg-arandu-dark rounded-lg border border-white/5">
                     <p className="text-slate-400 text-xs">{temaInfo(form.tema).desc}</p>
+                  </div>
+                </div>
+
+                {/* Módulos habilitados */}
+                <div>
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div>
+                      <label className="text-slate-300 text-sm font-semibold block">Módulos habilitados</label>
+                      <p className="text-slate-500 text-xs mt-0.5">
+                        Desactivar un módulo oculta menú, dashboard, accesos directos, reportes y opciones relacionadas para esta empresa.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setForm(p => ({
+                        ...p,
+                        modulos_habilitados: (p.modulos_habilitados || []).length === DEFAULT_EMPRESA_MODULOS.length
+                          ? [...EMPRESA_MODULOS_OBLIGATORIOS]
+                          : [...DEFAULT_EMPRESA_MODULOS],
+                      }))}
+                      className="text-xs text-arandu-blue hover:underline whitespace-nowrap"
+                    >
+                      {(form.modulos_habilitados || []).length === DEFAULT_EMPRESA_MODULOS.length ? "Quitar todos" : "Activar todos"}
+                    </button>
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-2">
+                    {Object.entries(EMPRESA_MODULOS).map(([key, modulo]) => {
+                      const active = (form.modulos_habilitados || []).includes(key);
+                      const obligatorio = !!modulo.obligatorio;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => toggleModulo(key)}
+                          className={`text-left rounded-xl border px-3 py-3 transition-all ${
+                            active
+                              ? "border-emerald-500/40 bg-emerald-500/10"
+                              : "border-white/10 bg-arandu-dark text-slate-500 hover:border-white/20"
+                          }`}
+                        >
+                          <div className="flex items-start gap-2">
+                            <span className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${active ? "bg-emerald-500 border-emerald-500" : "border-white/20"}`}>
+                              {active && <Check className="w-3 h-3 text-white" />}
+                            </span>
+                            <span>
+                              <span className={`block text-sm font-medium ${active ? "text-emerald-200" : "text-slate-400"}`}>{modulo.label}</span>
+                              {obligatorio && <span className="inline-block text-[10px] text-amber-300 border border-amber-500/30 bg-amber-500/10 rounded px-1.5 py-0.5 mt-1">Obligatorio</span>}
+                              <span className="block text-xs text-slate-500 mt-0.5">{modulo.desc}</span>
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 

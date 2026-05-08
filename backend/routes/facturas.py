@@ -102,12 +102,45 @@ def _build_pago_entry(monto: float, fecha: str, cuenta_id: Optional[str],
     }
 
 
+def _debe_afectar_stock(doc: dict) -> bool:
+    return bool(doc.get("afecta_stock")) and doc.get("tipo", "emitida") == "emitida" and doc.get("estado") != "anulada"
+
+
+def _tiene_productos_vinculados(doc: dict) -> bool:
+    return any(item.get("producto_id") for item in (doc.get("conceptos") or []))
+
+
+async def _registrar_stock_factura(doc: dict, tipo_mov: str, motivo: str, user: dict):
+    if not _debe_afectar_stock(doc):
+        return
+    from routes.productos import registrar_movimiento
+    for item in doc.get("conceptos") or []:
+        producto_id = item.get("producto_id")
+        cantidad = float(item.get("cantidad") or 0)
+        if not producto_id or cantidad <= 0:
+            continue
+        await registrar_movimiento(
+            producto_id=producto_id,
+            tipo=tipo_mov,
+            cantidad=cantidad,
+            motivo=motivo,
+            referencia_id=doc.get("id"),
+            referencia_tipo="factura",
+            precio_unitario=item.get("precio_unitario"),
+            notas=f"Factura {doc.get('numero', '')}",
+            usuario_id=user.get("id"),
+            usuario_nombre=user.get("name", ""),
+        )
+
+
 @router.post("/admin/facturas", response_model=FacturaResponse)
 async def create_factura(data: FacturaCreate, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "facturas.crear"):
         raise HTTPException(status_code=403, detail="Sin permiso para crear facturas")
     now = datetime.now(timezone.utc).isoformat()
     doc_data = data.dict()
+    if _tiene_productos_vinculados(doc_data) and not has_permission(user, "facturas.afectar_stock"):
+        doc_data["afecta_stock"] = True
     # Si se crea ya pagada y se proveyó cuenta, armamos el array pagos[]
     # para que el balance / saldo de cuentas lo registre correctamente.
     if doc_data.get("estado") == "pagada" and doc_data.get("cuenta_id"):
@@ -132,6 +165,7 @@ async def create_factura(data: FacturaCreate, user: dict = Depends(require_authe
         "created_at": now,
     })
     await db.facturas.insert_one(doc)
+    await _registrar_stock_factura(doc, "salida", "factura", user)
     await log_auditoria(user, "facturas", "crear_factura",
                         f"Factura {data.numero} ({data.tipo}) creada")
     return {**doc, "_id": None}
@@ -145,6 +179,8 @@ async def update_factura(factura_id: str, data: FacturaCreate, user: dict = Depe
     if not fac:
         raise HTTPException(status_code=404, detail="Factura no encontrada")
     update_data = data.dict()
+    if (_tiene_productos_vinculados(update_data) or _tiene_productos_vinculados(fac)) and not has_permission(user, "facturas.afectar_stock"):
+        update_data["afecta_stock"] = True
     # Si se está marcando como pagada (estaba pendiente o sin pagos) y se dio cuenta,
     # registramos el pago como entrada en pagos[].
     if update_data.get("estado") == "pagada" and update_data.get("cuenta_id"):
@@ -168,10 +204,13 @@ async def update_factura(factura_id: str, data: FacturaCreate, user: dict = Depe
             if not update_data.get("fecha_pago"):
                 update_data["fecha_pago"] = update_data.get("fecha")
     updates = _normalizar_presupuesto_ids(update_data)
+    if _debe_afectar_stock(fac):
+        await _registrar_stock_factura(fac, "entrada", "reversion_factura", user)
     await db.facturas.update_one({"id": factura_id}, {"$set": updates})
+    fac_actualizada = {**fac, **updates}
+    await _registrar_stock_factura(fac_actualizada, "salida", "factura", user)
     await log_auditoria(user, "facturas", "editar_factura",
                         f"Factura {factura_id} actualizada")
-    fac_actualizada = {**fac, **updates}
     return fac_actualizada
 
 
@@ -482,6 +521,8 @@ async def delete_factura(factura_id: str, user: dict = Depends(require_authentic
     for pago in (fac.get("pagos") or []):
         if pago.get("recibo_id"):
             await db.recibos.delete_one({"id": pago["recibo_id"]})
+    if _debe_afectar_stock(fac):
+        await _registrar_stock_factura(fac, "entrada", "reversion_factura", user)
     await db.facturas.delete_one({"id": factura_id})
     await log_auditoria(user, "facturas", "eliminar_factura",
                         f"Factura {factura_id} eliminada")

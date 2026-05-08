@@ -5,7 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 from config import db
-from auth import require_authenticated, has_permission, get_logos_acceso, apply_logo_filter, is_forbidden
+from auth import require_authenticated, has_permission, get_logos_acceso, apply_logo_filter, is_forbidden, log_auditoria
 
 router = APIRouter()
 
@@ -159,6 +159,7 @@ async def create_producto(data: ProductoCreate, user: dict = Depends(require_aut
             usuario_nombre=user.get("name"),
         )
 
+    await log_auditoria(user, "inventario_productos", "crear", f"Producto creado: {data.nombre}", doc["id"])
     return {k: v for k, v in doc.items() if k != "_id"}
 
 
@@ -178,6 +179,7 @@ async def update_producto(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     producto = await db.productos.find_one({"id": producto_id}, {"_id": 0})
+    await log_auditoria(user, "inventario_productos", "editar", f"Producto actualizado: {producto.get('nombre', producto_id)}", producto_id)
     return producto
 
 
@@ -190,6 +192,7 @@ async def delete_producto(producto_id: str, user: dict = Depends(require_authent
         raise HTTPException(status_code=404, detail="Producto no encontrado")
     # Limpiar movimientos huérfanos
     await db.movimientos_stock.delete_many({"producto_id": producto_id})
+    await log_auditoria(user, "inventario_productos", "eliminar", f"Producto eliminado: {producto_id}", producto_id)
     return {"ok": True}
 
 
@@ -228,7 +231,57 @@ async def add_movimiento_manual(
         usuario_id=user.get("id"),
         usuario_nombre=user.get("name"),
     )
+    await log_auditoria(user, "historial_stock", "movimiento_manual", f"Movimiento {data.tipo} de stock", mov.get("id", ""))
     return mov
+
+
+@router.get("/admin/stock-movimientos")
+async def get_stock_movimientos(
+    logo_tipo: Optional[str] = None,
+    tipo: Optional[str] = None,
+    motivo: Optional[str] = None,
+    desde: Optional[str] = None,
+    hasta: Optional[str] = None,
+    search: Optional[str] = None,
+    user: dict = Depends(require_authenticated),
+):
+    if not has_permission(user, "historial_stock.ver") and not has_permission(user, "inventario_productos.ver"):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+
+    logo_q: dict = {}
+    await apply_logo_filter(logo_q, user, logo_tipo)
+    if is_forbidden(logo_q):
+        return []
+
+    prod_query = dict(logo_q)
+    productos = await db.productos.find(prod_query, {"_id": 0, "id": 1, "logo_tipo": 1, "sku": 1, "categoria": 1}).to_list(2000)
+    prod_map = {p["id"]: p for p in productos}
+    query = {"producto_id": {"$in": list(prod_map.keys())}}
+    if tipo:
+        query["tipo"] = tipo
+    if motivo:
+        query["motivo"] = motivo
+    if desde or hasta:
+        query["fecha"] = {}
+        if desde:
+            query["fecha"]["$gte"] = desde
+        if hasta:
+            query["fecha"]["$lte"] = hasta
+    if search:
+        query["$or"] = [
+            {"producto_nombre": {"$regex": search, "$options": "i"}},
+            {"motivo": {"$regex": search, "$options": "i"}},
+            {"notas": {"$regex": search, "$options": "i"}},
+            {"usuario_nombre": {"$regex": search, "$options": "i"}},
+        ]
+
+    movs = await db.movimientos_stock.find(query, {"_id": 0}).sort("created_at", -1).to_list(3000)
+    for m in movs:
+        p = prod_map.get(m.get("producto_id"), {})
+        m["logo_tipo"] = p.get("logo_tipo")
+        m["sku"] = p.get("sku")
+        m["categoria"] = p.get("categoria")
+    return movs
 
 
 # ── Resumen de stock bajo mínimo ──────────────────────────────────────────────

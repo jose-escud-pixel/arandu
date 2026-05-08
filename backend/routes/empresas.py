@@ -4,7 +4,7 @@ import uuid
 from typing import List, Optional
 import base64
 
-from config import db
+from config import db, DEFAULT_EMPRESA_MODULOS, EMPRESA_MODULOS_DISPONIBLES, EMPRESA_MODULOS_OBLIGATORIOS
 from auth import require_admin, require_authenticated, has_permission, can_access_empresa, get_logos_acceso, log_auditoria
 from models.schemas import (
     ContactMessage, ContactMessageResponse,
@@ -13,6 +13,28 @@ from models.schemas import (
 )
 
 router = APIRouter()
+
+
+def _normalizar_modulos(modulos: Optional[List[str]]) -> List[str]:
+    validos = set(EMPRESA_MODULOS_DISPONIBLES.keys())
+    if modulos is None:
+        return list(DEFAULT_EMPRESA_MODULOS)
+    legacy_aliases = {
+        "ventas": ["ventas_base", "presupuestos", "ingresos_varios"],
+        "facturas": ["ventas_base"],
+        "recibos": ["ventas_base"],
+        "notas_credito": ["ventas_base"],
+        "egresos": ["egresos_base", "proveedores", "sueldos", "balance"],
+        "compras": ["egresos_base"],
+        "gastos": ["egresos_base"],
+        "pagos_proveedores": ["proveedores"],
+    }
+    expandidos = []
+    for modulo in modulos:
+        expandidos.extend(legacy_aliases.get(modulo, [modulo]))
+    normalizados = list(EMPRESA_MODULOS_OBLIGATORIOS)
+    normalizados.extend([m for m in expandidos if m in validos])
+    return list(dict.fromkeys(normalizados))
 
 
 # ================== CONTACT ==================
@@ -69,9 +91,9 @@ async def get_empresas_propias(user: dict = Depends(require_authenticated)):
     # Auto-seed las 3 empresas por defecto si la colección está vacía
     if not propias:
         defaults = [
-            {"id": str(uuid.uuid4()), "nombre": "Arandu",    "slug": "arandu",    "color": DEFAULT_CONFIG["arandu"]["color"],    "tema": DEFAULT_CONFIG["arandu"]["tema"],    "logo_url": None, "created_at": datetime.now(timezone.utc).isoformat()},
-            {"id": str(uuid.uuid4()), "nombre": "JAR",       "slug": "jar",       "color": DEFAULT_CONFIG["jar"]["color"],       "tema": DEFAULT_CONFIG["jar"]["tema"],       "logo_url": None, "created_at": datetime.now(timezone.utc).isoformat()},
-            {"id": str(uuid.uuid4()), "nombre": "AranduJAR", "slug": "arandujar", "color": DEFAULT_CONFIG["arandujar"]["color"], "tema": DEFAULT_CONFIG["arandujar"]["tema"], "logo_url": None, "created_at": datetime.now(timezone.utc).isoformat()},
+            {"id": str(uuid.uuid4()), "nombre": "Arandu",    "slug": "arandu",    "color": DEFAULT_CONFIG["arandu"]["color"],    "tema": DEFAULT_CONFIG["arandu"]["tema"],    "logo_url": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
+            {"id": str(uuid.uuid4()), "nombre": "JAR",       "slug": "jar",       "color": DEFAULT_CONFIG["jar"]["color"],       "tema": DEFAULT_CONFIG["jar"]["tema"],       "logo_url": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
+            {"id": str(uuid.uuid4()), "nombre": "AranduJAR", "slug": "arandujar", "color": DEFAULT_CONFIG["arandujar"]["color"], "tema": DEFAULT_CONFIG["arandujar"]["tema"], "logo_url": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
         ]
         await db.empresas_propias.insert_many(defaults)
         propias = await db.empresas_propias.find({}, {"_id": 0}).sort("nombre", 1).to_list(100)
@@ -93,6 +115,16 @@ async def get_empresas_propias(user: dict = Depends(require_authenticated)):
                 # empresas propias custom → dejar default oscuro-azul
                 await db.empresas_propias.update_one({"id": p["id"]}, {"$set": {"tema": "oscuro-azul"}})
                 p["tema"] = "oscuro-azul"
+            if "modulos_habilitados" not in p or p.get("modulos_habilitados") is None:
+                p["modulos_habilitados"] = list(DEFAULT_EMPRESA_MODULOS)
+                await db.empresas_propias.update_one(
+                    {"id": p["id"]},
+                    {"$set": {"modulos_habilitados": p["modulos_habilitados"]}}
+                )
+
+    if user.get("role") != "admin":
+        asignadas = set(map(str, user.get("logos_asignados", []) or []))
+        propias = [p for p in propias if str(p.get("id")) in asignadas]
 
     return propias
 
@@ -109,6 +141,7 @@ async def create_empresa_propia(data: EmpresaPropiaCreate, admin: dict = Depends
         "logo_url": data.logo_url,
         "color": data.color or "#3b82f6",
         "tema": data.tema or "oscuro-azul",
+        "modulos_habilitados": _normalizar_modulos(data.modulos_habilitados),
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.empresas_propias.insert_one(doc)
@@ -124,7 +157,13 @@ async def update_empresa_propia(empresa_id: str, data: EmpresaPropiaCreate, admi
     existing = await db.empresas_propias.find_one({"slug": slug, "id": {"$ne": empresa_id}})
     if existing:
         raise HTTPException(status_code=400, detail=f"El slug '{slug}' ya está en uso")
-    update_fields = {"nombre": data.nombre, "slug": slug, "color": data.color or "#3b82f6", "tema": data.tema or "oscuro-azul"}
+    update_fields = {
+        "nombre": data.nombre,
+        "slug": slug,
+        "color": data.color or "#3b82f6",
+        "tema": data.tema or "oscuro-azul",
+        "modulos_habilitados": _normalizar_modulos(data.modulos_habilitados),
+    }
     if data.logo_url is not None:
         update_fields["logo_url"] = data.logo_url
     result = await db.empresas_propias.update_one(

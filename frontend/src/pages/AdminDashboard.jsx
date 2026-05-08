@@ -5,7 +5,8 @@ import {
   Home, Mail, MailOpen, Trash2, LogOut, Menu, X,
   MessageSquare, CheckCircle, Clock, User, Phone,
   ChevronRight, BarChart3, Inbox, Building2, FileText, Users, Shield, Eye, Server,
-  ClipboardList, DollarSign, AlertCircle, Truck, TrendingDown, UserCheck, Receipt, Scale, TrendingUp, ShoppingBag, Package
+  ClipboardList, DollarSign, AlertCircle, Truck, TrendingDown, UserCheck, Receipt, Scale, TrendingUp, ShoppingBag, Package,
+  ChevronLeft, Bell
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { AuthContext } from "../App";
@@ -44,26 +45,52 @@ const LogoDisplay = ({ activeEmpresaPropia }) => {
   return <LogoAranduJAR />;
 };
 
+const mesActual = () => new Date().toISOString().slice(0, 7);
+const prevMes = (m) => {
+  const [y, mo] = m.split("-").map(Number);
+  return mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, "0")}`;
+};
+const nextMes = (m) => {
+  const [y, mo] = m.split("-").map(Number);
+  return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`;
+};
+const fmtPYG = (n) => `₲ ${Math.round(Number(n || 0)).toLocaleString("es-PY")}`;
+const fmtUSD = (n) => `$ ${Number(n || 0).toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const mesLabel = (m) => {
+  if (!m) return "";
+  const d = new Date(`${m}-02T00:00:00`);
+  return d.toLocaleDateString("es-PY", { month: "short", year: "numeric" });
+};
+
 
 const AdminDashboard = () => {
   const { user, token, logout, hasPermission, empresasPropias, activeEmpresaPropia } = useContext(AuthContext);
   const navigate = useNavigate();
   const [messages, setMessages] = useState([]);
   const [stats, setStats] = useState({ total_messages: 0, unread_messages: 0, read_messages: 0, total_empresas: 0, total_presupuestos: 0, presupuestos_borrador: 0, presupuestos_aprobados: 0, presupuestos_facturados: 0, presupuestos_cobrados: 0 });
+  const [resumen, setResumen] = useState(null);
+  const [periodoTipo, setPeriodoTipo] = useState("todos");
+  const [periodoMes, setPeriodoMes] = useState(mesActual());
+  const [periodoAnio, setPeriodoAnio] = useState(String(new Date().getFullYear()));
   const [loading, setLoading] = useState(true);
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     fetchData();
-  }, [activeEmpresaPropia]); // eslint-disable-line
+  }, [activeEmpresaPropia, periodoTipo, periodoMes, periodoAnio]); // eslint-disable-line
 
   const fetchData = async () => {
     try {
       const q = activeEmpresaPropia?.slug ? `?logo_tipo=${activeEmpresaPropia.slug}` : "";
-      const [messagesRes, statsRes] = await Promise.all([
+      const resumenParams = new URLSearchParams({ periodo_tipo: periodoTipo });
+      if (periodoTipo === "mes") resumenParams.set("mes", periodoMes);
+      if (periodoTipo === "anio") resumenParams.set("anio", periodoAnio);
+      if (activeEmpresaPropia?.slug) resumenParams.set("logo_tipo", activeEmpresaPropia.slug);
+      const [messagesRes, statsRes, resumenRes] = await Promise.all([
         fetch(`${API}/admin/messages`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API}/admin/stats${q}`, { headers: { Authorization: `Bearer ${token}` } })
+        fetch(`${API}/admin/stats${q}`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/admin/dashboard/resumen?${resumenParams}`, { headers: { Authorization: `Bearer ${token}` } })
       ]);
 
       if (messagesRes.ok) {
@@ -74,6 +101,9 @@ const AdminDashboard = () => {
       if (statsRes.ok) {
         const statsData = await statsRes.json();
         setStats(statsData);
+      }
+      if (resumenRes.ok) {
+        setResumen(await resumenRes.json());
       }
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -170,7 +200,7 @@ const AdminDashboard = () => {
               <BarChart3 className="w-5 h-5" />
               <span className="font-body font-medium">Dashboard</span>
             </div>
-            {user?.role === "admin" && (
+            {hasPermission("usuarios.ver") && (
               <button className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all">
                 <Inbox className="w-5 h-5" />
                 <span className="font-body">Mensajes</span>
@@ -193,7 +223,7 @@ const AdminDashboard = () => {
                 )}
               </Link>
             )}
-            {hasPermission("presupuestos.ver") && (
+            {(hasPermission("presupuestos.ver") || hasPermission("facturas.ver") || hasPermission("ingresos_varios.ver") || hasPermission("recibos.ver") || hasPermission("notas_credito.ver")) && (
               <Link
                 to="/admin/ventas"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
@@ -214,7 +244,7 @@ const AdminDashboard = () => {
                 <span className="font-body">Proveedores</span>
               </Link>
             )}
-            {hasPermission("compras.ver") && (
+            {(hasPermission("compras.ver") || hasPermission("costos_fijos.ver") || hasPermission("empleados.ver") || hasPermission("pagos_proveedores.ver") || hasPermission("balance.ver")) && (
               <Link
                 to="/admin/egresos"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
@@ -223,7 +253,7 @@ const AdminDashboard = () => {
                 <span className="font-body">Egresos</span>
               </Link>
             )}
-            {hasPermission("estadisticas.ver") && (
+            {hasPermission("balance.ver") && (
               <Link
                 to="/admin/balance"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
@@ -232,7 +262,7 @@ const AdminDashboard = () => {
                 <span className="font-body">Balance</span>
               </Link>
             )}
-            {hasPermission("balance.ver") && (
+            {hasPermission("bancos.ver") && (
               <Link
                 to="/admin/bancos"
                 data-testid="menu-bancos"
@@ -240,15 +270,6 @@ const AdminDashboard = () => {
               >
                 <Building2 className="w-5 h-5" />
                 <span className="font-body">Bancos</span>
-              </Link>
-            )}
-            {hasPermission("estadisticas.ver") && (
-              <Link
-                to="/admin/estadisticas"
-                className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
-              >
-                <BarChart3 className="w-5 h-5" />
-                <span className="font-body">Estadisticas</span>
               </Link>
             )}
             {hasPermission("inventario.ver") && (
@@ -271,6 +292,16 @@ const AdminDashboard = () => {
                 <span className="font-body">Catálogo Productos</span>
               </Link>
             )}
+            {hasPermission("historial_stock.ver") && (
+              <Link
+                to="/admin/historial-stock"
+                className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
+                data-testid="nav-historial-stock"
+              >
+                <BarChart3 className="w-5 h-5 text-cyan-500" />
+                <span className="font-body">Historial Stock</span>
+              </Link>
+            )}
             {hasPermission("reportes.ver") && (
               <Link 
                 to="/admin/reportes"
@@ -281,7 +312,7 @@ const AdminDashboard = () => {
                 <span className="font-body">Reportes</span>
               </Link>
             )}
-            {user?.role === "admin" && (
+            {hasPermission("auditoria.ver") && (
               <Link 
                 to="/admin/usuarios"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
@@ -412,163 +443,137 @@ const AdminDashboard = () => {
             </div>
           )}
 
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8" data-testid="stats-grid">
-            {user?.role === "admin" && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-arandu-dark-light border border-white/5 rounded-xl p-6"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-slate-400 text-sm font-body mb-1">Total Mensajes</p>
-                  <p className="text-3xl font-heading font-bold text-white">{stats.total_messages}</p>
-                </div>
-                <div className="w-12 h-12 bg-arandu-blue/20 rounded-xl flex items-center justify-center">
-                  <MessageSquare className="w-6 h-6 text-arandu-blue" />
-                </div>
+          {/* Periodo estadísticas */}
+          <div className="flex items-center gap-2 flex-wrap mb-5 bg-arandu-dark-light border border-white/10 rounded-xl px-4 py-3">
+            <Clock className="w-4 h-4 text-slate-400" />
+            <span className="text-slate-400 text-sm mr-1">Periodo:</span>
+            {[
+              ["todos", "Todo el tiempo"],
+              ["mes", "Por mes"],
+              ["anio", "Por año"],
+            ].map(([v, label]) => (
+              <button key={v} onClick={() => setPeriodoTipo(v)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${periodoTipo === v ? "bg-arandu-blue border-arandu-blue text-white" : "border-white/10 text-slate-400 hover:text-white bg-white/5"}`}>
+                {label}
+              </button>
+            ))}
+            {periodoTipo === "mes" && (
+              <div className="flex items-center gap-1 bg-arandu-dark border border-white/10 rounded-lg px-1 py-0.5">
+                <button onClick={() => setPeriodoMes(prevMes(periodoMes))} className="p-1 text-slate-400 hover:text-white hover:bg-white/10 rounded transition-all">
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-white text-sm font-medium min-w-[110px] text-center px-2 capitalize">{mesLabel(periodoMes)}</span>
+                <button onClick={() => setPeriodoMes(nextMes(periodoMes))} className="p-1 text-slate-400 hover:text-white hover:bg-white/10 rounded transition-all">
+                  <ChevronRight className="w-4 h-4" />
+                </button>
               </div>
-            </motion.div>
             )}
-
-            {user?.role === "admin" && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1 }}
-              className="bg-arandu-dark-light border border-white/5 rounded-xl p-6"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-slate-400 text-sm font-body mb-1">Sin Leer</p>
-                  <p className="text-3xl font-heading font-bold text-arandu-red">{stats.unread_messages}</p>
-                </div>
-                <div className="w-12 h-12 bg-arandu-red/20 rounded-xl flex items-center justify-center">
-                  <Mail className="w-6 h-6 text-arandu-red" />
-                </div>
-              </div>
-            </motion.div>
+            {periodoTipo === "anio" && (
+              <input type="number" value={periodoAnio} onChange={e => setPeriodoAnio(e.target.value)}
+                className="bg-arandu-dark border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm w-24" />
             )}
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
-              className="bg-arandu-dark-light border border-white/5 rounded-xl p-6"
-            >
-              <Link to="/admin/empresas" className="block">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-slate-400 text-sm font-body mb-1">Clientes</p>
-                    <p className="text-3xl font-heading font-bold text-purple-400">{stats.total_empresas}</p>
-                  </div>
-                  <div className="w-12 h-12 bg-purple-500/20 rounded-xl flex items-center justify-center">
-                    <Building2 className="w-6 h-6 text-purple-400" />
-                  </div>
-                </div>
-              </Link>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
-              className="bg-arandu-dark-light border border-white/5 rounded-xl p-6"
-            >
-              <Link to={`/admin/presupuestos${activeEmpresaPropia ? `?logo_tipo=${activeEmpresaPropia.slug}` : ""}`} className="block">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-slate-400 text-sm font-body mb-1">
-                      Presupuestos{activeEmpresaPropia ? ` · ${activeEmpresaPropia.nombre}` : ""}
-                    </p>
-                    <p className="text-3xl font-heading font-bold text-green-400">{stats.total_presupuestos}</p>
-                  </div>
-                  <div className="w-12 h-12 bg-green-500/20 rounded-xl flex items-center justify-center">
-                    <FileText className="w-6 h-6 text-green-400" />
-                  </div>
-                </div>
-              </Link>
-            </motion.div>
+            <span className="ml-auto text-slate-500 text-xs">
+              {periodoTipo === "todos" ? "Resumen completo" : periodoTipo === "mes" ? mesLabel(periodoMes) : periodoAnio}
+            </span>
           </div>
 
-          {/* Presupuestos por Estado Cards */}
-          {hasPermission("presupuestos.ver") && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-              {[
-                { estado: "borrador",  label: "En Borrador",  sub: "Pendiente aprobación", color: "yellow",  icon: <AlertCircle className="w-6 h-6 text-yellow-400" />,  count: stats.presupuestos_borrador },
-                { estado: "aprobado",  label: "Aprobados",    sub: "Por facturar",          color: "blue",    icon: <CheckCircle className="w-6 h-6 text-blue-400" />,    count: stats.presupuestos_aprobados },
-                { estado: "facturado", label: "Facturados",   sub: "Por cobrar",            color: "orange",  icon: <FileText className="w-6 h-6 text-orange-400" />,     count: stats.presupuestos_facturados },
-                { estado: "cobrado",   label: "Cobrados",     sub: "Completados",           color: "emerald", icon: <DollarSign className="w-6 h-6 text-emerald-400" />,  count: stats.presupuestos_cobrados || 0 },
-              ].map((item, i) => {
-                const logoQ = activeEmpresaPropia ? `&logo_tipo=${activeEmpresaPropia.slug}` : "";
-                return (
-                  <motion.div
-                    key={item.estado}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.4 + i * 0.05 }}
-                    className={`bg-arandu-dark-light border border-${item.color}-500/20 rounded-xl p-5 cursor-pointer hover:border-${item.color}-500/50 hover:bg-${item.color}-500/5 transition-all`}
-                    onClick={() => navigate(`/admin/presupuestos?estado=${item.estado}${logoQ}`)}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className={`w-10 h-10 bg-${item.color}-500/20 rounded-lg flex items-center justify-center`}>
-                        {item.icon}
-                      </div>
-                      <p className={`text-3xl font-heading font-bold text-${item.color}-400`}>{item.count}</p>
-                    </div>
-                    <p className="text-slate-300 text-sm font-body">{item.label}</p>
-                    <p className="text-slate-500 text-xs font-body mt-0.5">{item.sub}</p>
-                  </motion.div>
-                );
-              })}
-            </div>
-          )}
+          {/* Estadísticas operativas */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8" data-testid="stats-grid">
+            {[
+              { perm: user?.role === "admin", title: "Mensajes", icon: MessageSquare, color: "text-blue-400", value: resumen?.mensajes?.total || 0, lines: [`Sin leer: ${resumen?.mensajes?.sin_leer || 0}`] },
+              { perm: hasPermission("empresas.ver"), title: "Clientes", icon: Building2, color: "text-purple-400", value: resumen?.clientes?.total || 0, lines: ["clientes registrados"] },
+              { perm: hasPermission("presupuestos.ver"), title: "Presupuestos", icon: FileText, color: "text-green-400", value: resumen?.presupuestos?.total || 0, lines: [`Aprobados: ${resumen?.presupuestos?.aprobados || 0}`, `Rechazados: ${resumen?.presupuestos?.rechazados || 0}`, `Cobrados: ${resumen?.presupuestos?.cobrados || 0}`, `Faltantes: ${resumen?.presupuestos?.faltantes || 0}`] },
+              { perm: hasPermission("facturas.ver"), title: "Facturación", icon: Receipt, color: "text-cyan-400", value: fmtPYG(resumen?.facturacion?.total), lines: [`Facturas: ${resumen?.facturacion?.cantidad || 0}`, `Cobrado: ${fmtPYG(resumen?.facturacion?.cobrado)}`, `Pendiente: ${fmtPYG(resumen?.facturacion?.pendiente)}`] },
+              { perm: hasPermission("ingresos_varios.ver"), title: "Ingresos", icon: TrendingUp, color: "text-emerald-400", value: fmtPYG(resumen?.ingresos?.total), lines: [`Registros: ${resumen?.ingresos?.cantidad || 0}`] },
+              { perm: hasPermission("compras.ver"), title: "Compras", icon: ShoppingBag, color: "text-orange-400", value: fmtPYG(resumen?.compras?.total), lines: [`Contado: ${resumen?.compras?.contado || 0}`, `Crédito: ${resumen?.compras?.credito || 0}`, `Pendiente: ${fmtPYG(resumen?.compras?.pendiente)}${resumen?.compras?.pendiente_usd ? ` / ${fmtUSD(resumen.compras.pendiente_usd)}` : ""}`, ...(resumen?.compras?.total_usd ? [`USD sin TC: ${fmtUSD(resumen.compras.total_usd)}`] : [])] },
+              { perm: hasPermission("proveedores.ver"), title: "Proveedores", icon: Truck, color: "text-amber-400", value: fmtPYG(resumen?.proveedores?.pagado), lines: [`Pagos: ${resumen?.proveedores?.pagos || 0}`, `Debe: ${fmtPYG(resumen?.proveedores?.pendiente)}`] },
+              { perm: hasPermission("empleados.ver"), title: "Sueldos", icon: Users, color: "text-pink-400", value: fmtPYG(resumen?.sueldos?.total), lines: [`Extras: ${fmtPYG(resumen?.sueldos?.extras)}`, `Adelantos: ${fmtPYG(resumen?.sueldos?.adelantos)}`, `Descuentos: ${fmtPYG(resumen?.sueldos?.descuentos)}`] },
+              { perm: hasPermission("notas_credito.ver"), title: "Notas crédito", icon: AlertCircle, color: "text-rose-400", value: fmtPYG(resumen?.notas_credito?.total), lines: [`Ventas: ${resumen?.notas_credito?.ventas || 0}`, `Compras: ${resumen?.notas_credito?.compras || 0}`] },
+              { perm: hasPermission("recibos.ver"), title: "Recibos", icon: DollarSign, color: "text-lime-400", value: fmtPYG(resumen?.recibos?.total), lines: [`Recibos: ${resumen?.recibos?.cantidad || 0}`] },
+              { perm: hasPermission("costos_fijos.ver"), title: "Gastos", icon: DollarSign, color: "text-red-400", value: fmtPYG(resumen?.gastos?.pagado), lines: [`Pagos registrados: ${resumen?.gastos?.cantidad || 0}`] },
+              { perm: hasPermission("balance.ver"), title: "IVA", icon: Scale, color: "text-violet-400", value: fmtPYG(resumen?.iva?.saldo), lines: [`A pagar: ${fmtPYG(resumen?.iva?.a_pagar)}`, `Pagado: ${fmtPYG(resumen?.iva?.pagado)}`] },
+            ].filter(card => card.perm).map((card, i) => {
+              const Icon = card.icon;
+              return (
+                <motion.div key={card.title} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
+                  className="bg-arandu-dark-light border border-white/5 rounded-xl p-4 min-h-[150px]">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-slate-400 text-sm font-body">{card.title}</p>
+                    <Icon className={`w-5 h-5 ${card.color}`} />
+                  </div>
+                  <p className={`font-heading font-bold text-2xl ${card.color}`}>{card.value}</p>
+                  <div className="mt-2 space-y-0.5">
+                    {card.lines.map(line => <p key={line} className="text-slate-500 text-xs">{line}</p>)}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
 
-          {/* Accesos Rápidos */}
-          <div className="mb-2">
-            <h2 className="font-heading text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          {/* Accesos Directos */}
+          <div className="space-y-5">
+            <h2 className="font-heading text-lg font-semibold text-white flex items-center gap-2">
               <ChevronRight className="w-5 h-5 text-arandu-blue" />
-              Accesos Rápidos
+              Accesos Directos
             </h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {[
-                { label: "Ventas",            icon: BarChart3,     color: "emerald", path: "/admin/ventas",            perm: "presupuestos.ver" },
-                { label: "Nuevo Contrato",    icon: ClipboardList,  color: "violet",  path: "/admin/contratos",         perm: "contratos.crear" },
-                { label: "Egresos / Compras",  icon: ShoppingBag,    color: "red",     path: "/admin/egresos",           perm: "compras.ver" },
-                { label: "Nuevo Dispositivo", icon: Server,         color: "cyan",    path: "/admin/inventario",        perm: "inventario.crear" },
-                { label: "Nuevo Empleado",    icon: UserCheck,      color: "purple",  path: "/admin/empleados",         perm: "empleados.crear" },
-                { label: "Balance",           icon: Scale,          color: "teal",    path: "/admin/balance",           perm: "estadisticas.ver" },
-              ].filter(item => hasPermission(item.perm)).map((item, i) => {
-                const Icon = item.icon;
-                const colorMap = {
-                  emerald: "bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 hover:border-emerald-500/40",
-                  blue:    "bg-blue-500/10 border-blue-500/20 text-blue-400 hover:bg-blue-500/20 hover:border-blue-500/40",
-                  violet:  "bg-violet-500/10 border-violet-500/20 text-violet-400 hover:bg-violet-500/20 hover:border-violet-500/40",
-                  red:     "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20 hover:border-red-500/40",
-                  orange:  "bg-orange-500/10 border-orange-500/20 text-orange-400 hover:bg-orange-500/20 hover:border-orange-500/40",
-                  cyan:    "bg-cyan-500/10 border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 hover:border-cyan-500/40",
-                  purple:  "bg-purple-500/10 border-purple-500/20 text-purple-400 hover:bg-purple-500/20 hover:border-purple-500/40",
-                  teal:    "bg-teal-500/10 border-teal-500/20 text-teal-400 hover:bg-teal-500/20 hover:border-teal-500/40",
-                };
-                return (
-                  <motion.div
-                    key={item.path}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.05 * i }}
-                  >
-                    <button
-                      onClick={() => navigate(item.path)}
-                      className={`w-full border rounded-xl p-4 flex flex-col items-center gap-2 transition-all cursor-pointer ${colorMap[item.color]}`}
-                    >
-                      <Icon className="w-7 h-7" />
-                      <span className="font-body text-sm font-medium text-center leading-tight">{item.label}</span>
-                    </button>
-                  </motion.div>
-                );
-              })}
-            </div>
+            {[
+              { title: "Ingresos", items: [
+                { label: "Nuevo presupuesto", icon: FileText, path: "/admin/ventas?nuevo=presupuesto", perm: "presupuestos.crear", color: "emerald" },
+                { label: "Nueva factura", icon: Receipt, path: "/admin/ventas?nuevo=factura", perm: "facturas.crear", color: "cyan" },
+                { label: "Nueva nota crédito", icon: AlertCircle, path: "/admin/ventas?nuevo=nota_credito", perm: "notas_credito.crear", color: "rose" },
+                { label: "Nuevo ingreso", icon: TrendingUp, path: "/admin/ventas?nuevo=ingreso", perm: "ingresos_varios.crear", color: "green" },
+              ]},
+              { title: "Egresos", items: [
+                { label: "Nuevo gasto", icon: DollarSign, path: "/admin/egresos?nuevo=gasto", perm: "costos_fijos.crear", color: "red" },
+                { label: "Nueva compra", icon: ShoppingBag, path: "/admin/egresos?nuevo=compra", perm: "compras.crear", color: "orange" },
+                { label: "Nuevo pago proveedor", icon: Truck, path: "/admin/egresos?nuevo=pago_proveedor", perm: "pagos_proveedores.crear", color: "amber" },
+                { label: "Nuevo pago IVA", icon: Scale, path: "/admin/egresos?nuevo=pago_iva", perm: "balance.editar", color: "violet" },
+              ]},
+              { title: "Administrativo", items: [
+                { label: "Nuevo cliente", icon: Building2, path: "/admin/empresas?nuevo=cliente", perm: "empresas.crear", color: "purple" },
+                { label: "Nuevo proveedor", icon: Package, path: "/admin/proveedores?nuevo=proveedor", perm: "proveedores.crear", color: "yellow" },
+                { label: "Nuevo empleado", icon: UserCheck, path: "/admin/egresos?nuevo=empleado", perm: "empleados.crear", color: "pink" },
+                { label: "Nuevo dispositivo", icon: Server, path: "/admin/inventario?nuevo=dispositivo", perm: "inventario.crear", color: "blue" },
+                { label: "Nuevo producto", icon: Package, path: "/admin/productos?nuevo=producto", perm: "inventario_productos.crear", color: "teal" },
+                { label: "Nueva alerta", icon: Bell, path: "/admin/reportes?nuevo=alerta", perm: "alertas.crear", color: "red" },
+              ]},
+            ].map(section => {
+              const items = section.items.filter(item => hasPermission(item.perm));
+              if (items.length === 0) return null;
+              return (
+                <div key={section.title} className="bg-arandu-dark-light border border-white/5 rounded-xl p-4">
+                  <p className="text-slate-300 text-sm font-semibold mb-3">{section.title}</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                    {items.map(item => {
+                      const Icon = item.icon;
+                      const colorMap = {
+                        emerald: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 hover:border-emerald-500/45",
+                        cyan: "border-cyan-500/25 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-500/45",
+                        rose: "border-rose-500/25 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 hover:border-rose-500/45",
+                        green: "border-green-500/25 bg-green-500/10 text-green-300 hover:bg-green-500/20 hover:border-green-500/45",
+                        red: "border-red-500/25 bg-red-500/10 text-red-300 hover:bg-red-500/20 hover:border-red-500/45",
+                        orange: "border-orange-500/25 bg-orange-500/10 text-orange-300 hover:bg-orange-500/20 hover:border-orange-500/45",
+                        amber: "border-amber-500/25 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 hover:border-amber-500/45",
+                        violet: "border-violet-500/25 bg-violet-500/10 text-violet-300 hover:bg-violet-500/20 hover:border-violet-500/45",
+                        purple: "border-purple-500/25 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 hover:border-purple-500/45",
+                        yellow: "border-yellow-500/25 bg-yellow-500/10 text-yellow-300 hover:bg-yellow-500/20 hover:border-yellow-500/45",
+                        pink: "border-pink-500/25 bg-pink-500/10 text-pink-300 hover:bg-pink-500/20 hover:border-pink-500/45",
+                        blue: "border-blue-500/25 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 hover:border-blue-500/45",
+                        teal: "border-teal-500/25 bg-teal-500/10 text-teal-300 hover:bg-teal-500/20 hover:border-teal-500/45"
+                      };
+                      const colorClass = colorMap[item.color] || "border-white/10 bg-white/5 text-slate-300 hover:bg-arandu-blue/10 hover:border-arandu-blue/40";
+                      return (
+                        <button key={item.path} onClick={() => navigate(item.path)}
+                          className={`border rounded-xl p-3 flex flex-col items-center gap-2 hover:text-white transition-all min-h-[92px] ${colorClass}`}>
+                          <Icon className="w-6 h-6" />
+                          <span className="font-body text-xs font-medium text-center leading-tight">{item.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </main>

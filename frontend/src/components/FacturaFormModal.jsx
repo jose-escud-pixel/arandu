@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { X, Save, Plus, Trash2, FileText } from "lucide-react";
+import { X, Save, Plus, Trash2, FileText, Package } from "lucide-react";
 import { toast } from "sonner";
 
 const FacturaFormModal = ({
@@ -12,11 +12,17 @@ const FacturaFormModal = ({
   presupuestosDisp,  // todos los presupuestos disponibles
   activeEmpresaPropia,
   hasPermission,
+  productos = [],
+  productosHabilitados = false,
   cuentasDisp = [],  // cuentas bancarias disponibles
 }) => {
   const isEdit = !!factura;
 
-  const defaultConcepto = () => ({ descripcion: "", cantidad: 1, precio_unitario: 0, subtotal: 0 });
+  const canModoLibre = hasPermission?.("facturas.modo_libre");
+  const canCambiarAfectaStock = hasPermission?.("facturas.afectar_stock");
+  const defaultModo = productosHabilitados ? (canModoLibre ? "libre" : "productos") : "libre";
+
+  const defaultConcepto = () => ({ descripcion: "", cantidad: 1, precio_unitario: 0, subtotal: 0, producto_id: "" });
 
   const logoTipo = activeEmpresaPropia?.slug || "arandujar";
 
@@ -35,6 +41,8 @@ const FacturaFormModal = ({
     cuenta_nombre: "",
     presupuesto_ids: [],
     notas: "",
+    modo: defaultModo,
+    afecta_stock: !!productosHabilitados,
     conceptos: [defaultConcepto()],
     // internal — no se envía al backend
     _empresa_id: "",
@@ -81,7 +89,9 @@ const FacturaFormModal = ({
         empresa_id:         empIdFinal,
         empresa_nombre:     empData?.nombre || factura.empresa_nombre || "",
         concepto:           factura.concepto || "",
-        conceptos:          conceptosFromFac,
+        conceptos:          conceptosFromFac.map(c => ({ ...c, producto_id: c.producto_id || "" })),
+        modo:               productosHabilitados ? (factura.modo || (conceptosFromFac.some(c => c.producto_id) ? "productos" : "libre")) : "libre",
+        afecta_stock:       productosHabilitados ? (canCambiarAfectaStock ? factura.afecta_stock !== false : true) : false,
         monto:              factura.monto ?? "",
         moneda:             factura.moneda || "PYG",
         tipo_cambio:        factura.tipo_cambio ?? "",
@@ -131,6 +141,29 @@ const FacturaFormModal = ({
     });
   };
 
+  const selectProductoForConcepto = (idx, productoId) => {
+    const prod = productos.find(p => String(p.id) === String(productoId));
+    if (!prod) {
+      handleConceptoChange(idx, "producto_id", "");
+      return;
+    }
+    setForm(prev => {
+      const conceptos = (prev.conceptos || []).map((c, i) => {
+        if (i !== idx) return c;
+        const precio = Number(prod.precio_venta ?? prod.precio ?? c.precio_unitario ?? 0) || 0;
+        const cantidad = Number(c.cantidad || 1) || 1;
+        return {
+          ...c,
+          producto_id: prod.id,
+          descripcion: prod.nombre || c.descripcion,
+          precio_unitario: precio,
+          subtotal: cantidad * precio,
+        };
+      });
+      return { ...prev, conceptos };
+    });
+  };
+
   // Total derivado
   const totalMonto = useMemo(() => {
     return (form.conceptos || []).reduce((s, c) => s + (Number(c.subtotal) || 0), 0);
@@ -173,16 +206,83 @@ const FacturaFormModal = ({
     return list;
   }, [presupuestosDisp, form._empresa_id]);
 
+  const conceptosVacios = (conceptos = []) => {
+    const validos = conceptos.filter(c =>
+      c.descripcion || Number(c.cantidad) > 1 || Number(c.precio_unitario) > 0 || Number(c.subtotal) > 0 || c.producto_id
+    );
+    return validos.length === 0;
+  };
+
+  const mapPresupuestoItemsToConceptos = (presupuestos = []) => {
+    return presupuestos.flatMap(p =>
+      (p.items || []).map(item => {
+        const cantidad = Number(item.cantidad || 1) || 1;
+        const precio = Number(item.precio_unitario ?? item.precio ?? 0) || 0;
+        const subtotal = Number(item.subtotal) || cantidad * precio;
+        return {
+          descripcion: item.descripcion || "",
+          cantidad,
+          precio_unitario: precio,
+          subtotal,
+          producto_id: item.producto_id || "",
+        };
+      }).filter(item => item.descripcion && item.precio_unitario > 0)
+    );
+  };
+
+  const applyPresupuestosToForm = (prev, presupuestos) => {
+    const presupuestosConItems = presupuestos.filter(p => (p.items || []).length > 0);
+    if (presupuestosConItems.length === 0) return prev;
+
+    const conceptos = mapPresupuestoItemsToConceptos(presupuestosConItems);
+    if (conceptos.length === 0) return prev;
+
+    const primero = presupuestosConItems[0];
+    const tieneProductos = conceptos.some(c => c.producto_id);
+    return {
+      ...prev,
+      forma_pago: primero.forma_pago || prev.forma_pago,
+      moneda: primero.moneda || prev.moneda,
+      tipo_cambio: primero.tipo_cambio ?? prev.tipo_cambio,
+      modo: productosHabilitados && tieneProductos ? "productos" : prev.modo,
+      afecta_stock: productosHabilitados && tieneProductos ? true : prev.afecta_stock,
+      conceptos,
+    };
+  };
+
   const togglePresupuesto = (id) => {
+    const presupuesto = presupuestosDisp.find(p => String(p.id) === String(id));
     setForm(prev => {
       const yaEsta = prev.presupuesto_ids.includes(id);
-      return {
+      const next = {
         ...prev,
         presupuesto_ids: yaEsta
           ? prev.presupuesto_ids.filter(x => x !== id)
           : [...prev.presupuesto_ids, id],
       };
+      if (!yaEsta && presupuesto && conceptosVacios(prev.conceptos)) {
+        return applyPresupuestosToForm(next, [presupuesto]);
+      }
+      return next;
     });
+  };
+
+  const cargarItemsPresupuestos = () => {
+    const seleccionados = presupuestosDisp.filter(p => form.presupuesto_ids.includes(p.id));
+    if (seleccionados.length === 0) {
+      toast.error("Primero vinculá al menos un presupuesto");
+      return;
+    }
+    const conceptos = mapPresupuestoItemsToConceptos(seleccionados);
+    if (conceptos.length === 0) {
+      toast.error("El presupuesto vinculado no tiene ítems para cargar");
+      return;
+    }
+    if (!conceptosVacios(form.conceptos) && !window.confirm("Esto reemplazará los ítems actuales de la factura. ¿Continuar?")) {
+      return;
+    }
+    setForm(prev => applyPresupuestosToForm(prev, seleccionados));
+    toast.success("Ítems del presupuesto cargados en la factura");
   };
 
   // Submit
@@ -198,17 +298,21 @@ const FacturaFormModal = ({
       toast.error("Agregá al menos un ítem con descripción, cantidad y precio");
       return;
     }
-    if (form.moneda === "USD" && (!form.tipo_cambio || parseFloat(form.tipo_cambio) <= 0)) {
-      toast.error("Falta el tipo de cambio para una factura en USD");
-      return;
-    }
     if (form.estado === "pagada" && !form.cuenta_id) {
       toast.error("Si la factura está pagada, indicá en qué cuenta entró la plata");
+      return;
+    }
+    const cuentaSeleccionada = cuentasDisp.find(c => String(c.id) === String(form.cuenta_id));
+    const monedaCuenta = cuentaSeleccionada?.moneda || form.moneda || "PYG";
+    const requiereConversion = form.estado === "pagada" && form.cuenta_id && monedaCuenta !== form.moneda;
+    if (requiereConversion && (!form.tipo_cambio || parseFloat(form.tipo_cambio) <= 0)) {
+      toast.error("Falta el tipo de cambio porque la cuenta seleccionada usa otra moneda");
       return;
     }
 
     const conceptosOut = conceptosValidos.map(c => ({
       descripcion: c.descripcion,
+      producto_id: form.modo === "productos" ? (c.producto_id || null) : null,
       cantidad: parseFloat(c.cantidad) || 1,
       precio_unitario: parseFloat(c.precio_unitario) || 0,
       subtotal: (parseFloat(c.cantidad) || 1) * (parseFloat(c.precio_unitario) || 0),
@@ -230,6 +334,8 @@ const FacturaFormModal = ({
       empresa_nombre: form.empresa_nombre || null,
       concepto: conceptoTexto,
       conceptos: conceptosOut,
+      modo: productosHabilitados ? form.modo : "libre",
+      afecta_stock: productosHabilitados && form.modo === "productos" ? (canCambiarAfectaStock ? !!form.afecta_stock : true) : false,
       monto: montoTotal,
       moneda: form.moneda || "PYG",
       tipo_cambio: form.tipo_cambio !== "" && form.tipo_cambio != null ? Number(form.tipo_cambio) : null,
@@ -301,7 +407,8 @@ const FacturaFormModal = ({
             </div>
           </div>
           <button
-            onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+            type="button"
+            onClick={onClose}
             className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
           >
             <X className="w-5 h-5" />
@@ -521,6 +628,38 @@ const FacturaFormModal = ({
               </button>
             </div>
 
+            {productosHabilitados && (
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                {canModoLibre && (
+                  <button
+                    type="button"
+                    onClick={() => setForm(prev => ({ ...prev, modo: "libre", afecta_stock: false }))}
+                    className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${form.modo === "libre" ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-500 border-gray-200 hover:border-blue-300"}`}
+                  >
+                    Libre
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setForm(prev => ({ ...prev, modo: "productos", afecta_stock: true }))}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${form.modo === "productos" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-gray-500 border-gray-200 hover:border-emerald-300"}`}
+                >
+                  Catálogo
+                </button>
+                {form.modo === "productos" && (
+                  <button
+                    type="button"
+                    onClick={() => canCambiarAfectaStock && setForm(prev => ({ ...prev, afecta_stock: !prev.afecta_stock }))}
+                    disabled={!canCambiarAfectaStock}
+                    className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${form.afecta_stock ? "bg-amber-500 text-white border-amber-500" : "bg-white text-gray-500 border-gray-200 hover:border-amber-300"}`}
+                    title={canCambiarAfectaStock ? "Cambiar afectación de stock" : "Siempre afecta stock con catálogo"}
+                  >
+                    {form.afecta_stock ? "Afecta stock" : "No afecta stock"}
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="space-y-2">
               {/* Header */}
               <div className="grid grid-cols-12 gap-2 text-xs font-semibold text-gray-400 px-1">
@@ -534,6 +673,20 @@ const FacturaFormModal = ({
               {form.conceptos.map((c, idx) => (
                 <div key={idx} className="grid grid-cols-12 gap-2 items-center">
                   <div className="col-span-6">
+                    {productosHabilitados && form.modo === "productos" && (
+                      <select
+                        className={inputCls + " mb-1"}
+                        value={c.producto_id || ""}
+                        onChange={(e) => selectProductoForConcepto(idx, e.target.value)}
+                      >
+                        <option value="">Seleccionar producto...</option>
+                        {productos.filter(p => p.activo !== false).map(p => (
+                          <option key={p.id} value={p.id}>
+                            {p.nombre}{p.sku ? ` (${p.sku})` : ""} - stock: {p.stock_actual ?? p.stock ?? 0}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                     <input
                       className={inputCls}
                       value={c.descripcion}
@@ -624,9 +777,19 @@ const FacturaFormModal = ({
                 })}
               </div>
               {form.presupuesto_ids.length > 0 && (
-                <p className="text-xs text-blue-500 mt-2">
-                  {form.presupuesto_ids.length} presupuesto(s) vinculado(s)
-                </p>
+                <div className="flex flex-wrap items-center gap-2 mt-2">
+                  <p className="text-xs text-blue-500">
+                    {form.presupuesto_ids.length} presupuesto(s) vinculado(s)
+                  </p>
+                  <button
+                    type="button"
+                    onClick={cargarItemsPresupuestos}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 text-xs font-semibold transition-colors"
+                  >
+                    <Package className="w-3.5 h-3.5" />
+                    Cargar ítems del presupuesto
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -647,7 +810,8 @@ const FacturaFormModal = ({
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
           <button
-            onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+            type="button"
+            onClick={onClose}
             className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-200 rounded-lg transition-colors"
           >
             Cancelar

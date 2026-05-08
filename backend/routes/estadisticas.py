@@ -7,6 +7,212 @@ from auth import require_admin, require_authenticated, has_permission, apply_log
 router = APIRouter()
 
 
+def _period_query(field: str, periodo_tipo: str = "todos", mes: Optional[str] = None, anio: Optional[str] = None) -> dict:
+    if periodo_tipo == "mes" and mes:
+        return {field: {"$regex": f"^{mes}"}}
+    if periodo_tipo == "anio" and anio:
+        return {field: {"$regex": f"^{anio}"}}
+    return {}
+
+
+def _period_or_query(fields: list, periodo_tipo: str = "todos", mes: Optional[str] = None, anio: Optional[str] = None) -> dict:
+    prefix = mes if periodo_tipo == "mes" else anio if periodo_tipo == "anio" else None
+    if not prefix:
+        return {}
+    return {"$or": [{field: {"$regex": f"^{prefix}"}} for field in fields]}
+
+
+def _to_pyg(monto, moneda="PYG", tipo_cambio=None):
+    try:
+        monto = float(monto or 0)
+    except (TypeError, ValueError):
+        return 0
+    if (moneda or "PYG") == "PYG":
+        return monto
+    try:
+        tc = float(tipo_cambio or 0)
+    except (TypeError, ValueError):
+        tc = 0
+    return monto * tc if tc > 0 else 0
+
+
+def _sum_pyg(docs, field="monto", moneda_field="moneda", tc_field="tipo_cambio"):
+    return round(sum(_to_pyg(d.get(field), d.get(moneda_field, "PYG"), d.get(tc_field)) for d in docs))
+
+
+def _sum_usd_without_tc(docs, field="monto", moneda_field="moneda", tc_field="tipo_cambio"):
+    total = 0
+    for d in docs:
+        if (d.get(moneda_field) or "PYG") != "USD":
+            continue
+        try:
+            tc = float(d.get(tc_field) or 0)
+        except (TypeError, ValueError):
+            tc = 0
+        if tc <= 0:
+            total += float(d.get(field) or 0)
+    return round(total, 2)
+
+
+async def _docs(col, query, projection=None, limit=5000, sort_field=None):
+    cursor = col.find(query, projection or {"_id": 0})
+    if sort_field:
+        cursor = cursor.sort(sort_field, -1)
+    return await cursor.to_list(limit)
+
+
+@router.get("/admin/dashboard/resumen")
+async def get_dashboard_resumen(
+    periodo_tipo: str = "todos",
+    mes: Optional[str] = None,
+    anio: Optional[str] = None,
+    logo_tipo: Optional[str] = None,
+    user: dict = Depends(require_authenticated),
+):
+    """Resumen compacto para el panel principal."""
+    logo_q: dict = {}
+    await apply_logo_filter(logo_q, user, logo_tipo)
+    if is_forbidden(logo_q):
+        logo_q = {"id": "__forbidden__"}
+
+    emp_query = dict(logo_q)
+    clientes_total = await db.empresas.count_documents(emp_query)
+
+    msg_q = _period_query("created_at", periodo_tipo, mes, anio)
+    mensajes_total = await db.contact_messages.count_documents(msg_q) if user.get("role") == "admin" else 0
+    mensajes_sin_leer = await db.contact_messages.count_documents({**msg_q, "read": False}) if user.get("role") == "admin" else 0
+
+    per_fecha = _period_query("fecha", periodo_tipo, mes, anio)
+    per_fecha_pago = _period_query("fecha_pago", periodo_tipo, mes, anio)
+    per_periodo = _period_query("periodo", periodo_tipo, mes, anio)
+    per_periodo_iva = _period_query("periodo_iva", periodo_tipo, mes, anio)
+
+    presupuestos = await _docs(db.presupuestos, {**logo_q, **per_fecha}, {"_id": 0, "estado": 1, "total": 1, "moneda": 1, "tipo_cambio": 1})
+    pres_estados = {}
+    for p in presupuestos:
+        estado = p.get("estado") or "borrador"
+        pres_estados[estado] = pres_estados.get(estado, 0) + 1
+
+    facturas = await _docs(db.facturas, {**logo_q, **per_fecha, "tipo": "emitida", "estado": {"$ne": "anulada"}}, {"_id": 0, "estado": 1, "monto": 1, "monto_pagado": 1, "moneda": 1, "tipo_cambio": 1, "pagos": 1})
+    fact_pagado = 0
+    fact_pendiente = 0
+    for f in facturas:
+        pagos = f.get("pagos") or []
+        pagado = sum(_to_pyg(p.get("monto") or p.get("monto_pagado"), f.get("moneda", "PYG"), p.get("tipo_cambio") or f.get("tipo_cambio")) for p in pagos)
+        if not pagado:
+            pagado = _to_pyg(f.get("monto_pagado"), f.get("moneda", "PYG"), f.get("tipo_cambio"))
+        if not pagado and f.get("estado") == "pagada":
+            pagado = _to_pyg(f.get("monto"), f.get("moneda", "PYG"), f.get("tipo_cambio"))
+        fact_pagado += pagado
+        if f.get("estado") == "pendiente":
+            fact_pendiente += _to_pyg(f.get("monto"), f.get("moneda", "PYG"), f.get("tipo_cambio"))
+        elif f.get("estado") == "parcial":
+            fact_pendiente += max(0, _to_pyg(f.get("monto"), f.get("moneda", "PYG"), f.get("tipo_cambio")) - pagado)
+    fact_total = _sum_pyg(facturas, "monto")
+
+    ingresos = await _docs(db.ingresos_varios, {**logo_q, **per_fecha, "categoria": {"$ne": "Pago IVA"}}, {"_id": 0, "monto": 1, "moneda": 1, "tipo_cambio": 1})
+    recibos = await _docs(db.recibos, {**logo_q, **per_fecha_pago}, {"_id": 0, "monto": 1, "moneda": 1, "tipo_cambio": 1})
+
+    compras = await _docs(db.compras, {**logo_q, **per_fecha}, {"_id": 0, "monto_total": 1, "moneda": 1, "tipo_cambio": 1, "tipo_pago": 1, "pagos": 1, "fecha_vencimiento": 1})
+    compras_total = _sum_pyg(compras, "monto_total")
+    compras_total_usd = _sum_usd_without_tc(compras, "monto_total")
+    compras_contado = [c for c in compras if (c.get("tipo_pago") or "contado") == "contado"]
+    compras_credito = [c for c in compras if c.get("tipo_pago") == "credito"]
+    compras_pagado = _sum_pyg(compras_contado, "monto_total")
+    compras_pendiente = 0
+    compras_pendiente_usd = 0
+    for c in compras_credito:
+        pagado = sum(p.get("monto_pagado", 0) or 0 for p in c.get("pagos", []))
+        saldo = max(0, (c.get("monto_total") or 0) - pagado)
+        saldo_pyg = _to_pyg(saldo, c.get("moneda", "PYG"), c.get("tipo_cambio"))
+        compras_pendiente += saldo_pyg
+        if (c.get("moneda") or "PYG") == "USD" and not saldo_pyg:
+            compras_pendiente_usd += saldo
+
+    pagos_prov = await _docs(db.pagos_proveedores, {**logo_q, **_period_or_query(["fecha_pago", "fecha_vencimiento"], periodo_tipo, mes, anio)}, {"_id": 0, "monto": 1, "monto_gs": 1, "moneda": 1, "tipo_cambio": 1, "estado": 1, "fecha_pago": 1})
+    prov_pagado = round(sum((p.get("monto_gs") if p.get("monto_gs") is not None else _to_pyg(p.get("monto"), p.get("moneda", "PYG"), p.get("tipo_cambio"))) for p in pagos_prov if p.get("fecha_pago") or p.get("estado") == "pagado"))
+    prov_pendiente = round(sum((p.get("monto_gs") if p.get("monto_gs") is not None else _to_pyg(p.get("monto"), p.get("moneda", "PYG"), p.get("tipo_cambio"))) for p in pagos_prov if not p.get("fecha_pago") and p.get("estado") != "pagado"))
+
+    sueldo_query = dict(per_periodo)
+    if logo_q.get("logo_tipo"):
+        emp_ids = [e["id"] for e in await db.empleados.find({"logo_tipo": logo_q["logo_tipo"]}, {"_id": 0, "id": 1}).to_list(1000)]
+        sueldo_query["empleado_id"] = {"$in": emp_ids}
+    sueldos = await _docs(db.sueldos, sueldo_query, {"_id": 0, "monto_pagado": 1, "total_extras": 1, "total_adelantos": 1, "descuento_ips": 1, "descuentos_adicionales": 1, "moneda": 1, "tipo_cambio": 1})
+    sueldos_total = _sum_pyg(sueldos, "monto_pagado")
+    sueldos_extras = _sum_pyg(sueldos, "total_extras")
+    sueldos_adelantos = _sum_pyg(sueldos, "total_adelantos")
+    sueldos_descuentos = round(sum((s.get("descuento_ips") or 0) + (s.get("descuentos_adicionales") or 0) for s in sueldos))
+
+    notas = await _docs(db.notas_credito, {**logo_q, **per_fecha, "estado": {"$ne": "anulada"}}, {"_id": 0, "tipo": 1, "monto": 1, "monto_pyg": 1, "moneda": 1, "tipo_cambio": 1})
+    notas_venta = [n for n in notas if (n.get("tipo") or "venta") == "venta"]
+    notas_compra = [n for n in notas if n.get("tipo") == "compra"]
+    notas_total = round(sum(n.get("monto_pyg") if n.get("monto_pyg") is not None else _to_pyg(n.get("monto"), n.get("moneda", "PYG"), n.get("tipo_cambio")) for n in notas))
+
+    costos_query = dict(logo_q)
+    costos_ids = [c["id"] for c in await db.costos_fijos.find(costos_query, {"_id": 0, "id": 1}).to_list(5000)]
+    pagos_costos_q = dict(per_periodo)
+    if costos_ids:
+        pagos_costos_q["costo_fijo_id"] = {"$in": costos_ids}
+    elif logo_q:
+        pagos_costos_q["costo_fijo_id"] = "__sin_costos__"
+    pagos_costos = await _docs(db.pagos_costos_fijos, pagos_costos_q, {"_id": 0, "monto_pagado": 1, "moneda": 1, "tipo_cambio": 1})
+    gastos_pagados = _sum_pyg(pagos_costos, "monto_pagado")
+    gastos_count = len(pagos_costos)
+
+    pagos_iva = await _docs(db.pagos_iva, {**logo_q, **per_periodo_iva}, {"_id": 0, "monto": 1})
+    iva_pagado = round(sum(p.get("monto") or 0 for p in pagos_iva))
+    iva_mes = mes or ""
+    iva_resumen = {"a_pagar": 0, "pagado": iva_pagado, "saldo": 0}
+    from routes.balance import _calc_iva_periodo
+    if periodo_tipo == "mes" and iva_mes:
+        iva_calc = await _calc_iva_periodo(iva_mes, logo_tipo)
+        iva_resumen["a_pagar"] = round(max(0, iva_calc.get("neto", 0)))
+        iva_resumen["saldo"] = round(iva_calc.get("neto", 0) - iva_calc.get("pagos_iva", 0))
+    elif periodo_tipo == "anio" and anio:
+        total_neto = 0
+        total_pagos = 0
+        for i in range(1, 13):
+            r = await _calc_iva_periodo(f"{anio}-{i:02d}", logo_tipo)
+            total_neto += r.get("neto", 0)
+            total_pagos += r.get("pagos_iva", 0)
+        iva_resumen = {"a_pagar": round(max(0, total_neto)), "pagado": round(total_pagos), "saldo": round(total_neto - total_pagos)}
+    elif periodo_tipo == "todos":
+        periods = set()
+        for col, field, extra in [
+            (db.facturas, "fecha", {"tipo": "emitida", "estado": {"$ne": "anulada"}}),
+            (db.compras, "fecha", {"tiene_factura": True}),
+            (db.pagos_iva, "periodo_iva", {}),
+            (db.notas_credito, "fecha", {"estado": {"$ne": "anulada"}}),
+        ]:
+            vals = await col.distinct(field, {**logo_q, **extra})
+            for v in vals:
+                if isinstance(v, str) and len(v) >= 7:
+                    periods.add(v[:7])
+        total_neto = 0
+        total_pagos = 0
+        for periodo in sorted(periods):
+            r = await _calc_iva_periodo(periodo, logo_tipo)
+            total_neto += r.get("neto", 0)
+            total_pagos += r.get("pagos_iva", 0)
+        iva_resumen = {"a_pagar": round(max(0, total_neto)), "pagado": round(total_pagos), "saldo": round(total_neto - total_pagos)}
+
+    return {
+        "periodo_tipo": periodo_tipo,
+        "mensajes": {"total": mensajes_total, "sin_leer": mensajes_sin_leer},
+        "clientes": {"total": clientes_total},
+        "presupuestos": {"total": len(presupuestos), "aprobados": pres_estados.get("aprobado", 0), "rechazados": pres_estados.get("rechazado", 0), "cobrados": pres_estados.get("cobrado", 0), "faltantes": pres_estados.get("facturado", 0) + pres_estados.get("aprobado", 0)},
+        "facturacion": {"cantidad": len(facturas), "total": fact_total, "cobrado": round(fact_pagado), "pendiente": round(max(0, fact_pendiente))},
+        "ingresos": {"cantidad": len(ingresos), "total": _sum_pyg(ingresos, "monto")},
+        "recibos": {"cantidad": len(recibos), "total": _sum_pyg(recibos, "monto")},
+        "compras": {"cantidad": len(compras), "total": compras_total, "total_usd": compras_total_usd, "contado": len(compras_contado), "credito": len(compras_credito), "pagado": compras_pagado, "pendiente": round(compras_pendiente), "pendiente_usd": round(compras_pendiente_usd, 2)},
+        "proveedores": {"pagado": prov_pagado, "pendiente": prov_pendiente, "pagos": len(pagos_prov)},
+        "sueldos": {"cantidad": len(sueldos), "total": sueldos_total, "extras": sueldos_extras, "adelantos": sueldos_adelantos, "descuentos": sueldos_descuentos},
+        "notas_credito": {"cantidad": len(notas), "total": notas_total, "ventas": len(notas_venta), "compras": len(notas_compra)},
+        "gastos": {"cantidad": gastos_count, "pagado": gastos_pagados},
+        "iva": iva_resumen,
+    }
+
+
 @router.get("/admin/stats")
 async def get_stats(logo_tipo: Optional[str] = None, user: dict = Depends(require_authenticated)):
     emp_query: dict = {}
@@ -173,12 +379,18 @@ async def get_proveedor_stats(admin: dict = Depends(require_admin)):
 @router.get("/admin/auditoria")
 async def get_auditoria(
     modulo: Optional[str] = None, usuario_id: Optional[str] = None,
-    limit: int = 100, admin: dict = Depends(require_admin)
+    limit: int = 100, admin: dict = Depends(require_authenticated)
 ):
+    if admin.get("role") != "admin" and not has_permission(admin, "auditoria.ver"):
+        raise HTTPException(status_code=403, detail="No tiene permiso: auditoria.ver")
     query = {}
     if modulo:
         query["modulo"] = modulo
     if usuario_id:
         query["usuario_id"] = usuario_id
+    elif admin.get("role") != "admin":
+        logos = list(map(str, admin.get("logos_asignados", []) or []))
+        users = await db.users.find({"logos_asignados": {"$in": logos}}, {"_id": 0, "id": 1}).to_list(500)
+        query["usuario_id"] = {"$in": [u["id"] for u in users] or ["__none__"]}
     logs = await db.auditoria.find(query, {"_id": 0}).sort("fecha", -1).to_list(limit)
     return logs
