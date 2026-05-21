@@ -55,7 +55,11 @@ const nextMes = (m) => {
   return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`;
 };
 const fmtPYG = (n) => `₲ ${Math.round(Number(n || 0)).toLocaleString("es-PY")}`;
-const fmtUSD = (n) => `$ ${Number(n || 0).toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtUSD = (n) => `USD ${Number(n || 0).toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmtMixed = (pyg, usd) => {
+  const usdNum = Number(usd || 0);
+  return `${fmtPYG(pyg)}${usdNum ? ` / ${fmtUSD(usdNum)}` : ""}`;
+};
 const mesLabel = (m) => {
   if (!m) return "";
   const d = new Date(`${m}-02T00:00:00`);
@@ -483,15 +487,15 @@ const AdminDashboard = () => {
               { perm: user?.role === "admin", title: "Mensajes", icon: MessageSquare, color: "text-blue-400", value: resumen?.mensajes?.total || 0, lines: [`Sin leer: ${resumen?.mensajes?.sin_leer || 0}`] },
               { perm: hasPermission("empresas.ver"), title: "Clientes", icon: Building2, color: "text-purple-400", value: resumen?.clientes?.total || 0, lines: ["clientes registrados"] },
               { perm: hasPermission("presupuestos.ver"), title: "Presupuestos", icon: FileText, color: "text-green-400", value: resumen?.presupuestos?.total || 0, lines: [`Aprobados: ${resumen?.presupuestos?.aprobados || 0}`, `Rechazados: ${resumen?.presupuestos?.rechazados || 0}`, `Cobrados: ${resumen?.presupuestos?.cobrados || 0}`, `Faltantes: ${resumen?.presupuestos?.faltantes || 0}`] },
-              { perm: hasPermission("facturas.ver"), title: "Facturación", icon: Receipt, color: "text-cyan-400", value: fmtPYG(resumen?.facturacion?.total), lines: [`Facturas: ${resumen?.facturacion?.cantidad || 0}`, `Cobrado: ${fmtPYG(resumen?.facturacion?.cobrado)}`, `Pendiente: ${fmtPYG(resumen?.facturacion?.pendiente)}`] },
-              { perm: hasPermission("ingresos_varios.ver"), title: "Ingresos", icon: TrendingUp, color: "text-emerald-400", value: fmtPYG(resumen?.ingresos?.total), lines: [`Registros: ${resumen?.ingresos?.cantidad || 0}`] },
-              { perm: hasPermission("compras.ver"), title: "Compras", icon: ShoppingBag, color: "text-orange-400", value: fmtPYG(resumen?.compras?.total), lines: [`Contado: ${resumen?.compras?.contado || 0}`, `Crédito: ${resumen?.compras?.credito || 0}`, `Pendiente: ${fmtPYG(resumen?.compras?.pendiente)}${resumen?.compras?.pendiente_usd ? ` / ${fmtUSD(resumen.compras.pendiente_usd)}` : ""}`, ...(resumen?.compras?.total_usd ? [`USD sin TC: ${fmtUSD(resumen.compras.total_usd)}`] : [])] },
-              { perm: hasPermission("proveedores.ver"), title: "Proveedores", icon: Truck, color: "text-amber-400", value: fmtPYG(resumen?.proveedores?.pagado), lines: [`Pagos: ${resumen?.proveedores?.pagos || 0}`, `Debe: ${fmtPYG(resumen?.proveedores?.pendiente)}`] },
-              { perm: hasPermission("empleados.ver"), title: "Sueldos", icon: Users, color: "text-pink-400", value: fmtPYG(resumen?.sueldos?.total), lines: [`Extras: ${fmtPYG(resumen?.sueldos?.extras)}`, `Adelantos: ${fmtPYG(resumen?.sueldos?.adelantos)}`, `Descuentos: ${fmtPYG(resumen?.sueldos?.descuentos)}`] },
-              { perm: hasPermission("notas_credito.ver"), title: "Notas crédito", icon: AlertCircle, color: "text-rose-400", value: fmtPYG(resumen?.notas_credito?.total), lines: [`Ventas: ${resumen?.notas_credito?.ventas || 0}`, `Compras: ${resumen?.notas_credito?.compras || 0}`] },
-              { perm: hasPermission("recibos.ver"), title: "Recibos", icon: DollarSign, color: "text-lime-400", value: fmtPYG(resumen?.recibos?.total), lines: [`Recibos: ${resumen?.recibos?.cantidad || 0}`] },
-              { perm: hasPermission("costos_fijos.ver"), title: "Gastos", icon: DollarSign, color: "text-red-400", value: fmtPYG(resumen?.gastos?.pagado), lines: [`Pagos registrados: ${resumen?.gastos?.cantidad || 0}`] },
-              { perm: hasPermission("balance.ver"), title: "IVA", icon: Scale, color: "text-violet-400", value: fmtPYG(resumen?.iva?.saldo), lines: [`A pagar: ${fmtPYG(resumen?.iva?.a_pagar)}`, `Pagado: ${fmtPYG(resumen?.iva?.pagado)}`] },
+              { perm: hasPermission("facturas.ver"), title: "Facturación", icon: Receipt, color: "text-cyan-400", value: fmtMixed(resumen?.facturacion?.total, resumen?.facturacion?.total_usd), lines: [`Facturas: ${resumen?.facturacion?.cantidad || 0}`, `Cobrado: ${fmtMixed(resumen?.facturacion?.cobrado, resumen?.facturacion?.cobrado_usd)}`, `Pendiente: ${fmtMixed(resumen?.facturacion?.pendiente, resumen?.facturacion?.pendiente_usd)}`] },
+              { perm: hasPermission("ingresos_varios.ver"), title: "Ingresos", icon: TrendingUp, color: "text-emerald-400", value: fmtMixed(resumen?.ingresos?.total, resumen?.ingresos?.total_usd), lines: [`Registros: ${resumen?.ingresos?.cantidad || 0}`] },
+              { perm: hasPermission("compras.ver"), title: "Compras", icon: ShoppingBag, color: "text-orange-400", value: fmtMixed(resumen?.compras?.total, resumen?.compras?.total_usd), lines: [`Contado: ${resumen?.compras?.contado || 0}`, `Crédito: ${resumen?.compras?.credito || 0}`, `Pendiente: ${fmtMixed(resumen?.compras?.pendiente, resumen?.compras?.pendiente_usd)}`] },
+              { perm: hasPermission("proveedores.ver"), title: "Proveedores", icon: Truck, color: "text-amber-400", value: fmtMixed(resumen?.proveedores?.pagado, resumen?.proveedores?.pagado_usd), lines: [`Pagos: ${resumen?.proveedores?.pagos || 0}`, `Debe: ${fmtMixed(resumen?.proveedores?.pendiente, resumen?.proveedores?.pendiente_usd)}`] },
+              { perm: hasPermission("empleados.ver"), title: "Sueldos", icon: Users, color: "text-pink-400", value: fmtMixed(resumen?.sueldos?.total, resumen?.sueldos?.total_usd), lines: [`Extras: ${fmtMixed(resumen?.sueldos?.extras, resumen?.sueldos?.extras_usd)}`, `Adelantos: ${fmtMixed(resumen?.sueldos?.adelantos, resumen?.sueldos?.adelantos_usd)}`, `Descuentos: ${fmtPYG(resumen?.sueldos?.descuentos)}`] },
+              { perm: hasPermission("notas_credito.ver"), title: "Notas crédito", icon: AlertCircle, color: "text-rose-400", value: fmtMixed(resumen?.notas_credito?.total, resumen?.notas_credito?.total_usd), lines: [`Ventas: ${resumen?.notas_credito?.ventas || 0}`, `Compras: ${resumen?.notas_credito?.compras || 0}`] },
+              { perm: hasPermission("recibos.ver"), title: "Recibos", icon: DollarSign, color: "text-lime-400", value: fmtMixed(resumen?.recibos?.total, resumen?.recibos?.total_usd), lines: [`Recibos: ${resumen?.recibos?.cantidad || 0}`] },
+              { perm: hasPermission("costos_fijos.ver"), title: "Gastos", icon: DollarSign, color: "text-red-400", value: fmtMixed(resumen?.gastos?.pagado, resumen?.gastos?.pagado_usd), lines: [`Pagos registrados: ${resumen?.gastos?.cantidad || 0}`] },
+              { perm: hasPermission("balance.ver"), title: "IVA", icon: Scale, color: "text-violet-400", value: fmtMixed(resumen?.iva?.saldo, resumen?.iva?.saldo_usd), lines: [`A pagar: ${fmtMixed(resumen?.iva?.a_pagar, resumen?.iva?.a_pagar_usd)}`, `Pagado: ${fmtPYG(resumen?.iva?.pagado)}`] },
             ].filter(card => card.perm).map((card, i) => {
               const Icon = card.icon;
               return (
@@ -501,7 +505,7 @@ const AdminDashboard = () => {
                     <p className="text-slate-400 text-sm font-body">{card.title}</p>
                     <Icon className={`w-5 h-5 ${card.color}`} />
                   </div>
-                  <p className={`font-heading font-bold text-2xl ${card.color}`}>{card.value}</p>
+                  <p className={`font-heading font-bold text-xl leading-snug break-words ${card.color}`}>{card.value}</p>
                   <div className="mt-2 space-y-0.5">
                     {card.lines.map(line => <p key={line} className="text-slate-500 text-xs">{line}</p>)}
                   </div>

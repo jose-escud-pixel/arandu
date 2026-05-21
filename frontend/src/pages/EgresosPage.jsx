@@ -24,6 +24,27 @@ const fmt = (n, moneda = "PYG") => {
 
 const fmtPYG = (n) => fmt(n, "PYG");
 
+const ivaSaldoTexto = (monto) => {
+  const n = Number(monto || 0);
+  if (n > 0) return `${fmtPYG(n)} a pagar`;
+  if (n < 0) return `${fmtPYG(Math.abs(n))} a favor`;
+  return "₲ 0 al día";
+};
+
+const fmtMixedAmounts = (items, field = "monto") => {
+  const pyg = items.reduce((s, x) => {
+    const monto = Number(x[field] || 0);
+    if ((x.moneda || "PYG") === "PYG") return s + monto;
+    const tc = Number(x.tipo_cambio || 0);
+    return s + (tc > 0 ? monto * tc : 0);
+  }, 0);
+  const usd = items.reduce((s, x) => {
+    if ((x.moneda || "PYG") !== "USD" || Number(x.tipo_cambio || 0) > 0) return s;
+    return s + Number(x[field] || 0);
+  }, 0);
+  return `${fmt(pyg)}${usd ? ` / USD ${usd.toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ""}`;
+};
+
 const hoy = () => new Date().toISOString().slice(0, 10);
 const mesActual = () => new Date().toISOString().slice(0, 7);
 
@@ -48,10 +69,13 @@ const emptyCompra = () => ({
   logo_tipo: "arandujar",
   proveedor_id: "",
   proveedor_nombre: "",
+  proveedor_ruc: "",
+  crear_proveedor: false,
   fecha: hoy(),
   tipo_pago: "contado",
   tiene_factura: false,
   numero_factura: "",
+  solo_iva: false,
   monto_total: "",
   moneda: "PYG",
   tipo_cambio: "",
@@ -61,6 +85,7 @@ const emptyCompra = () => ({
   afecta_stock: true,
   notas: "",
   fecha_vencimiento: "",
+  fecha_pago: hoy(),
 });
 
 const emptyItem = () => ({
@@ -86,10 +111,11 @@ const ESTADO_STYLES = {
   parcial:  "bg-amber-500/15 text-amber-400 border-amber-500/30",
   pendiente:"bg-blue-500/15 text-blue-400 border-blue-500/30",
   vencido:  "bg-red-500/15 text-red-400 border-red-500/30",
+  registrado:"bg-cyan-500/15 text-cyan-300 border-cyan-500/30",
 };
 
 const ESTADO_LABELS = {
-  pagado: "Pagado", parcial: "Parcial", pendiente: "Pendiente", vencido: "Vencido",
+  pagado: "Pagado", parcial: "Parcial", pendiente: "Pendiente", vencido: "Vencido", registrado: "Solo IVA",
 };
 
 // ─── Componente búsqueda con chips (Enter para agregar filtro) ───────────────
@@ -170,7 +196,7 @@ function calcMontoAPagar(emp, adelantos, extras, descuentos) {
 function fmtSueldo(monto, moneda="PYG") {
   if (!monto && monto!==0) return "-";
   if (moneda==="PYG") return `\u20b2 ${Number(monto).toLocaleString("es-PY")}`;
-  return `${moneda} ${Number(monto).toLocaleString("es-PY",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  return `${moneda} ${Number(monto).toLocaleString("es-PY",{minimumFractionDigits:2,maximumFractionDigits:3})}`;
 }
 function estadoBadgeSueldo(estado) {
   if (estado==="pagado") return React.createElement("span",{className:"flex items-center gap-1 text-emerald-400 text-xs font-medium"},
@@ -455,7 +481,10 @@ const EgresosPage = () => {
   const [notasCompra, setNotasCompra] = useState([]);
   const [showNotaCompraForm, setShowNotaCompraForm] = useState(false);
   const [editingNotaCompra, setEditingNotaCompra] = useState(null);
+  const [selectedNotaCompraView, setSelectedNotaCompraView] = useState(null);
   const [notaCompraForm, setNotaCompraForm] = useState({ numero: "", fecha: hoy(), compra_id: "", compra_numero_factura: "", proveedor_id: "", proveedor_nombre: "", motivo: "", monto: "", moneda: "PYG", tipo_cambio: "", notas: "" });
+  const [tcCompraInfo, setTcCompraInfo] = useState(null);
+  const [tcNotaCompraInfo, setTcNotaCompraInfo] = useState(null);
 
   // ── Costos Fijos state ──────────────────────────────────────────────────────
   const [costos, setCostos] = useState([]);
@@ -478,6 +507,7 @@ const EgresosPage = () => {
     tipo_cambio: "", frecuencia: "mensual", dia_vencimiento: 1,
     fecha_inicio: new Date().toISOString().slice(0, 10), fecha_fin: "", activo: true, notas: "",
   });
+  const costoFechaVigenciaEdicion = () => filtroTipo === "mes" && filtroMes ? `${filtroMes}-01` : new Date().toISOString().slice(0, 10);
   const [showCostoForm, setShowCostoForm] = useState(false);
   const [editingCostoId, setEditingCostoId] = useState(null);
   const [costoFormData, setCostoFormData] = useState(emptyCostoForm());
@@ -518,7 +548,7 @@ const EgresosPage = () => {
   const [loadingTodosPagos, setLoadingTodosPagos] = useState(false);
   const [showPagoProvForm, setShowPagoProvForm] = useState(false);
   // compras_pagos: [{compra_id, monto_pagado}] — soporta pago parcial por compra
-  const emptyPagoProvForm = () => ({ proveedor_id: "", proveedor_nombre: "", cuenta_id: "", cuenta_nombre: "", cuenta_moneda: "PYG", tipo_cambio: "", fecha_pago: hoy(), notas: "", compras_pagos: [] });
+  const emptyPagoProvForm = () => ({ proveedor_id: "", proveedor_nombre: "", cuenta_id: "", cuenta_nombre: "", cuenta_moneda: "PYG", tipo_cambio: "", fecha_pago: hoy(), recibo_numero: "", notas: "", compras_pagos: [] });
   const [pagoProvForm, setPagoProvForm] = useState(emptyPagoProvForm());
   const [editingPagoProv, setEditingPagoProv] = useState(null);
   const [comprasProvList, setComprasProvList] = useState([]);   // compras pendientes del prov seleccionado
@@ -565,6 +595,54 @@ const EgresosPage = () => {
   const [pagoIvaForm, setPagoIvaForm] = useState({ descripcion: "", monto: "", fecha_pago: hoy(), periodo_iva: mesActual(), cuenta_id: "", cuenta_nombre: "", notas: "" });
 
   // ── Init ────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const sugeridoActual = tcCompraInfo ? String(tcCompraInfo.tipo_cambio_sugerido || tcCompraInfo.venta || "") : "";
+    const tcActual = String(compraForm.tipo_cambio || "");
+    const puedeActualizarTc = !tcActual || (sugeridoActual && tcActual === sugeridoActual);
+    if (!showCompraForm || compraForm.moneda !== "USD" || !compraForm.fecha || !puedeActualizarTc) return;
+    let cancelled = false;
+    fetch(`${API}/admin/cotizaciones/usd?fecha=${compraForm.fecha}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (cancelled || !data) return;
+        const sugerido = data.tipo_cambio_sugerido || data.venta;
+        if (sugerido) {
+          setCompraForm(prev => {
+            const prevTc = String(prev.tipo_cambio || "");
+            if (prevTc && sugeridoActual && prevTc !== sugeridoActual) return prev;
+            return { ...prev, tipo_cambio: String(sugerido) };
+          });
+          setTcCompraInfo(data);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [showCompraForm, compraForm.moneda, compraForm.fecha, compraForm.tipo_cambio, tcCompraInfo?.tipo_cambio_sugerido, tcCompraInfo?.venta, token]);
+
+  useEffect(() => {
+    const sugeridoActual = tcNotaCompraInfo ? String(tcNotaCompraInfo.tipo_cambio_sugerido || tcNotaCompraInfo.venta || "") : "";
+    const tcActual = String(notaCompraForm.tipo_cambio || "");
+    const puedeActualizarTc = !tcActual || (sugeridoActual && tcActual === sugeridoActual);
+    if (!showNotaCompraForm || notaCompraForm.moneda !== "USD" || !notaCompraForm.fecha || !puedeActualizarTc) return;
+    let cancelled = false;
+    fetch(`${API}/admin/cotizaciones/usd?fecha=${notaCompraForm.fecha}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (cancelled || !data) return;
+        const sugerido = data.tipo_cambio_sugerido || data.venta;
+        if (sugerido) {
+          setNotaCompraForm(prev => {
+            const prevTc = String(prev.tipo_cambio || "");
+            if (prevTc && sugeridoActual && prevTc !== sugeridoActual) return prev;
+            return { ...prev, tipo_cambio: String(sugerido) };
+          });
+          setTcNotaCompraInfo(data);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [showNotaCompraForm, notaCompraForm.moneda, notaCompraForm.fecha, notaCompraForm.tipo_cambio, tcNotaCompraInfo?.tipo_cambio_sugerido, tcNotaCompraInfo?.venta, token]);
+
   useEffect(() => {
     fetchEmpresasPropias();
     fetchProveedores(activeEmpresaPropia?.slug);
@@ -1166,6 +1244,7 @@ const EgresosPage = () => {
         cuenta_pago: pagoProvForm.cuenta_moneda === "PYG" ? "guaranies" : "dolares",
         fecha_vencimiento: pagoProvForm.fecha_pago,
         fecha_pago: pagoProvForm.fecha_pago,
+        recibo_numero: pagoProvForm.recibo_numero || null,
         compras_pagos: compras_pagos.map(cp => ({ compra_id: cp.compra_id, monto_pagado: Number(cp.monto_pagado) })),
         notas: pagoProvForm.notas || null,
         logo_tipo: activeEmpresaPropia?.slug || "arandujar",
@@ -1229,6 +1308,7 @@ const EgresosPage = () => {
       cuenta_moneda: pago.cuenta_moneda || (pago.cuenta_pago === "dolares" ? "USD" : "PYG"),
       tipo_cambio: pago.tipo_cambio ? String(pago.tipo_cambio) : "",
       fecha_pago: pago.fecha_pago || hoy(),
+      recibo_numero: pago.recibo_numero || "",
       notas: pago.notas || "",
       compras_pagos,
     });
@@ -1387,6 +1467,7 @@ const EgresosPage = () => {
   // ── Compras CRUD ────────────────────────────────────────────────────────────
   const openNewCompra = () => {
     const logo = activeEmpresaPropia?.slug || "arandujar";
+    setTcCompraInfo(null);
     setCompraForm({ ...emptyCompra(), logo_tipo: logo, afecta_stock: !!puedeUsarStockProductos });
     setEditingCompra(null);
     fetchProveedores(logo);
@@ -1394,14 +1475,18 @@ const EgresosPage = () => {
   };
 
   const openEditCompra = (c) => {
+    setTcCompraInfo(null);
     setCompraForm({
       logo_tipo: c.logo_tipo || activeEmpresaPropia?.slug || "arandujar",
       proveedor_id: c.proveedor_id || "",
       proveedor_nombre: c.proveedor_nombre || "",
+      proveedor_ruc: c.proveedor_ruc || "",
+      crear_proveedor: false,
       fecha: c.fecha || hoy(),
       tipo_pago: c.tipo_pago || "contado",
       tiene_factura: c.tiene_factura || false,
       numero_factura: c.numero_factura || "",
+      solo_iva: !!c.solo_iva,
       monto_total: c.monto_total ?? "",
       moneda: c.moneda || "PYG",
       tipo_cambio: c.tipo_cambio || "",
@@ -1411,6 +1496,7 @@ const EgresosPage = () => {
       afecta_stock: !!puedeUsarStockProductos && (puedeCambiarAfectaStockCompra ? c.afecta_stock !== false : true),
       notas: c.notas || "",
       fecha_vencimiento: c.fecha_vencimiento || "",
+      fecha_pago: c.fecha_pago || c.fecha || hoy(),
     });
     setEditingCompra(c);
     fetchProveedores(c.logo_tipo || activeEmpresaPropia?.slug || "arandujar");
@@ -1445,7 +1531,10 @@ const EgresosPage = () => {
       monto_total: montoFinal,
       monto_iva: totalIvaAuto > 0 ? totalIvaAuto : null,
       tasa_iva: null, // ahora es por ítem
-      afecta_stock: !!puedeUsarStockProductos && (puedeCambiarAfectaStockCompra ? compraForm.afecta_stock : true),
+      afecta_stock: compraForm.solo_iva ? false : (!!puedeUsarStockProductos && (puedeCambiarAfectaStockCompra ? compraForm.afecta_stock : true)),
+      cuenta_id: compraForm.solo_iva ? null : compraForm.cuenta_id,
+      cuenta_nombre: compraForm.solo_iva ? null : compraForm.cuenta_nombre,
+      fecha_pago: compraForm.tipo_pago === "contado" ? (compraForm.fecha_pago || compraForm.fecha) : null,
       tipo_cambio: compraForm.tipo_cambio !== "" ? Number(compraForm.tipo_cambio) : null,
     };
     try {
@@ -1476,12 +1565,22 @@ const EgresosPage = () => {
 
   const openNewNotaCompra = () => {
     setEditingNotaCompra(null);
+    setTcNotaCompraInfo(null);
     setNotaCompraForm({ numero: "", fecha: hoy(), compra_id: "", compra_numero_factura: "", proveedor_id: "", proveedor_nombre: "", motivo: "Devolucion de mercaderia", monto: "", moneda: "PYG", tipo_cambio: "", notas: "" });
     setShowNotaCompraForm(true);
   };
 
+  const notaCompraProveedorKey = (notaCompraForm.proveedor_id || notaCompraForm.proveedor_nombre || "").trim().toLowerCase();
+  const comprasNotaDisponibles = compras.filter(c => {
+    if (!c.tiene_factura) return false;
+    if (!notaCompraProveedorKey) return true;
+    return String(c.proveedor_id || "").toLowerCase() === notaCompraProveedorKey
+      || String(c.proveedor_nombre || "").toLowerCase() === notaCompraProveedorKey;
+  });
+
   const openEditNotaCompra = (nota) => {
     setEditingNotaCompra(nota);
+    setTcNotaCompraInfo(null);
     setNotaCompraForm({
       numero: nota.numero || "",
       fecha: nota.fecha || hoy(),
@@ -1522,6 +1621,7 @@ const EgresosPage = () => {
       toast.success(editingNotaCompra ? "Nota de crédito actualizada" : "Nota de crédito registrada");
       setShowNotaCompraForm(false);
       fetchNotasCompra();
+      fetchCompras();
       fetchIvaData();
     } else {
       const err = await res.json().catch(() => ({}));
@@ -1535,6 +1635,7 @@ const EgresosPage = () => {
     if (res.ok) {
       toast.success("Nota de crédito eliminada");
       fetchNotasCompra();
+      fetchCompras();
       fetchIvaData();
     } else {
       toast.error("Error al eliminar nota");
@@ -1656,14 +1757,17 @@ const EgresosPage = () => {
 	    const ivaCredito = filtroTipo === "mes" ? (ivaBalance?.iva_credito || 0) : (ivaResumen?.total_credito || 0);
 	    const ivaNeto = filtroTipo === "mes" ? (ivaBalance?.iva_neto || 0) : (ivaResumen?.total_neto || 0);
 	    const ivaPagado = filtroTipo === "mes" ? (ivaBalance?.pagos_iva_mes || 0) : (ivaResumen?.total_pagado || 0);
-	    const ivaSaldoActual = ivaNeto - ivaPagado;
+	    const ivaSaldoActual = filtroTipo === "mes" ? (ivaBalance?.saldo_mes ?? (ivaNeto - ivaPagado)) : (ivaNeto - ivaPagado);
 	    const cantFacturas = filtroTipo === "mes" ? (ivaBalance?.cantidad_facturas || 0) : (ivaResumen?.meses || []).reduce((s, m) => s + (m.cantidad_facturas || 0), 0);
 	    const cantCompras = filtroTipo === "mes" ? (ivaBalance?.cantidad_compras_con_factura || 0) : (ivaResumen?.meses || []).reduce((s, m) => s + (m.cantidad_compras_con_factura || 0), 0);
+	    const retencionesTxt = filtroTipo === "mes" && ivaBalance?.iva_credito_retenciones > 0
+	      ? ` + Ret.: ${fmtPYG(ivaBalance.iva_credito_retenciones)}`
+	      : "";
 	    return [
 	      { label: "IVA débito", value: fmt(ivaDebito), sub: `${cantFacturas} facturas`, icon: Receipt, color: "text-cyan-400" },
-	      { label: "IVA crédito", value: fmt(ivaCredito), sub: `${cantCompras} compras`, icon: FileText, color: "text-violet-400" },
+	      { label: "IVA crédito", value: fmt(ivaCredito), sub: `${cantCompras} compras${retencionesTxt}`, icon: FileText, color: "text-violet-400" },
 	      { label: "Pagado", value: fmt(ivaPagado), sub: `${pagosIvaList.length} pagos`, icon: CheckCircle, color: "text-amber-400" },
-	      { label: "Saldo actual", value: fmt(Math.abs(ivaSaldoActual)), sub: ivaSaldoActual > 0 ? "Debe SET" : ivaSaldoActual < 0 ? "A favor" : "Al día", icon: AlertCircle, color: ivaSaldoActual > 0 ? "text-red-400" : ivaSaldoActual < 0 ? "text-emerald-400" : "text-slate-300" },
+	      { label: filtroTipo === "mes" ? "Saldo del mes" : "Saldo actual", value: fmt(Math.abs(ivaSaldoActual)), sub: ivaSaldoActual > 0 ? "Debe SET" : ivaSaldoActual < 0 ? "A favor" : "Al día", icon: AlertCircle, color: ivaSaldoActual > 0 ? "text-red-400" : ivaSaldoActual < 0 ? "text-emerald-400" : "text-slate-300" },
 	    ];
 	  })();
   const egresosTabs = [
@@ -1894,11 +1998,13 @@ const EgresosPage = () => {
                                 </td>
                                 <td className="px-4 py-3 text-center">
                                   <span className={`text-xs px-2 py-0.5 rounded-full border capitalize ${
-                                    c.tipo_pago === "contado"
+                                    c.solo_iva
+                                      ? "bg-cyan-500/10 text-cyan-300 border-cyan-500/30"
+                                      : c.tipo_pago === "contado"
                                       ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
                                       : "bg-amber-500/10 text-amber-300 border-amber-500/30"
                                   }`}>
-                                    {c.tipo_pago}
+                                    {c.solo_iva ? "Solo IVA" : c.tipo_pago}
                                   </span>
                                 </td>
                                 <td className="px-4 py-3 text-right">
@@ -1947,23 +2053,25 @@ const EgresosPage = () => {
                     <div className="mt-5 bg-rose-500/5 border border-rose-500/20 rounded-xl overflow-hidden">
                       <div className="px-4 py-3 border-b border-rose-500/20 flex items-center justify-between">
                         <p className="text-rose-300 text-sm font-medium">Notas de crédito de compras</p>
-                        <p className="text-rose-200 font-heading font-bold text-sm">{fmt(notasCompra.reduce((s, n) => s + (n.monto_pyg || (n.moneda === "PYG" ? n.monto || 0 : 0)), 0))}</p>
+                        <p className="text-rose-200 font-heading font-bold text-sm">{fmtMixedAmounts(notasCompra, "monto")}</p>
                       </div>
                       <table className="w-full text-sm">
                         <tbody>
                           {notasCompra.map(n => (
-                            <tr key={n.id} className="border-b border-white/5">
+                            <tr key={n.id} onClick={() => setSelectedNotaCompraView(n)} className="border-b border-white/5 cursor-pointer hover:bg-white/5 transition-colors">
                               <td className="px-4 py-3 text-slate-300 text-xs">{n.fecha}</td>
                               <td className="px-4 py-3 text-white font-medium">{n.proveedor_nombre || "—"}</td>
                               <td className="px-4 py-3 text-slate-400 text-xs">{n.numero}</td>
+                              <td className="px-4 py-3 text-slate-400 text-xs">{n.compra_numero_factura || (n.compra_id ? "Compra vinculada" : "Sin vincular")}</td>
                               <td className="px-4 py-3 text-slate-400 text-xs">{n.motivo}</td>
                               <td className="px-4 py-3 text-right text-rose-300 font-bold">{fmt(n.monto, n.moneda)}</td>
                               <td className="px-4 py-3 text-right">
+                                <button onClick={(e) => { e.stopPropagation(); setSelectedNotaCompraView(n); }} className="p-1 text-slate-400 hover:text-blue-300" title="Ver nota"><Eye className="w-4 h-4" /></button>
                                 {hasPermission("notas_credito.editar") && (
-                                  <button onClick={() => openEditNotaCompra(n)} className="p-1 text-slate-400 hover:text-rose-300"><Edit className="w-4 h-4" /></button>
+                                  <button onClick={(e) => { e.stopPropagation(); openEditNotaCompra(n); }} className="p-1 text-slate-400 hover:text-rose-300"><Edit className="w-4 h-4" /></button>
                                 )}
                                 {hasPermission("notas_credito.eliminar") && (
-                                  <button onClick={() => handleDeleteNotaCompra(n.id)} className="p-1 text-slate-400 hover:text-red-300"><Trash2 className="w-4 h-4" /></button>
+                                  <button onClick={(e) => { e.stopPropagation(); handleDeleteNotaCompra(n.id); }} className="p-1 text-slate-400 hover:text-red-300"><Trash2 className="w-4 h-4" /></button>
                                 )}
                               </td>
                             </tr>
@@ -2082,7 +2190,7 @@ const EgresosPage = () => {
                               <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                                 <div className="flex items-center justify-center gap-2">
                                   {hasPermission("costos_fijos.editar") && (
-                                    <button onClick={() => { const src=costos.find(c=>c.id===v.costo_id)||v; if(src){ setEditingCostoId(src.id||src.costo_id); setCostoFormData({logo_tipo:src.logo_tipo||"arandujar",nombre:src.nombre||"",descripcion:src.descripcion||"",categoria:src.categoria||"",monto:src.monto||"",moneda:src.moneda||"PYG",tipo_cambio:src.tipo_cambio||"",frecuencia:src.frecuencia||"mensual",dia_vencimiento:src.dia_vencimiento||1,fecha_inicio:src.fecha_inicio||new Date().toISOString().slice(0,10),fecha_fin:src.fecha_fin||"",activo:src.activo!==false,notas:src.notas||""}); setShowCostoForm(true); } }}
+                                    <button onClick={() => { const src=costos.find(c=>c.id===v.costo_id)||v; if(src){ setEditingCostoId(src.id||src.costo_id); setCostoFormData({logo_tipo:src.logo_tipo||"arandujar",nombre:src.nombre||"",descripcion:src.descripcion||"",categoria:src.categoria||"",monto:v.monto||src.monto||"",moneda:v.moneda||src.moneda||"PYG",tipo_cambio:v.tipo_cambio||src.tipo_cambio||"",frecuencia:src.frecuencia||"mensual",dia_vencimiento:src.dia_vencimiento||1,fecha_inicio:costoFechaVigenciaEdicion(),fecha_fin:src.fecha_fin||"",activo:src.activo!==false,notas:src.notas||""}); setShowCostoForm(true); } }}
                                       className="text-slate-400 hover:text-blue-400 transition-colors"><Edit className="w-4 h-4" /></button>
                                   )}
                                   {hasPermission("costos_fijos.eliminar") && (
@@ -2180,7 +2288,7 @@ const EgresosPage = () => {
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="text-slate-400 text-xs mb-1 block">Fecha inicio *</label>
+                      <label className="text-slate-400 text-xs mb-1 block">{editingCostoId ? "Vigente desde *" : "Fecha inicio *"}</label>
                       <input required type="date" value={costoFormData.fecha_inicio} onChange={e=>setCostoFormData(f=>({...f,fecha_inicio:e.target.value}))}
                         className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-blue-500/60"/>
                     </div>
@@ -2758,7 +2866,14 @@ const EgresosPage = () => {
                       }`}>
                         <div>
                           <p className={`text-xs font-medium mb-0.5 ${ivaBalance.saldo_pendiente_acumulado > 0 ? "text-orange-400" : "text-emerald-400"}`}>
-                            {ivaBalance.saldo_pendiente_acumulado > 0 ? "⚠ Saldo IVA acumulado a pagar (enero → ahora)" : "✓ Saldo IVA acumulado a favor"}
+                            {ivaBalance.saldo_pendiente_acumulado > 0
+                              ? `Saldo IVA acumulado a pagar al cierre de ${mesLabel(periodoIva)}`
+                              : `Saldo IVA acumulado a favor al cierre de ${mesLabel(periodoIva)}`}
+                          </p>
+                          <p className="text-slate-400 text-xs">
+                            Arrastre anterior: {ivaSaldoTexto(ivaBalance.saldo_anterior)}
+                            {" · "}
+                            Movimiento del mes: {ivaSaldoTexto(ivaBalance.saldo_mes)}
                           </p>
                           <p className="text-slate-500 text-xs">
                             Débito acum.: {fmtPYG(ivaBalance.iva_debito_acumulado)} · Crédito acum.: {fmtPYG(ivaBalance.iva_credito_acumulado)}
@@ -2817,6 +2932,45 @@ const EgresosPage = () => {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                )}
+
+                {ivaBalance?.detalle_retenciones?.length > 0 && (
+                  <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+                    <div className="flex items-center gap-2 px-4 py-3 border-b border-white/10 bg-amber-500/5">
+                      <FileText className="w-4 h-4 text-amber-400" />
+                      <span className="text-amber-300 font-medium text-sm">Retenciones IVA de clientes</span>
+                      <span className="ml-auto text-amber-300 font-heading font-bold text-sm">
+                        {fmtPYG(ivaBalance.iva_credito_retenciones || 0)}
+                      </span>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[560px] text-sm">
+                        <thead>
+                          <tr className="border-b border-white/10 text-slate-400 text-xs uppercase">
+                            <th className="px-4 py-3 text-left">Cliente</th>
+                            <th className="px-4 py-3 text-right">Factura</th>
+                            <th className="px-4 py-3 text-right">IVA factura</th>
+                            <th className="px-4 py-3 text-right">% Ret.</th>
+                            <th className="px-4 py-3 text-right">Retenido</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ivaBalance.detalle_retenciones.map((r, i) => (
+                            <tr key={`${r.numero_factura || i}-${i}`} className="border-b border-white/5">
+                              <td className="px-4 py-3 text-white">{r.razon_social || "—"}</td>
+                              <td className="px-4 py-3 text-right text-slate-400 text-xs">{r.numero_factura || "—"}</td>
+                              <td className="px-4 py-3 text-right text-slate-300">{fmtPYG(r.iva_factura || 0)}</td>
+                              <td className="px-4 py-3 text-right text-slate-400 text-xs">{r.porcentaje_retencion || 0}%</td>
+                              <td className="px-4 py-3 text-right text-amber-300 font-medium">{fmtPYG(r.monto_retenido || 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="px-4 py-2 text-xs text-slate-500 border-t border-white/5">
+                      Estas retenciones se suman al crédito fiscal del período y reducen el IVA a pagar.
+                    </div>
                   </div>
                 )}
 
@@ -3141,15 +3295,31 @@ const EgresosPage = () => {
                     }));
                   }} className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm">
                     <option value="">Sin vincular</option>
-                    {compras.filter(c => c.tiene_factura).map(c => (
+                    {comprasNotaDisponibles.map(c => (
                       <option key={c.id} value={c.id}>{c.fecha} · {c.proveedor_nombre} · {c.numero_factura || fmt(c.monto_total, c.moneda)}</option>
                     ))}
                   </select>
+                  {notaCompraProveedorKey && comprasNotaDisponibles.length === 0 && (
+                    <p className="text-amber-300 text-xs mt-1">No hay facturas de compra para este proveedor en el filtro actual.</p>
+                  )}
                 </div>
                 <div>
                   <label className="text-slate-400 text-sm mb-1 block">Proveedor *</label>
-                  <input value={notaCompraForm.proveedor_nombre} onChange={e => setNotaCompraForm(f => ({ ...f, proveedor_nombre: e.target.value }))}
-                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm" required />
+                  <select value={notaCompraForm.proveedor_id || ""} onChange={e => {
+                    const prov = proveedores.find(p => p.id === e.target.value);
+                    setNotaCompraForm(f => ({
+                      ...f,
+                      proveedor_id: prov?.id || "",
+                      proveedor_nombre: prov?.nombre || "",
+                      compra_id: "",
+                      compra_numero_factura: "",
+                    }));
+                  }} className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm mb-2">
+                    <option value="">Seleccionar proveedor...</option>
+                    {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                  </select>
+                  <input value={notaCompraForm.proveedor_nombre} onChange={e => setNotaCompraForm(f => ({ ...f, proveedor_nombre: e.target.value, proveedor_id: "", compra_id: "", compra_numero_factura: "" }))}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm" placeholder="O escribir proveedor" required />
                 </div>
                 <div>
                   <label className="text-slate-400 text-sm mb-1 block">Motivo *</label>
@@ -3172,8 +3342,13 @@ const EgresosPage = () => {
                   </div>
                   <div>
                     <label className="text-slate-400 text-sm mb-1 block">TC</label>
-                    <input type="number" min="0" step="any" value={notaCompraForm.tipo_cambio} onChange={e => setNotaCompraForm(f => ({ ...f, tipo_cambio: e.target.value }))}
+                    <input type="number" min="0" step="any" value={notaCompraForm.tipo_cambio} onChange={e => { setTcNotaCompraInfo(null); setNotaCompraForm(f => ({ ...f, tipo_cambio: e.target.value })); }}
                       className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm" disabled={notaCompraForm.moneda === "PYG"} />
+                    {tcNotaCompraInfo && notaCompraForm.moneda === "USD" && (
+                      <p className="text-emerald-300 text-xs mt-1">
+                        Sugerido: ₲ {Number(tcNotaCompraInfo.tipo_cambio_sugerido || tcNotaCompraInfo.venta).toLocaleString("es-PY")}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <div>
@@ -3225,7 +3400,13 @@ const EgresosPage = () => {
                         value={compraForm.proveedor_id}
                         onChange={e => {
                           const prov = proveedores.find(p => p.id === e.target.value);
-                          setCompraForm(prev => ({ ...prev, proveedor_id: e.target.value, proveedor_nombre: prov?.nombre || "" }));
+                          setCompraForm(prev => ({
+                            ...prev,
+                            proveedor_id: e.target.value,
+                            proveedor_nombre: prov?.nombre || "",
+                            proveedor_ruc: prov?.ruc || "",
+                            crear_proveedor: false,
+                          }));
                         }}
                         className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-orange-500/50"
                       >
@@ -3234,12 +3415,26 @@ const EgresosPage = () => {
                       </select>
                     ) : null}
                     {(!compraForm.proveedor_id) && (
-                      <Input
-                        value={compraForm.proveedor_nombre}
-                        onChange={e => setCompraForm(p => ({ ...p, proveedor_nombre: e.target.value }))}
-                        className="bg-arandu-dark border-white/10 text-white mt-1"
-                        placeholder="Nombre del proveedor"
-                      />
+                      <div className="space-y-2 mt-1">
+                        <Input
+                          value={compraForm.proveedor_nombre}
+                          onChange={e => setCompraForm(p => ({ ...p, proveedor_nombre: e.target.value }))}
+                          className="bg-arandu-dark border-white/10 text-white"
+                          placeholder="Nombre del proveedor"
+                        />
+                        <Input
+                          value={compraForm.proveedor_ruc}
+                          onChange={e => setCompraForm(p => ({ ...p, proveedor_ruc: e.target.value }))}
+                          className="bg-arandu-dark border-white/10 text-white"
+                          placeholder="RUC del proveedor (opcional)"
+                        />
+                        <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+                          <input type="checkbox" checked={compraForm.crear_proveedor}
+                            onChange={e => setCompraForm(p => ({ ...p, crear_proveedor: e.target.checked }))}
+                            className="w-4 h-4 accent-orange-500" />
+                          Agregar también a proveedores
+                        </label>
+                      </div>
                     )}
                   </div>
 
@@ -3247,7 +3442,11 @@ const EgresosPage = () => {
                   <div>
                     <label className="text-slate-400 text-sm mb-1 block">Fecha *</label>
                     <Input type="date" value={compraForm.fecha}
-                      onChange={e => setCompraForm(p => ({ ...p, fecha: e.target.value }))}
+                      onChange={e => setCompraForm(p => ({
+                        ...p,
+                        fecha: e.target.value,
+                        fecha_pago: (!p.fecha_pago || p.fecha_pago === p.fecha) ? e.target.value : p.fecha_pago,
+                      }))}
                       className="bg-arandu-dark border-white/10 text-white" />
                   </div>
                 </div>
@@ -3264,6 +3463,20 @@ const EgresosPage = () => {
                     ))}
                   </div>
                 </div>
+                {compraForm.moneda === "USD" && (
+                  <div>
+                    <label className="text-slate-400 text-sm mb-1 block">Tipo de cambio fiscal (₲ por USD)</label>
+                    <Input type="number" min="0" step="any" value={compraForm.tipo_cambio}
+                      onChange={e => { setTcCompraInfo(null); setCompraForm(p => ({ ...p, tipo_cambio: e.target.value })); }}
+                      placeholder="Se sugiere por fecha"
+                      className="bg-arandu-dark border-white/10 text-white" />
+                    {tcCompraInfo && (
+                      <p className="text-emerald-300 text-xs mt-1">
+                        Sugerido Cambios Chaco venta: ₲ {Number(tcCompraInfo.tipo_cambio_sugerido || tcCompraInfo.venta).toLocaleString("es-PY")} ({tcCompraInfo.fecha})
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* ── Items / Conceptos ── */}
                 <div>
@@ -3448,7 +3661,11 @@ const EgresosPage = () => {
                   <div className="flex gap-3">
                     {["contado", "credito"].map(tipo => (
                       <button key={tipo} type="button"
-                        onClick={() => setCompraForm(p => ({ ...p, tipo_pago: tipo }))}
+                        onClick={() => setCompraForm(p => ({
+                          ...p,
+                          tipo_pago: tipo,
+                          fecha_pago: tipo === "contado" ? (p.fecha_pago || p.fecha) : "",
+                        }))}
                         className={`flex-1 flex items-center justify-center gap-2 p-2.5 rounded-lg border text-sm transition-all capitalize ${compraForm.tipo_pago === tipo ? "border-orange-500 bg-orange-500/10 text-orange-300" : "border-white/10 text-slate-400 hover:border-white/20"}`}
                       >
                         {tipo === "contado" ? <Banknote className="w-4 h-4" /> : <CreditCard className="w-4 h-4" />}
@@ -3459,8 +3676,9 @@ const EgresosPage = () => {
                 </div>
 
                 {/* Cuenta bancaria — solo contado */}
-                {compraForm.tipo_pago === "contado" && (
-                  <div>
+                {compraForm.tipo_pago === "contado" && !compraForm.solo_iva && (
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
                     <label className="text-slate-400 text-sm mb-1 block">Cuenta bancaria *</label>
                     {cuentasDisp.length > 0 ? (
                       <select
@@ -3481,6 +3699,14 @@ const EgresosPage = () => {
                         onChange={e => setCompraForm(p => ({ ...p, cuenta_nombre: e.target.value }))}
                         className="bg-arandu-dark border-white/10 text-white" placeholder="Nombre de la cuenta" />
                     )}
+                    </div>
+                    <div>
+                      <label className="text-slate-400 text-sm mb-1 block">Fecha de pago</label>
+                      <Input type="date" value={compraForm.fecha_pago}
+                        onChange={e => setCompraForm(p => ({ ...p, fecha_pago: e.target.value }))}
+                        className="bg-arandu-dark border-white/10 text-white" />
+                      <p className="text-slate-500 text-xs mt-1">Por defecto usa la fecha de la factura, pero podés cambiarla.</p>
+                    </div>
                   </div>
                 )}
 
@@ -3498,7 +3724,11 @@ const EgresosPage = () => {
                 <div className="bg-arandu-dark rounded-lg p-3 border border-white/5">
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input type="checkbox" checked={compraForm.tiene_factura}
-                      onChange={e => setCompraForm(p => ({ ...p, tiene_factura: e.target.checked }))}
+                      onChange={e => setCompraForm(p => ({
+                        ...p,
+                        tiene_factura: e.target.checked,
+                        solo_iva: e.target.checked ? p.solo_iva : false,
+                      }))}
                       className="w-4 h-4 accent-emerald-500" />
                     <span className="text-slate-300 text-sm flex items-center gap-2">
                       <Receipt className="w-4 h-4 text-emerald-400" />
@@ -3506,10 +3736,27 @@ const EgresosPage = () => {
                     </span>
                   </label>
                   {compraForm.tiene_factura && (
-                    <Input value={compraForm.numero_factura}
-                      onChange={e => setCompraForm(p => ({ ...p, numero_factura: e.target.value }))}
-                      className="bg-arandu-dark border-white/10 text-white mt-2"
-                      placeholder="Número de factura" />
+                    <div className="space-y-2 mt-2">
+                      <Input value={compraForm.numero_factura}
+                        onChange={e => setCompraForm(p => ({ ...p, numero_factura: e.target.value }))}
+                        className="bg-arandu-dark border-white/10 text-white"
+                        placeholder="Número de factura" />
+                      <label className="flex items-start gap-3 cursor-pointer rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+                        <input type="checkbox" checked={compraForm.solo_iva}
+                          onChange={e => setCompraForm(p => ({
+                            ...p,
+                            solo_iva: e.target.checked,
+                            afecta_stock: e.target.checked ? false : p.afecta_stock,
+                            cuenta_id: e.target.checked ? "" : p.cuenta_id,
+                            cuenta_nombre: e.target.checked ? "" : p.cuenta_nombre,
+                          }))}
+                          className="mt-0.5 w-4 h-4 accent-cyan-500" />
+                        <span>
+                          <span className="text-cyan-200 text-sm font-medium block">Solo IVA fiscal</span>
+                          <span className="text-slate-500 text-xs">Registra la factura para crédito fiscal, sin afectar caja, deuda, gasto ni stock.</span>
+                        </span>
+                      </label>
+                    </div>
                   )}
                 </div>
 
@@ -3893,7 +4140,18 @@ const EgresosPage = () => {
                   </div>
                 )}
 
-                {/* 6. Notas */}
+                {/* 6. Recibo proveedor */}
+                {pagoProvForm.compras_pagos.length > 0 && (
+                  <div>
+                    <label className="text-slate-400 text-sm mb-1 block">N° recibo del proveedor</label>
+                    <input value={pagoProvForm.recibo_numero}
+                      onChange={e => setPagoProvForm(p => ({ ...p, recibo_numero: e.target.value }))}
+                      className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-violet-500/50 placeholder-slate-600"
+                      placeholder="Automático si se deja vacío" />
+                  </div>
+                )}
+
+                {/* 7. Notas */}
                 {pagoProvForm.compras_pagos.length > 0 && (
                   <div>
                     <label className="text-slate-400 text-sm mb-1 block">Notas</label>
@@ -4014,6 +4272,14 @@ const EgresosPage = () => {
                     <p className="text-white text-sm font-medium">{selectedPagoView.cuenta_nombre}</p>
                   </div>
                 )}
+                {selectedPagoView.recibo_numero && (
+                  <div className="bg-arandu-dark/60 rounded-xl p-3 col-span-2">
+                    <p className="text-slate-500 text-xs mb-0.5 flex items-center gap-1">
+                      <Receipt className="w-3 h-3" /> Recibo proveedor
+                    </p>
+                    <p className="text-white text-sm font-medium">{selectedPagoView.recibo_numero}</p>
+                  </div>
+                )}
               </div>
 
               {/* Notas */}
@@ -4067,6 +4333,105 @@ const EgresosPage = () => {
         )}
       </AnimatePresence>
 
+      {/* ═══ MODAL: Ver detalle de nota de crédito de compra ════════════════ */}
+      <AnimatePresence>
+        {selectedNotaCompraView && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4"
+            onMouseDown={(e) => e.target === e.currentTarget && setSelectedNotaCompraView(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between mb-5">
+                <span className="text-xs bg-rose-500/20 text-rose-300 border border-rose-500/30 rounded-full px-3 py-1 font-medium">
+                  Nota de crédito de compra
+                </span>
+                <button onClick={() => setSelectedNotaCompraView(null)} className="text-slate-400 hover:text-white">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-11 h-11 bg-rose-500/20 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <Receipt className="w-5 h-5 text-rose-300" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-slate-400 text-xs">Número</p>
+                  <p className="text-white font-semibold truncate">{selectedNotaCompraView.numero}</p>
+                </div>
+                <p className="text-slate-400 text-xs">{selectedNotaCompraView.fecha}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="bg-arandu-dark/60 rounded-xl p-3 col-span-2">
+                  <p className="text-slate-500 text-xs mb-0.5">Proveedor</p>
+                  <p className="text-white text-sm font-medium">{selectedNotaCompraView.proveedor_nombre || "—"}</p>
+                </div>
+                <div className="bg-arandu-dark/60 rounded-xl p-3 col-span-2">
+                  <p className="text-slate-500 text-xs mb-0.5">Compra vinculada</p>
+                  <p className="text-white text-sm font-medium">
+                    {selectedNotaCompraView.compra_numero_factura || (selectedNotaCompraView.compra_id ? "Compra sin número de factura" : "Sin vincular")}
+                  </p>
+                </div>
+                <div className="bg-arandu-dark/60 rounded-xl p-3">
+                  <p className="text-slate-500 text-xs mb-0.5">Motivo</p>
+                  <p className="text-white text-sm font-medium">{selectedNotaCompraView.motivo || "—"}</p>
+                </div>
+                <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-3">
+                  <p className="text-slate-500 text-xs mb-0.5">Monto aplicado</p>
+                  <p className="text-rose-300 text-sm font-bold">{fmt(selectedNotaCompraView.monto, selectedNotaCompraView.moneda)}</p>
+                </div>
+              </div>
+
+              {selectedNotaCompraView.moneda === "USD" && selectedNotaCompraView.tipo_cambio && (
+                <div className="bg-arandu-dark/60 border border-white/5 rounded-xl p-3 mb-4">
+                  <p className="text-slate-500 text-xs mb-0.5">Tipo de cambio</p>
+                  <p className="text-slate-300 text-sm">₲ {Number(selectedNotaCompraView.tipo_cambio).toLocaleString("es-PY")} / USD</p>
+                </div>
+              )}
+
+              {selectedNotaCompraView.notas && (
+                <div className="bg-arandu-dark/60 border border-white/5 rounded-xl p-3 mb-4">
+                  <p className="text-slate-500 text-xs mb-1 flex items-center gap-1">
+                    <FileText className="w-3 h-3" /> Notas
+                  </p>
+                  <p className="text-slate-300 text-sm">{selectedNotaCompraView.notas}</p>
+                </div>
+              )}
+
+              <div className="flex gap-2 mb-2">
+                {hasPermission("notas_credito.editar") && (
+                  <button
+                    onClick={() => { openEditNotaCompra(selectedNotaCompraView); setSelectedNotaCompraView(null); }}
+                    className="flex-1 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm hover:bg-yellow-500/20 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Edit className="w-4 h-4" /> Editar
+                  </button>
+                )}
+                {hasPermission("notas_credito.eliminar") && (
+                  <button
+                    onClick={() => { handleDeleteNotaCompra(selectedNotaCompraView.id); setSelectedNotaCompraView(null); }}
+                    className="flex-1 py-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm hover:bg-red-500/20 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Trash2 className="w-4 h-4" /> Eliminar
+                  </button>
+                )}
+              </div>
+
+              <button
+                onClick={() => setSelectedNotaCompraView(null)}
+                className="w-full py-2.5 rounded-lg bg-arandu-dark border border-white/10 text-slate-400 text-sm hover:text-white transition-all"
+              >
+                Cerrar
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ═══ MODAL: Ver detalle de una Compra ════════════════════════════════ */}
       <AnimatePresence>
         {selectedCompraView && (
@@ -4096,6 +4461,9 @@ const EgresosPage = () => {
                 <div className="flex-1 min-w-0">
                   <p className="text-slate-400 text-xs">Proveedor</p>
                   <p className="text-white font-semibold truncate">{selectedCompraView.proveedor_nombre || "—"}</p>
+                  {selectedCompraView.proveedor_ruc && (
+                    <p className="text-slate-500 text-xs truncate">RUC: {selectedCompraView.proveedor_ruc}</p>
+                  )}
                 </div>
                 {selectedCompraView.estado_pago && (
                   <span className={`text-xs px-2.5 py-1 rounded-full border ${ESTADO_STYLES[selectedCompraView.estado_pago] || ""}`}>
@@ -4114,6 +4482,12 @@ const EgresosPage = () => {
                   <p className="text-slate-500 text-xs mb-0.5">Tipo de pago</p>
                   <p className="text-white text-sm font-medium capitalize">{selectedCompraView.tipo_pago || "contado"}</p>
                 </div>
+                {selectedCompraView.tipo_pago === "contado" && selectedCompraView.fecha_pago && (
+                  <div className="bg-arandu-dark/60 rounded-xl p-3 col-span-2">
+                    <p className="text-slate-500 text-xs mb-0.5">Fecha de pago</p>
+                    <p className="text-white text-sm font-medium">{selectedCompraView.fecha_pago}</p>
+                  </div>
+                )}
                 {(() => {
                   // Mostrar cuenta bancaria desde la que se pagó.
                   // Para contado: viene en compra.cuenta_nombre.
@@ -4167,6 +4541,12 @@ const EgresosPage = () => {
                     <p className="text-slate-500 text-xs mb-0.5">Pagado</p>
                     <p className="text-emerald-400 text-sm font-bold">{fmt(selectedCompraView.total_pagado || 0, selectedCompraView.moneda)}</p>
                   </div>
+                  {(selectedCompraView.total_creditos || 0) > 0 && (
+                    <div className="bg-rose-500/5 border border-rose-500/20 rounded-xl p-3">
+                      <p className="text-slate-500 text-xs mb-0.5">Notas crédito</p>
+                      <p className="text-rose-300 text-sm font-bold">{fmt(selectedCompraView.total_creditos || 0, selectedCompraView.moneda)}</p>
+                    </div>
+                  )}
                   <div className={`rounded-xl p-3 border ${selectedCompraView.saldo_pendiente > 0 ? "bg-red-500/5 border-red-500/20" : "bg-emerald-500/5 border-emerald-500/20"}`}>
                     <p className="text-slate-500 text-xs mb-0.5">Saldo pendiente</p>
                     <p className={`text-sm font-bold ${selectedCompraView.saldo_pendiente > 0 ? "text-red-400" : "text-emerald-400"}`}>
@@ -4394,7 +4774,7 @@ const EgresosPage = () => {
                           tipo_cambio: src.tipo_cambio || "",
                           frecuencia: src.frecuencia || "mensual",
                           dia_vencimiento: src.dia_vencimiento || 1,
-                          fecha_inicio: src.fecha_inicio || new Date().toISOString().slice(0, 10),
+                          fecha_inicio: costoFechaVigenciaEdicion(),
                           fecha_fin: src.fecha_fin || "",
                           activo: src.activo !== false,
                           notas: src.notas || "",

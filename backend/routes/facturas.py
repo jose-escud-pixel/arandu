@@ -6,6 +6,7 @@ from typing import List, Optional
 from config import db
 from auth import require_authenticated, has_permission, log_auditoria, get_logos_acceso
 from models.schemas import FacturaCreate, FacturaResponse
+from routes.cotizaciones import tipo_cambio_usd_sugerido
 
 router = APIRouter()
 
@@ -13,6 +14,56 @@ router = APIRouter()
 # ─────────────────────────────────────────────
 #  FACTURAS – CRUD
 # ─────────────────────────────────────────────
+
+def _numero_doc_normalizado(numero: Optional[str]) -> str:
+    return "".join((numero or "").strip().lower().split())
+
+
+async def _ensure_factura_numero_unico(doc_data: dict, ignore_id: Optional[str] = None):
+    normalizado = _numero_doc_normalizado(doc_data.get("numero"))
+    if not normalizado:
+        return
+    logo_tipo = doc_data.get("logo_tipo") or "arandujar"
+    tipo = doc_data.get("tipo") or "emitida"
+    query: dict = {
+        "logo_tipo": logo_tipo,
+        "tipo": tipo,
+        "$or": [
+            {"numero": (doc_data.get("numero") or "").strip()},
+            {"numero_normalizado": normalizado},
+        ],
+    }
+    if tipo == "recibida":
+        tercero_or = []
+        if doc_data.get("ruc"):
+            tercero_or.append({"ruc": doc_data.get("ruc")})
+        if doc_data.get("razon_social"):
+            tercero_or.append({"razon_social": doc_data.get("razon_social")})
+        if tercero_or:
+            query["$and"] = [{"$or": tercero_or}]
+    if ignore_id:
+        query["id"] = {"$ne": ignore_id}
+    existente = await db.facturas.find_one(query, {"_id": 0, "id": 1, "numero": 1})
+    if existente:
+        raise HTTPException(status_code=400, detail=f"Ya existe una factura con el número {doc_data.get('numero')}.")
+
+
+async def _ensure_recibo_numero_unico(numero: Optional[str], logo_tipo: str, ignore_id: Optional[str] = None):
+    normalizado = _numero_doc_normalizado(numero)
+    if not normalizado:
+        return
+    query: dict = {
+        "logo_tipo": logo_tipo or "arandujar",
+        "$or": [
+            {"numero": (numero or "").strip()},
+            {"numero_normalizado": normalizado},
+        ],
+    }
+    if ignore_id:
+        query["id"] = {"$ne": ignore_id}
+    existente = await db.recibos.find_one(query, {"_id": 0, "id": 1, "numero": 1})
+    if existente:
+        raise HTTPException(status_code=400, detail=f"Ya existe un recibo con el número {numero}.")
 
 @router.get("/admin/facturas", response_model=List[FacturaResponse])
 async def get_facturas(
@@ -102,6 +153,25 @@ def _build_pago_entry(monto: float, fecha: str, cuenta_id: Optional[str],
     }
 
 
+async def _asegurar_tc_fiscal_factura(doc_data: dict) -> dict:
+    if (doc_data.get("moneda") or "PYG").upper() != "USD":
+        return doc_data
+    try:
+        tc = float(doc_data.get("tipo_cambio") or 0)
+    except (TypeError, ValueError):
+        tc = 0
+    if tc > 0:
+        return doc_data
+    sugerido = await tipo_cambio_usd_sugerido((doc_data.get("fecha") or "")[:10])
+    if not sugerido:
+        raise HTTPException(status_code=400, detail="Falta el tipo de cambio fiscal para esta factura USD.")
+    doc_data["tipo_cambio"] = sugerido
+    doc_data["tipo_cambio_fuente"] = "Cambios Chaco"
+    doc_data["tipo_cambio_fecha"] = (doc_data.get("fecha") or "")[:10]
+    doc_data["tipo_cambio_fiscal_auto"] = True
+    return doc_data
+
+
 def _debe_afectar_stock(doc: dict) -> bool:
     return bool(doc.get("afecta_stock")) and doc.get("tipo", "emitida") == "emitida" and doc.get("estado") != "anulada"
 
@@ -139,6 +209,9 @@ async def create_factura(data: FacturaCreate, user: dict = Depends(require_authe
         raise HTTPException(status_code=403, detail="Sin permiso para crear facturas")
     now = datetime.now(timezone.utc).isoformat()
     doc_data = data.dict()
+    doc_data = await _asegurar_tc_fiscal_factura(doc_data)
+    await _ensure_factura_numero_unico(doc_data)
+    doc_data["numero_normalizado"] = _numero_doc_normalizado(doc_data.get("numero"))
     if _tiene_productos_vinculados(doc_data) and not has_permission(user, "facturas.afectar_stock"):
         doc_data["afecta_stock"] = True
     # Si se crea ya pagada y se proveyó cuenta, armamos el array pagos[]
@@ -179,6 +252,9 @@ async def update_factura(factura_id: str, data: FacturaCreate, user: dict = Depe
     if not fac:
         raise HTTPException(status_code=404, detail="Factura no encontrada")
     update_data = data.dict()
+    update_data = await _asegurar_tc_fiscal_factura(update_data)
+    await _ensure_factura_numero_unico(update_data, ignore_id=factura_id)
+    update_data["numero_normalizado"] = _numero_doc_normalizado(update_data.get("numero"))
     if (_tiene_productos_vinculados(update_data) or _tiene_productos_vinculados(fac)) and not has_permission(user, "facturas.afectar_stock"):
         update_data["afecta_stock"] = True
     # Si se está marcando como pagada (estaba pendiente o sin pagos) y se dio cuenta,
@@ -296,7 +372,9 @@ async def pago_parcial_factura(
             recibo_numero = numero_recibo_manual
         else:
             ultimo_rec = await db.recibos.find_one(
-                {}, {"numero": 1, "_id": 0}, sort=[("created_at", -1)]
+                {"logo_tipo": fac.get("logo_tipo", "arandujar"), "numero": {"$regex": r"^REC-\d+$"}},
+                {"numero": 1, "_id": 0},
+                sort=[("created_at", -1)]
             )
             if ultimo_rec and ultimo_rec.get("numero"):
                 try:
@@ -304,8 +382,11 @@ async def pago_parcial_factura(
                 except Exception:
                     n = 1
             else:
-                n = (await db.recibos.count_documents({})) + 1
+                n = (await db.recibos.count_documents({"logo_tipo": fac.get("logo_tipo", "arandujar")})) + 1
+            while await db.recibos.find_one({"logo_tipo": fac.get("logo_tipo", "arandujar"), "numero": f"REC-{n:04d}"}):
+                n += 1
             recibo_numero = f"REC-{n:04d}"
+        await _ensure_recibo_numero_unico(recibo_numero, fac.get("logo_tipo", "arandujar"))
 
         pago_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
@@ -314,6 +395,7 @@ async def pago_parcial_factura(
         recibo_doc = {
             "id": str(uuid.uuid4()),
             "numero": recibo_numero,
+            "numero_normalizado": _numero_doc_normalizado(recibo_numero),
             "factura_id": factura_id,
             "factura_numero": fac.get("numero", ""),
             "razon_social": fac.get("razon_social", ""),

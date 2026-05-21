@@ -54,6 +54,28 @@ def _sum_usd_without_tc(docs, field="monto", moneda_field="moneda", tc_field="ti
     return round(total, 2)
 
 
+def _sum_usd(docs, field="monto", moneda_field="moneda"):
+    total = 0
+    for d in docs:
+        if (d.get(moneda_field) or "PYG") != "USD":
+            continue
+        total += float(d.get(field) or 0)
+    return round(total, 2)
+
+
+def _iva_incluido(monto, tasa=10):
+    try:
+        monto = float(monto or 0)
+        tasa = int(tasa or 10)
+    except (TypeError, ValueError):
+        return 0
+    if tasa == 10:
+        return monto / 11
+    if tasa == 5:
+        return monto / 21
+    return 0
+
+
 async def _docs(col, query, projection=None, limit=5000, sort_field=None):
     cursor = col.find(query, projection or {"_id": 0})
     if sort_field:
@@ -95,27 +117,41 @@ async def get_dashboard_resumen(
 
     facturas = await _docs(db.facturas, {**logo_q, **per_fecha, "tipo": "emitida", "estado": {"$ne": "anulada"}}, {"_id": 0, "estado": 1, "monto": 1, "monto_pagado": 1, "moneda": 1, "tipo_cambio": 1, "pagos": 1})
     fact_pagado = 0
+    fact_pagado_usd = 0
     fact_pendiente = 0
+    fact_pendiente_usd = 0
     for f in facturas:
         pagos = f.get("pagos") or []
         pagado = sum(_to_pyg(p.get("monto") or p.get("monto_pagado"), f.get("moneda", "PYG"), p.get("tipo_cambio") or f.get("tipo_cambio")) for p in pagos)
+        pagado_raw = sum(float(p.get("monto") or p.get("monto_pagado") or 0) for p in pagos)
         if not pagado:
             pagado = _to_pyg(f.get("monto_pagado"), f.get("moneda", "PYG"), f.get("tipo_cambio"))
+        if not pagado_raw:
+            pagado_raw = float(f.get("monto_pagado") or 0)
         if not pagado and f.get("estado") == "pagada":
             pagado = _to_pyg(f.get("monto"), f.get("moneda", "PYG"), f.get("tipo_cambio"))
+        if not pagado_raw and f.get("estado") == "pagada":
+            pagado_raw = float(f.get("monto") or 0)
         fact_pagado += pagado
+        if (f.get("moneda") or "PYG") == "USD":
+            fact_pagado_usd += pagado_raw
         if f.get("estado") == "pendiente":
             fact_pendiente += _to_pyg(f.get("monto"), f.get("moneda", "PYG"), f.get("tipo_cambio"))
+            if (f.get("moneda") or "PYG") == "USD":
+                fact_pendiente_usd += float(f.get("monto") or 0)
         elif f.get("estado") == "parcial":
             fact_pendiente += max(0, _to_pyg(f.get("monto"), f.get("moneda", "PYG"), f.get("tipo_cambio")) - pagado)
+            if (f.get("moneda") or "PYG") == "USD":
+                fact_pendiente_usd += max(0, float(f.get("monto") or 0) - pagado_raw)
     fact_total = _sum_pyg(facturas, "monto")
+    fact_total_usd = _sum_usd(facturas, "monto")
 
     ingresos = await _docs(db.ingresos_varios, {**logo_q, **per_fecha, "categoria": {"$ne": "Pago IVA"}}, {"_id": 0, "monto": 1, "moneda": 1, "tipo_cambio": 1})
     recibos = await _docs(db.recibos, {**logo_q, **per_fecha_pago}, {"_id": 0, "monto": 1, "moneda": 1, "tipo_cambio": 1})
 
-    compras = await _docs(db.compras, {**logo_q, **per_fecha}, {"_id": 0, "monto_total": 1, "moneda": 1, "tipo_cambio": 1, "tipo_pago": 1, "pagos": 1, "fecha_vencimiento": 1})
+    compras = await _docs(db.compras, {**logo_q, **per_fecha}, {"_id": 0, "monto_total": 1, "monto_iva": 1, "tasa_iva": 1, "moneda": 1, "tipo_cambio": 1, "tipo_pago": 1, "pagos": 1, "fecha_vencimiento": 1})
     compras_total = _sum_pyg(compras, "monto_total")
-    compras_total_usd = _sum_usd_without_tc(compras, "monto_total")
+    compras_total_usd = _sum_usd(compras, "monto_total")
     compras_contado = [c for c in compras if (c.get("tipo_pago") or "contado") == "contado"]
     compras_credito = [c for c in compras if c.get("tipo_pago") == "credito"]
     compras_pagado = _sum_pyg(compras_contado, "monto_total")
@@ -126,12 +162,14 @@ async def get_dashboard_resumen(
         saldo = max(0, (c.get("monto_total") or 0) - pagado)
         saldo_pyg = _to_pyg(saldo, c.get("moneda", "PYG"), c.get("tipo_cambio"))
         compras_pendiente += saldo_pyg
-        if (c.get("moneda") or "PYG") == "USD" and not saldo_pyg:
+        if (c.get("moneda") or "PYG") == "USD":
             compras_pendiente_usd += saldo
 
     pagos_prov = await _docs(db.pagos_proveedores, {**logo_q, **_period_or_query(["fecha_pago", "fecha_vencimiento"], periodo_tipo, mes, anio)}, {"_id": 0, "monto": 1, "monto_gs": 1, "moneda": 1, "tipo_cambio": 1, "estado": 1, "fecha_pago": 1})
     prov_pagado = round(sum((p.get("monto_gs") if p.get("monto_gs") is not None else _to_pyg(p.get("monto"), p.get("moneda", "PYG"), p.get("tipo_cambio"))) for p in pagos_prov if p.get("fecha_pago") or p.get("estado") == "pagado"))
     prov_pendiente = round(sum((p.get("monto_gs") if p.get("monto_gs") is not None else _to_pyg(p.get("monto"), p.get("moneda", "PYG"), p.get("tipo_cambio"))) for p in pagos_prov if not p.get("fecha_pago") and p.get("estado") != "pagado"))
+    prov_pagado_usd = round(sum(float(p.get("monto") or 0) for p in pagos_prov if (p.get("moneda") or "PYG") == "USD" and (p.get("fecha_pago") or p.get("estado") == "pagado")), 2)
+    prov_pendiente_usd = round(sum(float(p.get("monto") or 0) for p in pagos_prov if (p.get("moneda") or "PYG") == "USD" and not p.get("fecha_pago") and p.get("estado") != "pagado"), 2)
 
     sueldo_query = dict(per_periodo)
     if logo_q.get("logo_tipo"):
@@ -147,6 +185,17 @@ async def get_dashboard_resumen(
     notas_venta = [n for n in notas if (n.get("tipo") or "venta") == "venta"]
     notas_compra = [n for n in notas if n.get("tipo") == "compra"]
     notas_total = round(sum(n.get("monto_pyg") if n.get("monto_pyg") is not None else _to_pyg(n.get("monto"), n.get("moneda", "PYG"), n.get("tipo_cambio")) for n in notas))
+    notas_total_usd = _sum_usd(notas, "monto")
+
+    iva_debito_usd = sum(_iva_incluido(f.get("monto")) for f in facturas if (f.get("moneda") or "PYG") == "USD")
+    iva_debito_usd -= sum(_iva_incluido(n.get("monto")) for n in notas_venta if (n.get("moneda") or "PYG") == "USD")
+    iva_credito_usd = 0
+    for c in compras:
+        if (c.get("moneda") or "PYG") != "USD":
+            continue
+        iva_credito_usd += float(c.get("monto_iva") or _iva_incluido(c.get("monto_total"), c.get("tasa_iva", 10)))
+    iva_credito_usd -= sum(_iva_incluido(n.get("monto")) for n in notas_compra if (n.get("moneda") or "PYG") == "USD")
+    iva_saldo_usd = round(iva_debito_usd - iva_credito_usd, 2)
 
     costos_query = dict(logo_q)
     costos_ids = [c["id"] for c in await db.costos_fijos.find(costos_query, {"_id": 0, "id": 1}).to_list(5000)]
@@ -157,6 +206,7 @@ async def get_dashboard_resumen(
         pagos_costos_q["costo_fijo_id"] = "__sin_costos__"
     pagos_costos = await _docs(db.pagos_costos_fijos, pagos_costos_q, {"_id": 0, "monto_pagado": 1, "moneda": 1, "tipo_cambio": 1})
     gastos_pagados = _sum_pyg(pagos_costos, "monto_pagado")
+    gastos_pagados_usd = _sum_usd(pagos_costos, "monto_pagado")
     gastos_count = len(pagos_costos)
 
     pagos_iva = await _docs(db.pagos_iva, {**logo_q, **per_periodo_iva}, {"_id": 0, "monto": 1})
@@ -201,15 +251,15 @@ async def get_dashboard_resumen(
         "mensajes": {"total": mensajes_total, "sin_leer": mensajes_sin_leer},
         "clientes": {"total": clientes_total},
         "presupuestos": {"total": len(presupuestos), "aprobados": pres_estados.get("aprobado", 0), "rechazados": pres_estados.get("rechazado", 0), "cobrados": pres_estados.get("cobrado", 0), "faltantes": pres_estados.get("facturado", 0) + pres_estados.get("aprobado", 0)},
-        "facturacion": {"cantidad": len(facturas), "total": fact_total, "cobrado": round(fact_pagado), "pendiente": round(max(0, fact_pendiente))},
-        "ingresos": {"cantidad": len(ingresos), "total": _sum_pyg(ingresos, "monto")},
-        "recibos": {"cantidad": len(recibos), "total": _sum_pyg(recibos, "monto")},
+        "facturacion": {"cantidad": len(facturas), "total": fact_total, "total_usd": fact_total_usd, "cobrado": round(fact_pagado), "cobrado_usd": round(fact_pagado_usd, 2), "pendiente": round(max(0, fact_pendiente)), "pendiente_usd": round(max(0, fact_pendiente_usd), 2)},
+        "ingresos": {"cantidad": len(ingresos), "total": _sum_pyg(ingresos, "monto"), "total_usd": _sum_usd(ingresos, "monto")},
+        "recibos": {"cantidad": len(recibos), "total": _sum_pyg(recibos, "monto"), "total_usd": _sum_usd(recibos, "monto")},
         "compras": {"cantidad": len(compras), "total": compras_total, "total_usd": compras_total_usd, "contado": len(compras_contado), "credito": len(compras_credito), "pagado": compras_pagado, "pendiente": round(compras_pendiente), "pendiente_usd": round(compras_pendiente_usd, 2)},
-        "proveedores": {"pagado": prov_pagado, "pendiente": prov_pendiente, "pagos": len(pagos_prov)},
-        "sueldos": {"cantidad": len(sueldos), "total": sueldos_total, "extras": sueldos_extras, "adelantos": sueldos_adelantos, "descuentos": sueldos_descuentos},
-        "notas_credito": {"cantidad": len(notas), "total": notas_total, "ventas": len(notas_venta), "compras": len(notas_compra)},
-        "gastos": {"cantidad": gastos_count, "pagado": gastos_pagados},
-        "iva": iva_resumen,
+        "proveedores": {"pagado": prov_pagado, "pagado_usd": prov_pagado_usd, "pendiente": prov_pendiente, "pendiente_usd": prov_pendiente_usd, "pagos": len(pagos_prov)},
+        "sueldos": {"cantidad": len(sueldos), "total": sueldos_total, "total_usd": _sum_usd(sueldos, "monto_pagado"), "extras": sueldos_extras, "extras_usd": _sum_usd(sueldos, "total_extras"), "adelantos": sueldos_adelantos, "adelantos_usd": _sum_usd(sueldos, "total_adelantos"), "descuentos": sueldos_descuentos},
+        "notas_credito": {"cantidad": len(notas), "total": notas_total, "total_usd": notas_total_usd, "ventas": len(notas_venta), "compras": len(notas_compra)},
+        "gastos": {"cantidad": gastos_count, "pagado": gastos_pagados, "pagado_usd": gastos_pagados_usd},
+        "iva": {**iva_resumen, "a_pagar_usd": round(max(0, iva_saldo_usd), 2), "saldo_usd": iva_saldo_usd},
     }
 
 

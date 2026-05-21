@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime, timezone
+import re
 import uuid
 from typing import List, Optional
 
@@ -8,6 +9,43 @@ from auth import require_authenticated, has_permission, log_auditoria, get_logos
 from models.schemas import ProveedorCreate, ProveedorResponse, PagoProveedorCreate, PagoProveedorResponse
 
 router = APIRouter()
+
+
+def _normalizar_texto(valor: Optional[str]) -> str:
+    return " ".join((valor or "").strip().lower().split())
+
+
+def _normalizar_ruc(valor: Optional[str]) -> str:
+    return "".join(ch for ch in (valor or "").strip().lower() if ch.isalnum())
+
+
+async def _ensure_proveedor_unico(
+    nombre: Optional[str],
+    ruc: Optional[str],
+    logo_tipo: Optional[str],
+    ignore_id: Optional[str] = None,
+):
+    nombre_norm = _normalizar_texto(nombre)
+    ruc_norm = _normalizar_ruc(ruc)
+    or_terms = []
+    if nombre_norm:
+        or_terms.extend([
+            {"nombre_normalizado": nombre_norm},
+            {"nombre": {"$regex": f"^{re.escape(nombre_norm)}$", "$options": "i"}},
+        ])
+    if ruc_norm:
+        or_terms.extend([
+            {"ruc_normalizado": ruc_norm},
+            {"ruc": ruc},
+        ])
+    if not or_terms:
+        return
+    query: dict = {"logo_tipo": logo_tipo or "arandujar", "$or": or_terms}
+    if ignore_id:
+        query["id"] = {"$ne": ignore_id}
+    existing = await db.proveedores.find_one(query, {"_id": 0, "id": 1, "nombre": 1, "ruc": 1})
+    if existing:
+        raise HTTPException(status_code=400, detail="Ya existe un proveedor con esa razón social o RUC.")
 
 
 @router.get("/admin/proveedores", response_model=List[ProveedorResponse])
@@ -30,11 +68,14 @@ async def get_proveedores(activo: Optional[bool] = None, logo_tipo: Optional[str
 async def create_proveedor(data: ProveedorCreate, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "proveedores.crear"):
         raise HTTPException(status_code=403, detail="Sin permiso para crear proveedores")
+    await _ensure_proveedor_unico(data.nombre, data.ruc, data.logo_tipo)
     prov_id = str(uuid.uuid4())
     doc = {
         "id": prov_id,
         "nombre": data.nombre,
+        "nombre_normalizado": _normalizar_texto(data.nombre),
         "ruc": data.ruc,
+        "ruc_normalizado": _normalizar_ruc(data.ruc),
         "contacto": data.contacto,
         "telefono": data.telefono,
         "email": data.email,
@@ -57,9 +98,12 @@ async def update_proveedor(prov_id: str, data: ProveedorCreate, user: dict = Dep
     existing = await db.proveedores.find_one({"id": prov_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Proveedor no encontrado")
+    await _ensure_proveedor_unico(data.nombre, data.ruc, data.logo_tipo, ignore_id=prov_id)
     update_fields = {
         "nombre": data.nombre,
+        "nombre_normalizado": _normalizar_texto(data.nombre),
         "ruc": data.ruc,
+        "ruc_normalizado": _normalizar_ruc(data.ruc),
         "contacto": data.contacto,
         "telefono": data.telefono,
         "email": data.email,

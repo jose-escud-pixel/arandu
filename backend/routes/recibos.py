@@ -54,6 +54,27 @@ class ReciboResponse(BaseModel):
 #  CRUD
 # ─────────────────────────────────────────────
 
+def _numero_doc_normalizado(numero: Optional[str]) -> str:
+    return "".join((numero or "").strip().lower().split())
+
+
+async def _next_recibo_numero(logo_tipo: str) -> str:
+    ultimo = await db.recibos.find_one(
+        {"logo_tipo": logo_tipo or "arandujar", "numero": {"$regex": r"^REC-\d+$"}},
+        {"numero": 1, "_id": 0},
+        sort=[("created_at", -1)],
+    )
+    if ultimo and ultimo.get("numero"):
+        try:
+            n = int(ultimo["numero"].split("-")[-1]) + 1
+        except Exception:
+            n = await db.recibos.count_documents({"logo_tipo": logo_tipo or "arandujar"}) + 1
+    else:
+        n = await db.recibos.count_documents({"logo_tipo": logo_tipo or "arandujar"}) + 1
+    while await db.recibos.find_one({"logo_tipo": logo_tipo or "arandujar", "numero": f"REC-{n:04d}"}):
+        n += 1
+    return f"REC-{n:04d}"
+
 @router.get("/admin/recibos", response_model=List[ReciboResponse])
 async def get_recibos(
     logo_tipo: Optional[str] = None,
@@ -87,22 +108,13 @@ async def get_recibo(recibo_id: str, user: dict = Depends(require_authenticated)
 async def create_recibo(data: ReciboCreate, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "facturas.editar"):
         raise HTTPException(status_code=403, detail="Sin permiso")
-    # Auto-número de recibo
-    ultimo = await db.recibos.find_one(
-        {}, {"numero": 1, "_id": 0}, sort=[("created_at", -1)]
-    )
-    if ultimo and ultimo.get("numero"):
-        try:
-            n = int(ultimo["numero"].split("-")[-1]) + 1
-        except Exception:
-            n = 1
-    else:
-        n = 1
-    numero = f"REC-{n:04d}"
+    # Auto-número de recibo único por empresa/logo
+    numero = await _next_recibo_numero(data.logo_tipo)
     now = datetime.now(timezone.utc).isoformat()
     doc = {
         "id": str(uuid.uuid4()),
         "numero": numero,
+        "numero_normalizado": _numero_doc_normalizado(numero),
         **data.dict(),
         "created_at": now,
     }

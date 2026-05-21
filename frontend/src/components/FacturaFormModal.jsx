@@ -51,6 +51,7 @@ const FacturaFormModal = ({
 
   const [form, setForm] = useState(getDefaultForm());
   const [saving, setSaving] = useState(false);
+  const [tcInfo, setTcInfo] = useState(null);
 
   // Populate form when editing
   useEffect(() => {
@@ -107,6 +108,32 @@ const FacturaFormModal = ({
   // ── Helpers / handlers ─────────────────────────────────────────
   // Setter genérico para campos planos del form
   const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+
+  useEffect(() => {
+    const sugeridoActual = tcInfo ? String(tcInfo.tipo_cambio_sugerido || tcInfo.venta || "") : "";
+    const tcActual = String(form.tipo_cambio || "");
+    const puedeActualizarTc = !tcActual || (sugeridoActual && tcActual === sugeridoActual);
+    if (form.moneda !== "USD" || !form.fecha || !puedeActualizarTc) return;
+    let cancelled = false;
+    fetch(`${API}/admin/cotizaciones/usd?fecha=${form.fecha}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (cancelled || !data) return;
+        const sugerido = data.tipo_cambio_sugerido || data.venta;
+        if (sugerido) {
+          setForm(prev => {
+            const prevTc = String(prev.tipo_cambio || "");
+            if (prevTc && sugeridoActual && prevTc !== sugeridoActual) return prev;
+            return { ...prev, tipo_cambio: String(sugerido) };
+          });
+          setTcInfo(data);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [API, token, form.moneda, form.fecha, form.tipo_cambio, tcInfo?.tipo_cambio_sugerido, tcInfo?.venta]);
 
   // Format helper (₲ o USD según moneda actual)
   const fmtMonto = (n) => {
@@ -533,9 +560,14 @@ const FacturaFormModal = ({
                   type="number"
                   className={inputCls}
                   value={form.tipo_cambio}
-                  onChange={(e) => set("tipo_cambio", e.target.value)}
+                  onChange={(e) => { setTcInfo(null); set("tipo_cambio", e.target.value); }}
                   placeholder="7500"
                 />
+                {tcInfo && (
+                  <p className="text-[11px] text-emerald-700 mt-1">
+                    Sugerido Cambios Chaco venta: ₲ {Number(tcInfo.tipo_cambio_sugerido || tcInfo.venta).toLocaleString("es-PY")} ({tcInfo.fecha})
+                  </p>
+                )}
               </div>
             )}
           </div>

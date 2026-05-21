@@ -32,6 +32,7 @@ class PagoProveedorCreate(BaseModel):
     cuenta_pago: str = "guaranies"            # "guaranies" | "dolares"
     fecha_vencimiento: str                    # YYYY-MM-DD
     fecha_pago: Optional[str] = None
+    recibo_numero: Optional[str] = None        # número de recibo del proveedor; si falta se autogenera
     notas: Optional[str] = None
     logo_tipo: str = "arandujar"
     # Pagos detallados por compra (nuevo flujo de pago parcial)
@@ -52,6 +53,7 @@ class PagoProveedorUpdate(BaseModel):
     cuenta_pago: Optional[str] = None
     fecha_vencimiento: Optional[str] = None
     fecha_pago: Optional[str] = None
+    recibo_numero: Optional[str] = None
     notas: Optional[str] = None
     logo_tipo: Optional[str] = None
     compras_pagos: Optional[List[ComprasPagoItem]] = None
@@ -59,9 +61,62 @@ class PagoProveedorUpdate(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _numero_doc_normalizado(numero: Optional[str]) -> str:
+    return "".join((numero or "").strip().lower().split())
+
+
+async def _next_recibo_proveedor_numero(logo_tipo: str) -> str:
+    ultimo = await db.pagos_proveedores.find_one(
+        {"logo_tipo": logo_tipo or "arandujar", "recibo_numero": {"$regex": r"^RPROV-\d+$"}},
+        {"_id": 0, "recibo_numero": 1},
+        sort=[("created_at", -1)],
+    )
+    if ultimo and ultimo.get("recibo_numero"):
+        try:
+            n = int(ultimo["recibo_numero"].split("-")[-1]) + 1
+        except Exception:
+            n = await db.pagos_proveedores.count_documents({"logo_tipo": logo_tipo or "arandujar", "recibo_numero": {"$ne": None}}) + 1
+    else:
+        n = await db.pagos_proveedores.count_documents({"logo_tipo": logo_tipo or "arandujar", "recibo_numero": {"$ne": None}}) + 1
+    while await db.pagos_proveedores.find_one({"logo_tipo": logo_tipo or "arandujar", "recibo_numero": f"RPROV-{n:04d}"}):
+        n += 1
+    return f"RPROV-{n:04d}"
+
+
+async def _ensure_recibo_proveedor_unico(
+    recibo_numero: Optional[str],
+    logo_tipo: Optional[str],
+    proveedor_id: Optional[str],
+    proveedor_nombre: Optional[str],
+    ignore_id: Optional[str] = None,
+):
+    normalizado = _numero_doc_normalizado(recibo_numero)
+    if not normalizado:
+        return
+    query: dict = {
+        "logo_tipo": logo_tipo or "arandujar",
+        "$or": [
+            {"recibo_numero": (recibo_numero or "").strip()},
+            {"recibo_numero_normalizado": normalizado},
+        ],
+    }
+    proveedor_or = []
+    if proveedor_id:
+        proveedor_or.append({"proveedor_id": proveedor_id})
+    if proveedor_nombre:
+        proveedor_or.append({"proveedor_nombre": proveedor_nombre})
+    if proveedor_or:
+        query["$and"] = [{"$or": proveedor_or}]
+    if ignore_id:
+        query["id"] = {"$ne": ignore_id}
+    existente = await db.pagos_proveedores.find_one(query, {"_id": 0, "id": 1, "recibo_numero": 1})
+    if existente:
+        raise HTTPException(status_code=400, detail=f"Ya existe un recibo {recibo_numero} para este proveedor.")
+
 async def _aplicar_pagos_a_compras(compras_pagos: List[ComprasPagoItem], pago_proveedor_id: str,
                                     moneda: str, tipo_cambio: Optional[float], fecha_pago: Optional[str],
-                                    cuenta_id: Optional[str] = None, cuenta_nombre: Optional[str] = None):
+                                    cuenta_id: Optional[str] = None, cuenta_nombre: Optional[str] = None,
+                                    recibo_numero: Optional[str] = None):
     """Empuja un pago en cada compra del detalle, respetando el saldo real."""
     fecha = fecha_pago or datetime.now(timezone.utc).date().isoformat()
     for cp in compras_pagos:
@@ -73,7 +128,17 @@ async def _aplicar_pagos_a_compras(compras_pagos: List[ComprasPagoItem], pago_pr
             continue
         pagos_existentes = compra.get("pagos", [])
         total_ya_pagado = sum(p.get("monto_pagado", 0) for p in pagos_existentes)
-        saldo_actual = max(0, compra.get("monto_total", 0) - total_ya_pagado)
+        nota_or = [{"compra_id": cp.compra_id}]
+        if compra.get("numero_factura"):
+            nota_or.append({"compra_numero_factura": compra.get("numero_factura")})
+        notas = await db.notas_credito.find(
+            {"tipo": "compra", "$or": nota_or, "estado": {"$ne": "anulada"}},
+            {"_id": 0, "id": 1, "monto": 1},
+        ).to_list(1000)
+        ids_notas = {n.get("id") for n in notas}
+        creditos_guardados = [c for c in (compra.get("creditos") or []) if c.get("id") not in ids_notas]
+        total_creditos = sum(c.get("monto", 0) for c in creditos_guardados) + sum(n.get("monto", 0) for n in notas)
+        saldo_actual = max(0, compra.get("monto_total", 0) - total_ya_pagado - total_creditos)
         monto_aplicar = min(cp.monto_pagado, saldo_actual)  # nunca pagar más del saldo
         if monto_aplicar <= 0:
             continue
@@ -85,6 +150,7 @@ async def _aplicar_pagos_a_compras(compras_pagos: List[ComprasPagoItem], pago_pr
             "fecha_pago": fecha,
             "notas": f"Pago registrado vía pago proveedor",
             "pago_proveedor_id": pago_proveedor_id,   # referencia para poder revertir
+            "recibo_numero": recibo_numero,
             "cuenta_id": cuenta_id,
             "cuenta_nombre": cuenta_nombre,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -183,6 +249,14 @@ async def create_pago_proveedor(data: PagoProveedorCreate, user: dict = Depends(
         # Fallback: marcar como pagado total (monto_pagado = saldo_pendiente de cada compra)
         compras_pagos = [ComprasPagoItem(compra_id=cid, monto_pagado=data.monto) for cid in data.compras_ids]
 
+    recibo_numero = (data.recibo_numero or "").strip() or None
+    if data.fecha_pago and not recibo_numero:
+        recibo_numero = await _next_recibo_proveedor_numero(data.logo_tipo)
+    if recibo_numero:
+        await _ensure_recibo_proveedor_unico(
+            recibo_numero, data.logo_tipo, data.proveedor_id, data.proveedor_nombre
+        )
+
     doc = {
         "id": pago_id,
         "proveedor_id": data.proveedor_id,
@@ -198,6 +272,9 @@ async def create_pago_proveedor(data: PagoProveedorCreate, user: dict = Depends(
         "cuenta_pago": data.cuenta_pago,
         "fecha_vencimiento": data.fecha_vencimiento,
         "fecha_pago": data.fecha_pago,
+        "recibo_numero": recibo_numero,
+        "recibo_numero_normalizado": _numero_doc_normalizado(recibo_numero) if recibo_numero else None,
+        "recibo_auto": bool(data.fecha_pago and not data.recibo_numero),
         "notas": data.notas,
         "logo_tipo": data.logo_tipo,
         "compras_pagos": [cp.dict() for cp in compras_pagos],
@@ -209,7 +286,7 @@ async def create_pago_proveedor(data: PagoProveedorCreate, user: dict = Depends(
     if compras_pagos:
         await _aplicar_pagos_a_compras(
             compras_pagos, pago_id, data.moneda, data.tipo_cambio, data.fecha_pago,
-            cuenta_id=data.cuenta_id, cuenta_nombre=data.cuenta_nombre,
+            cuenta_id=data.cuenta_id, cuenta_nombre=data.cuenta_nombre, recibo_numero=recibo_numero,
         )
 
     await log_auditoria(user, "pagos_proveedores", "crear", f"Pago a '{data.proveedor_nombre}': {data.concepto}", pago_id)
@@ -233,6 +310,17 @@ async def update_pago_proveedor(pago_id: str, data: PagoProveedorUpdate, user: d
     )
 
     update_fields = {k: v for k, v in data.dict(exclude_none=True).items() if k != "compras_pagos"}
+    if "recibo_numero" in update_fields:
+        recibo_numero = (update_fields.get("recibo_numero") or "").strip() or None
+        await _ensure_recibo_proveedor_unico(
+            recibo_numero,
+            update_fields.get("logo_tipo", existing.get("logo_tipo", "arandujar")),
+            update_fields.get("proveedor_id", existing.get("proveedor_id")),
+            update_fields.get("proveedor_nombre", existing.get("proveedor_nombre")),
+            ignore_id=pago_id,
+        )
+        update_fields["recibo_numero"] = recibo_numero
+        update_fields["recibo_numero_normalizado"] = _numero_doc_normalizado(recibo_numero) if recibo_numero else None
 
     # Si vienen nuevos compras_pagos, revertir los anteriores y aplicar los nuevos
     if data.compras_pagos is not None:
@@ -244,6 +332,7 @@ async def update_pago_proveedor(pago_id: str, data: PagoProveedorUpdate, user: d
             data.fecha_pago or existing.get("fecha_pago"),
             cuenta_id=data.cuenta_id or existing.get("cuenta_id"),
             cuenta_nombre=data.cuenta_nombre or existing.get("cuenta_nombre"),
+            recibo_numero=update_fields.get("recibo_numero", existing.get("recibo_numero")),
         )
         update_fields["compras_pagos"] = [cp.dict() for cp in data.compras_pagos]
         # Recalcular monto total desde los nuevos pagos
@@ -268,9 +357,24 @@ async def marcar_pagado(pago_id: str, fecha_pago: Optional[str] = None, user: di
         raise HTTPException(status_code=404, detail="Pago no encontrado")
 
     fp = fecha_pago or datetime.now(timezone.utc).date().isoformat()
-    await db.pagos_proveedores.update_one({"id": pago_id}, {"$set": {"fecha_pago": fp}})
+    updates = {"fecha_pago": fp}
+    if not existing.get("recibo_numero"):
+        recibo_numero = await _next_recibo_proveedor_numero(existing.get("logo_tipo", "arandujar"))
+        await _ensure_recibo_proveedor_unico(
+            recibo_numero,
+            existing.get("logo_tipo", "arandujar"),
+            existing.get("proveedor_id"),
+            existing.get("proveedor_nombre"),
+            ignore_id=pago_id,
+        )
+        updates.update({
+            "recibo_numero": recibo_numero,
+            "recibo_numero_normalizado": _numero_doc_normalizado(recibo_numero),
+            "recibo_auto": True,
+        })
+    await db.pagos_proveedores.update_one({"id": pago_id}, {"$set": updates})
     await log_auditoria(user, "pagos_proveedores", "pagar", f"Pago marcado como pagado: {existing.get('concepto')}", pago_id)
-    return {"success": True, "fecha_pago": fp}
+    return {"success": True, **updates}
 
 
 @router.patch("/admin/pagos-proveedores/{pago_id}/desmarcar-pagado")

@@ -151,6 +151,8 @@ class PresupuestoItem(BaseModel):
     subtotal: float
     producto_id: Optional[str] = None
     observacion: Optional[str] = None
+    imagen: Optional[str] = None
+    imagen_comentario: Optional[str] = None
     moneda_item: Optional[str] = None
     tipo_cambio_item: Optional[float] = None
     proveedor_id: Optional[str] = None

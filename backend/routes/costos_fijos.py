@@ -41,6 +41,31 @@ def es_due_en_periodo(costo: dict, periodo: str) -> bool:
         return False
 
 
+def _periodo_anterior(periodo: str) -> str:
+    year, month = int(periodo[:4]), int(periodo[5:7])
+    if month == 1:
+        return f"{year - 1}-12"
+    return f"{year}-{str(month - 1).zfill(2)}"
+
+
+def _monto_vigente(costo: dict, periodo: str) -> dict:
+    vigente = {
+        "monto": costo.get("monto", 0),
+        "moneda": costo.get("moneda", "PYG"),
+        "tipo_cambio": costo.get("tipo_cambio"),
+    }
+    historial = sorted(costo.get("historial_montos") or [], key=lambda h: h.get("fecha_inicio", ""))
+    for h in historial:
+        fecha_inicio = h.get("fecha_inicio") or ""
+        if fecha_inicio[:7] <= periodo:
+            vigente = {
+                "monto": h.get("monto", vigente["monto"]),
+                "moneda": h.get("moneda", vigente["moneda"]),
+                "tipo_cambio": h.get("tipo_cambio", vigente["tipo_cambio"]),
+            }
+    return vigente
+
+
 @router.get("/admin/costos-fijos", response_model=List[CostoFijoResponse])
 async def get_costos_fijos(logo_tipo: Optional[str] = None, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "costos_fijos.ver"):
@@ -108,6 +133,12 @@ async def create_costo_fijo(data: CostoFijoCreate, user: dict = Depends(require_
         "fecha_fin": data.fecha_fin,
         "activo": data.activo,
         "notas": data.notas,
+        "historial_montos": [{
+            "fecha_inicio": data.fecha_inicio,
+            "monto": data.monto,
+            "moneda": data.moneda,
+            "tipo_cambio": data.tipo_cambio,
+        }],
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.costos_fijos.insert_one(doc)
@@ -137,6 +168,27 @@ async def update_costo_fijo(costo_id: str, data: CostoFijoCreate, user: dict = D
         "activo": data.activo,
         "notas": data.notas,
     }
+    historial = list(existing.get("historial_montos") or [{
+        "fecha_inicio": existing.get("fecha_inicio"),
+        "monto": existing.get("monto"),
+        "moneda": existing.get("moneda", "PYG"),
+        "tipo_cambio": existing.get("tipo_cambio"),
+    }])
+    monto_cambio = (
+        float(existing.get("monto") or 0) != float(data.monto or 0)
+        or existing.get("moneda", "PYG") != data.moneda
+        or (existing.get("tipo_cambio") or None) != (data.tipo_cambio or None)
+    )
+    if monto_cambio:
+        periodo_vigencia = (data.fecha_inicio or datetime.now(timezone.utc).date().isoformat())[:7]
+        historial = [h for h in historial if (h.get("fecha_inicio") or "")[:7] != periodo_vigencia]
+        historial.append({
+            "fecha_inicio": data.fecha_inicio,
+            "monto": data.monto,
+            "moneda": data.moneda,
+            "tipo_cambio": data.tipo_cambio,
+        })
+    update_fields["historial_montos"] = sorted(historial, key=lambda h: h.get("fecha_inicio", ""))
     await db.costos_fijos.update_one({"id": costo_id}, {"$set": update_fields})
     updated = await db.costos_fijos.find_one({"id": costo_id}, {"_id": 0})
     return updated
@@ -197,6 +249,7 @@ async def get_vencimientos_periodo(periodo: str, logo_tipo: Optional[str] = None
     result = []
     for c in costos_periodo:
         pago = pagos_map.get(c["id"])
+        monto_vigente = _monto_vigente(c, periodo)
         if pago:
             estado = "pagado"
         elif periodo_vencido:
@@ -209,9 +262,9 @@ async def get_vencimientos_periodo(periodo: str, logo_tipo: Optional[str] = None
             "nombre": c["nombre"],
             "descripcion": c.get("descripcion"),
             "categoria": c.get("categoria"),
-            "monto": c["monto"],
-            "moneda": c["moneda"],
-            "tipo_cambio": c.get("tipo_cambio"),
+            "monto": monto_vigente["monto"],
+            "moneda": monto_vigente["moneda"],
+            "tipo_cambio": monto_vigente["tipo_cambio"],
             "frecuencia": c["frecuencia"],
             "dia_vencimiento": c.get("dia_vencimiento", 1),
             "estado": estado,

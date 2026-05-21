@@ -48,6 +48,28 @@ def to_pyg(monto: float, moneda: str, tipo_cambio: Optional[float]) -> float:
     return round_pyg((monto or 0) * tc)
 
 
+def _iva_incluido(monto: float, tasa: Optional[int] = 10) -> float:
+    """Calcula IVA incluido en un precio final."""
+    try:
+        tasa_num = int(tasa or 0)
+    except (TypeError, ValueError):
+        tasa_num = 0
+    monto_num = float(monto or 0)
+    if tasa_num == 10:
+        return monto_num / 11.0
+    if tasa_num == 5:
+        return monto_num / 21.0
+    return 0.0
+
+
+def _norm_text(valor: Optional[str]) -> str:
+    return " ".join((valor or "").strip().lower().split())
+
+
+def _norm_ruc(valor: Optional[str]) -> str:
+    return "".join(ch for ch in (valor or "").strip().lower() if ch.isalnum())
+
+
 def mes_range(periodo: str):
     """Devuelve el prefijo YYYY-MM para filtrar por mes."""
     return f"^{periodo}"
@@ -175,15 +197,19 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
     # Se construye primero para poder aplicarlo a contratos Y facturas emitidas
     empresas_retention = await db.empresas.find(
         {"aplica_retencion": True},
-        {"_id": 0, "razon_social": 1, "nombre": 1, "porcentaje_retencion": 1}
+        {"_id": 0, "id": 1, "razon_social": 1, "nombre": 1, "ruc": 1, "porcentaje_retencion": 1}
     ).to_list(200)
     retencion_map: dict = {}
     for e in empresas_retention:
         pct = e.get("porcentaje_retencion") or 0
-        if e.get("razon_social"):
-            retencion_map[e["razon_social"]] = pct
-        if e.get("nombre"):
-            retencion_map[e["nombre"]] = pct
+        for key in (
+            f"id:{e.get('id')}" if e.get("id") else None,
+            f"ruc:{_norm_ruc(e.get('ruc'))}" if e.get("ruc") else None,
+            f"nombre:{_norm_text(e.get('razon_social'))}" if e.get("razon_social") else None,
+            f"nombre:{_norm_text(e.get('nombre'))}" if e.get("nombre") else None,
+        ):
+            if key:
+                retencion_map[key] = pct
 
 
     # ── FACTURAS EMITIDAS COBRADAS (cash-basis) ──────────────────────────────
@@ -191,21 +217,36 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
     # - Facturas con pagos[]: usamos cada entrada del array (soporta pagos múltiples/parciales)
     # - Facturas sin pagos[] (pago único / datos legacy): usamos fecha_pago directamente
 
+    def _pct_retencion_factura(fac):
+        return (
+            retencion_map.get(f"id:{fac.get('empresa_id')}")
+            or retencion_map.get(f"ruc:{_norm_ruc(fac.get('ruc'))}")
+            or retencion_map.get(f"nombre:{_norm_text(fac.get('razon_social'))}")
+            or 0
+        )
+
     def _registrar_ingreso_fac(fac, monto_base, fuente, tiene_recibo=False):
-        """Aplica retención si corresponde y agrega el ingreso a la lista.
-        Si tiene_recibo=True → NO descuenta retención porque ya hay egreso automático."""
+        """Registra el cobro bruto y la retención de IVA como egreso visible."""
         razon_social = fac.get("razon_social", "")
-        pct_retencion = retencion_map.get(razon_social, 0)
-        if pct_retencion and monto_base and not tiene_recibo:
-            iva = monto_base / 11.0
-            monto_efectivo = monto_base - iva * (pct_retencion / 100.0)
-        else:
-            monto_efectivo = monto_base
+        pct_retencion = _pct_retencion_factura(fac)
+        monto_efectivo = monto_base
         moneda_fac = fac.get("moneda", "PYG")
         monto_pyg = to_pyg(monto_efectivo, moneda_fac, fac.get("tipo_cambio"))
         ingresos.append({"fuente": fuente, "descripcion": f"{fac['numero']} – {razon_social}", "monto_pyg": monto_pyg})
         if moneda_fac == "USD":
             ingresos_usd.append({"fuente": fuente, "monto_usd": monto_efectivo})
+        if pct_retencion and monto_base:
+            iva = _iva_incluido(monto_base, fac.get("tasa_iva", 10))
+            retencion = iva * (pct_retencion / 100.0)
+            retencion_pyg = to_pyg(retencion, moneda_fac, fac.get("tipo_cambio"))
+            if retencion_pyg > 0:
+                egresos.append({
+                    "fuente": "Retención IVA",
+                    "descripcion": f"{fac.get('numero', '')} – {razon_social} ({pct_retencion:g}%)",
+                    "monto_pyg": retencion_pyg,
+                })
+            if moneda_fac == "USD":
+                egresos_usd.append({"fuente": "Retención IVA", "monto_usd": retencion})
 
     # Rama 1: facturas que tienen al menos un pago del período en el array pagos[]
     fac_con_pagos = await db.facturas.find(
@@ -341,12 +382,18 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
     # así evitamos contar dos veces y no exigimos TC en una compra credito que
     # todavía no fue pagada.
     compras_bal = await db.compras.find(
-        {"fecha": {"$regex": mes_range(periodo)},
-         "tipo_pago": {"$in": ["contado", None]}},
+        {"tipo_pago": {"$in": ["contado", None]},
+         "$or": [
+             {"fecha_pago": {"$regex": mes_range(periodo)}},
+             {"$and": [
+                 {"$or": [{"fecha_pago": None}, {"fecha_pago": ""}, {"fecha_pago": {"$exists": False}}]},
+                 {"fecha": {"$regex": mes_range(periodo)}},
+             ]},
+         ]},
         {"_id": 0}
     ).to_list(1000)
     for c in compras_bal:
-        if (c.get("tipo_pago") or "contado") != "contado":
+        if c.get("solo_iva") or (c.get("tipo_pago") or "contado") != "contado":
             continue
         if logo_tipo and logo_tipo != "todas" and c.get("logo_tipo") != logo_tipo:
             continue
@@ -360,6 +407,23 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
             egresos.append({"fuente": "Compras", "descripcion": proveedor, "monto_pyg": monto_pyg_c})
         if moneda_c == "USD":
             egresos_usd.append({"fuente": "Compras", "monto_usd": monto_compra})
+
+    notas_compra_bal = await db.notas_credito.find(
+        {"fecha": {"$regex": mes_range(periodo)}, "tipo": "compra", "estado": {"$ne": "anulada"}},
+        {"_id": 0}
+    ).to_list(1000)
+    for n in notas_compra_bal:
+        if logo_tipo and logo_tipo != "todas" and n.get("logo_tipo") != logo_tipo:
+            continue
+        moneda_n = n.get("moneda", "PYG")
+        monto_n = n.get("monto") or 0
+        monto_pyg_n = n.get("monto_pyg")
+        if monto_pyg_n is None:
+            monto_pyg_n = to_pyg(monto_n, moneda_n, n.get("tipo_cambio"))
+        if monto_pyg_n > 0 or moneda_n == "PYG":
+            egresos.append({"fuente": "Notas crédito compras", "descripcion": n.get("proveedor_nombre") or n.get("numero", ""), "monto_pyg": -monto_pyg_n})
+        if moneda_n == "USD":
+            egresos_usd.append({"fuente": "Notas crédito compras", "monto_usd": -monto_n})
 
     # ── FACTURAS RECIBIDAS LEGACY ────────────────────────────────
     # Ya no se suman al balance. Las facturas recibidas se gestionan desde
@@ -670,23 +734,29 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
     facturas = await db.facturas.find(
         {**lt_query, "tipo": "emitida", "estado": {"$ne": "anulada"},
          "fecha": {"$regex": f"^{periodo}"}},
-        {"_id": 0, "numero": 1, "razon_social": 1, "monto": 1, "iva": 1, "moneda": 1,
-         "tipo_cambio": 1, "tasa_iva": 1, "logo_tipo": 1}
+        {"_id": 0, "numero": 1, "razon_social": 1, "ruc": 1, "empresa_id": 1,
+         "monto": 1, "iva": 1, "moneda": 1, "tipo_cambio": 1, "tasa_iva": 1, "logo_tipo": 1}
     ).to_list(1000)
 
     debito_detalle = []
     for f in facturas:
         moneda = f.get("moneda", "PYG")
         monto = f.get("monto", 0) or 0
+        monto_pyg = to_pyg(monto, moneda, f.get("tipo_cambio"))
         iva_fac = f.get("iva")
         if iva_fac is None:
             tasa = f.get("tasa_iva", 10) or 10
-            iva_fac = monto / (10 if tasa == 10 else 21) if tasa else 0
+            iva_fac = _iva_incluido(monto, tasa)
+        iva_pyg = to_pyg(iva_fac, moneda, f.get("tipo_cambio"))
         debito_detalle.append({
             "numero": f.get("numero", ""), "razon_social": f.get("razon_social", ""),
-            "monto_factura": monto, "iva": iva_fac,
-            "iva_pyg": to_pyg(iva_fac, moneda, f.get("tipo_cambio")),
-            "moneda": moneda, "logo_tipo": f.get("logo_tipo", ""),
+            "ruc": f.get("ruc"), "empresa_id": f.get("empresa_id"),
+            "descripcion": f.get("numero", ""), "empresa_nombre": f.get("razon_social", ""),
+            "monto_factura": monto, "monto": monto_pyg, "iva": iva_pyg,
+            "iva_original": iva_fac, "iva_pyg": iva_pyg,
+            "moneda": moneda, "tipo_cambio": f.get("tipo_cambio"),
+            "tasa": f.get("tasa_iva", 10), "logo_tipo": f.get("logo_tipo", ""),
+            "tipo_documento": "factura",
         })
 
     notas_venta = await db.notas_credito.find(
@@ -702,9 +772,10 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
         iva_pyg = (monto_pyg or 0) / 11.0
         debito_detalle.append({
             "numero": n.get("numero", ""), "razon_social": n.get("razon_social", ""),
-            "monto_factura": -(monto_pyg or 0), "iva": -iva_pyg,
+            "descripcion": f"NC {n.get('numero', '')}", "empresa_nombre": n.get("razon_social", ""),
+            "monto_factura": -(monto_pyg or 0), "monto": -(monto_pyg or 0), "iva": -iva_pyg,
             "iva_pyg": -iva_pyg, "moneda": "PYG", "logo_tipo": n.get("logo_tipo", ""),
-            "tipo_documento": "nota_credito",
+            "tasa": 10, "tipo_documento": "nota_credito", "efecto": "resta_debito",
         })
 
     compras_f = await db.compras.find(
@@ -717,15 +788,20 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
     for c in compras_f:
         moneda = c.get("moneda", "PYG")
         monto = c.get("monto_total", 0) or 0
+        monto_pyg = to_pyg(monto, moneda, c.get("tipo_cambio"))
         iva_comp = c.get("monto_iva")
         if iva_comp is None:
             tasa = c.get("tasa_iva", 10) or 10
-            iva_comp = monto / (10 if tasa == 10 else 21) if tasa else 0
+            iva_comp = _iva_incluido(monto, tasa)
+        iva_pyg = to_pyg(iva_comp, moneda, c.get("tipo_cambio"))
         credito_detalle.append({
             "numero_factura": c.get("numero_factura", ""), "proveedor": c.get("proveedor_nombre", ""),
-            "monto_compra": monto, "iva": iva_comp,
-            "iva_pyg": to_pyg(iva_comp, moneda, c.get("tipo_cambio")),
-            "moneda": moneda, "logo_tipo": c.get("logo_tipo", ""),
+            "descripcion": c.get("numero_factura", ""), "proveedor_nombre": c.get("proveedor_nombre", ""),
+            "monto_compra": monto, "monto": monto_pyg, "iva": iva_pyg,
+            "iva_original": iva_comp, "iva_pyg": iva_pyg,
+            "moneda": moneda, "tipo_cambio": c.get("tipo_cambio"),
+            "tasa": c.get("tasa_iva", 10), "logo_tipo": c.get("logo_tipo", ""),
+            "tipo_documento": "compra",
         })
 
     notas_compra = await db.notas_credito.find(
@@ -740,26 +816,50 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
         iva_pyg = (monto_pyg or 0) / 11.0
         credito_detalle.append({
             "numero_factura": n.get("numero", ""), "proveedor": n.get("proveedor_nombre", ""),
-            "monto_compra": -(monto_pyg or 0), "iva": -iva_pyg,
+            "descripcion": f"NC {n.get('numero', '')}", "proveedor_nombre": n.get("proveedor_nombre", ""),
+            "monto_compra": -(monto_pyg or 0), "monto": -(monto_pyg or 0), "iva": -iva_pyg,
             "iva_pyg": -iva_pyg, "moneda": "PYG", "logo_tipo": n.get("logo_tipo", ""),
-            "tipo_documento": "nota_credito_compra",
+            "tasa": 10, "tipo_documento": "nota_credito_compra", "efecto": "resta_credito",
         })
 
     empresas_ret = await db.empresas.find(
         {"aplica_retencion": True},
-        {"_id": 0, "razon_social": 1, "nombre": 1, "porcentaje_retencion": 1}
+        {"_id": 0, "id": 1, "razon_social": 1, "nombre": 1, "ruc": 1, "porcentaje_retencion": 1}
     ).to_list(500)
     ret_map: dict = {}
     for e in empresas_ret:
         pct = e.get("porcentaje_retencion") or 0
-        if e.get("razon_social"): ret_map[e["razon_social"]] = pct
-        if e.get("nombre"): ret_map[e["nombre"]] = pct
+        for key in (
+            f"id:{e.get('id')}" if e.get("id") else None,
+            f"ruc:{_norm_ruc(e.get('ruc'))}" if e.get("ruc") else None,
+            f"nombre:{_norm_text(e.get('razon_social'))}" if e.get("razon_social") else None,
+            f"nombre:{_norm_text(e.get('nombre'))}" if e.get("nombre") else None,
+        ):
+            if key:
+                ret_map[key] = pct
 
     total_retenciones = 0.0
+    retenciones_detalle = []
     for d in debito_detalle:
-        pct = ret_map.get(d.get("razon_social", ""), 0)
+        pct = (
+            ret_map.get(f"id:{d.get('empresa_id')}")
+            or ret_map.get(f"ruc:{_norm_ruc(d.get('ruc'))}")
+            or ret_map.get(f"nombre:{_norm_text(d.get('razon_social'))}")
+            or 0
+        )
         if pct and d.get("iva_pyg"):
-            total_retenciones += d["iva_pyg"] * (pct / 100.0)
+            monto_retenido = d["iva_pyg"] * (pct / 100.0)
+            total_retenciones += monto_retenido
+            d["retencion_pct"] = pct
+            d["retencion_monto"] = monto_retenido
+            retenciones_detalle.append({
+                "razon_social": d.get("razon_social", ""),
+                "ruc": d.get("ruc"),
+                "numero_factura": d.get("numero", ""),
+                "iva_factura": d.get("iva_pyg", 0),
+                "porcentaje_retencion": pct,
+                "monto_retenido": monto_retenido,
+            })
 
     pagos_iva_docs = await _pagos_iva_periodo(periodo, logo_tipo)
     total_pagos_iva = sum(p.get("monto", 0) or 0 for p in pagos_iva_docs)
@@ -771,6 +871,7 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
         "debito": total_debito,
         "credito": total_credito,
         "retenciones": total_retenciones,
+        "retenciones_detalle": retenciones_detalle,
         "pagos_iva": total_pagos_iva,
         "pagos_iva_detalle": pagos_iva_docs,
         "neto": total_debito - total_credito,
@@ -800,32 +901,7 @@ async def get_iva_mensual(
     # ── Datos del mes seleccionado ────────────────────────────────
     mes_data = await _calc_iva_periodo(periodo, logo_tipo)
 
-    # ── Retenciones detalle (para compatibilidad con frontend) ────
-    empresas_con_retencion = await db.empresas.find(
-        {"aplica_retencion": True},
-        {"_id": 0, "id": 1, "razon_social": 1, "nombre": 1, "porcentaje_retencion": 1}
-    ).to_list(500)
-    ret_map: dict = {}
-    for e in empresas_con_retencion:
-        pct = e.get("porcentaje_retencion") or 0
-        if e.get("razon_social"):
-            ret_map[e["razon_social"]] = pct
-        if e.get("nombre"):
-            ret_map[e["nombre"]] = pct
-
-    retenciones_detalle = []
-    for d in mes_data["debito_detalle"]:
-        razon = d.get("razon_social", "")
-        pct = ret_map.get(razon, 0)
-        if pct and d.get("iva_pyg", 0):
-            monto_retenido = d["iva_pyg"] * (pct / 100.0)
-            retenciones_detalle.append({
-                "razon_social": razon,
-                "numero_factura": d.get("numero", ""),
-                "iva_factura": d["iva_pyg"],
-                "porcentaje_retencion": pct,
-                "monto_retenido": monto_retenido,
-            })
+    retenciones_detalle = mes_data.get("retenciones_detalle", [])
 
     # ── Acumulado desde enero hasta el mes seleccionado ──────────
     # Lógica: si el IVA de un mes no se pagó, se arrastra al siguiente.
@@ -836,10 +912,13 @@ async def get_iva_mensual(
     credito_acumulado = 0.0
     pagos_iva_acumulado = 0.0
     historial: list = []
+    saldo_anterior = 0.0
 
     for m in range(1, mes_num + 1):
         mes_str = f"{anio}-{str(m).zfill(2)}"
         r = await _calc_iva_periodo(mes_str, logo_tipo)
+        if m < mes_num:
+            saldo_anterior += r["neto"] - r["pagos_iva"]
         debito_acumulado += r["debito"]
         credito_acumulado += r["credito"]
         pagos_iva_acumulado += r["pagos_iva"]
@@ -853,6 +932,7 @@ async def get_iva_mensual(
         })
 
     neto_acumulado = debito_acumulado - credito_acumulado
+    saldo_mes = mes_data["neto"] - mes_data["pagos_iva"]
     # Saldo neto menos lo ya pagado: positivo = aún se debe pagar a la SET
     saldo_acumulado = neto_acumulado - pagos_iva_acumulado
 
@@ -865,6 +945,9 @@ async def get_iva_mensual(
         "iva_credito_compras": sum(c["iva_pyg"] for c in mes_data["credito_detalle"]),
         "iva_credito_retenciones": mes_data["retenciones"],
         "iva_neto": mes_data["neto"],
+        "saldo_mes": saldo_mes,
+        "saldo_anterior": saldo_anterior,
+        "saldo_final_acumulado": saldo_acumulado,
         "a_favor": mes_data["neto"] < 0,
         "pagos_iva_mes": mes_data["pagos_iva"],
         "pagos_iva_detalle": mes_data.get("pagos_iva_detalle", []),

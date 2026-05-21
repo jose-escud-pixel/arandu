@@ -25,6 +25,7 @@ const FUENTE_COLOR = {
   "Sueldos":             "text-violet-400",
   "Facturas recibidas":  "text-red-400",
   "Pago IVA":            "text-amber-400",
+  "Retención IVA":       "text-amber-400",
 };
 
 function getMesActual() {
@@ -950,11 +951,17 @@ export default function BalancePage() {
                                 {ivaData.detalle_debito.map((d, i) => (
                                   <tr key={i} className="border-b border-white/5 hover:bg-white/3">
                                     <td className="px-4 py-2">
-                                      <p className="text-white">{d.numero || d.descripcion || "—"}</p>
+                                      <p className="text-white flex items-center gap-2">
+                                        {d.numero || d.descripcion || "—"}
+                                        {d.tipo_documento === "nota_credito" && (
+                                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30">Nota crédito</span>
+                                        )}
+                                      </p>
                                       {d.empresa_nombre && <p className="text-slate-500 text-xs">{d.empresa_nombre}</p>}
+                                      {d.efecto === "resta_debito" && <p className="text-rose-300 text-xs">Resta débito fiscal</p>}
                                     </td>
-                                    <td className="px-4 py-2 text-right text-slate-300">{fmtPYG(d.monto)}</td>
-                                    <td className="px-4 py-2 text-right text-cyan-300 font-medium">{fmtPYG(d.iva)}</td>
+                                    <td className={`px-4 py-2 text-right ${d.monto < 0 ? "text-rose-300" : "text-slate-300"}`}>{fmtPYG(d.monto)}</td>
+                                    <td className={`px-4 py-2 text-right font-medium ${d.iva < 0 ? "text-rose-300" : "text-cyan-300"}`}>{fmtPYG(d.iva)}</td>
                                     <td className="px-4 py-2 text-right text-slate-400 text-xs">{d.tasa ? `${d.tasa}%` : "—"}</td>
                                   </tr>
                                 ))}
@@ -985,11 +992,17 @@ export default function BalancePage() {
                                 {ivaData.detalle_credito.map((d, i) => (
                                   <tr key={i} className="border-b border-white/5 hover:bg-white/3">
                                     <td className="px-4 py-2">
-                                      <p className="text-white">{d.descripcion || "—"}</p>
+                                      <p className="text-white flex items-center gap-2">
+                                        {d.descripcion || "—"}
+                                        {d.tipo_documento === "nota_credito_compra" && (
+                                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30">Nota crédito</span>
+                                        )}
+                                      </p>
                                       {d.proveedor_nombre && <p className="text-slate-500 text-xs">{d.proveedor_nombre}</p>}
+                                      {d.efecto === "resta_credito" && <p className="text-rose-300 text-xs">Resta crédito fiscal</p>}
                                     </td>
-                                    <td className="px-4 py-2 text-right text-slate-300">{fmtPYG(d.monto)}</td>
-                                    <td className="px-4 py-2 text-right text-violet-300 font-medium">{fmtPYG(d.iva)}</td>
+                                    <td className={`px-4 py-2 text-right ${d.monto < 0 ? "text-rose-300" : "text-slate-300"}`}>{fmtPYG(d.monto)}</td>
+                                    <td className={`px-4 py-2 text-right font-medium ${d.iva < 0 ? "text-rose-300" : "text-violet-300"}`}>{fmtPYG(d.iva)}</td>
                                     <td className="px-4 py-2 text-right text-slate-400 text-xs">{d.tasa ? `${d.tasa}%` : "—"}</td>
                                   </tr>
                                 ))}

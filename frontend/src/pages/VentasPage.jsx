@@ -47,6 +47,48 @@ function fmtMonto(monto, moneda = "PYG") {
   return `${moneda} ${Number(monto).toLocaleString("es-PY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function convertToDocMoneda(amount, monedaOrigen, tcOverride, docMoneda, docTC) {
+  const value = Number(amount) || 0;
+  const origen = monedaOrigen || docMoneda || "PYG";
+  const destino = docMoneda || "PYG";
+  if (origen === destino) return value;
+  const tc = Number(tcOverride || docTC || 0);
+  if (tc <= 0) return 0;
+  if (destino === "PYG" && origen === "USD") return value * tc;
+  if (destino === "USD" && origen === "PYG") return value / tc;
+  return value;
+}
+
+function calcUtilidadPresupuesto(p) {
+  const total = Number(p?.total || 0);
+  const moneda = p?.moneda || "PYG";
+  const isUSD = moneda === "USD";
+  if (p?.costos_reales && p.costos_reales.ganancia !== undefined && p.costos_reales.ganancia !== null) {
+    const utilidadReal = Number(p.costos_reales.ganancia);
+    return {
+      utilidad: isUSD ? Math.round(utilidadReal * 100) / 100 : Math.round(utilidadReal),
+      fuente: "real",
+    };
+  }
+  if (!Array.isArray(p?.items)) return { utilidad: null, fuente: null };
+  const costoEstimado = p.items.reduce((sum, item) => {
+    const cantidad = Number(item.cantidad || 1);
+    const costoUnit = convertToDocMoneda(
+      item.costo || 0,
+      item.moneda_item || moneda,
+      item.tipo_cambio_item,
+      moneda,
+      p.tipo_cambio
+    );
+    return sum + costoUnit * cantidad;
+  }, 0);
+  const utilidad = total - costoEstimado;
+  return {
+    utilidad: isUSD ? Math.round(utilidad * 100) / 100 : Math.round(utilidad),
+    fuente: "estimada",
+  };
+}
+
 const LOGO_CHIP = {
   arandujar: "bg-blue-600/20 text-blue-300 border-blue-600/30",
   arandu:    "bg-emerald-600/20 text-emerald-300 border-emerald-600/30",
@@ -538,6 +580,13 @@ export default function VentasPage() {
         razon_social: presupuesto.empresa_nombre || "",
         ruc: presupuesto.empresa_ruc || "",
         concepto: presupuesto.nombre_archivo ? `${presupuesto.numero} - ${presupuesto.nombre_archivo}` : `Presupuesto ${presupuesto.numero}`,
+        conceptos: (presupuesto.items || []).map(item => ({
+          descripcion: item.descripcion || "",
+          cantidad: item.cantidad || 1,
+          precio_unitario: item.precio_unitario || 0,
+          monto: item.subtotal || ((item.precio_unitario || 0) * (item.cantidad || 1)),
+          observacion: item.observacion || null,
+        })),
         monto: presupuesto.total,
         moneda: presupuesto.moneda,
         tipo_cambio: presupuesto.tipo_cambio || null,
@@ -1161,10 +1210,7 @@ export default function VentasPage() {
                   <tbody>
                     {filteredPres.map(p => {
                       const total = p.total || 0;
-                      const costo = p.items
-                        ? p.items.reduce((s, i) => s + ((i.costo || 0) * (i.cantidad || 1)), 0)
-                        : null;
-                      const utilidad = costo != null ? total - costo : null;
+                      const { utilidad } = calcUtilidadPresupuesto(p);
                       const utilPct = total > 0 && utilidad != null ? (utilidad / total * 100).toFixed(0) : null;
                       return (
                         <tr key={p.id}
@@ -1891,6 +1937,28 @@ function PresupuestoDocModal({
   const fmt = (num) => formatNumber(num, p.moneda);
   const sym = getCurrencySymbol(p.moneda);
   const accentColor = p.logo_tipo === "jar" ? "#dc2626" : "#2563eb";
+  const imageItems = (p.items || []).filter(item => item.imagen);
+  const buildImageAnnexHTML = (headerBg, headerAccent) => imageItems.length ? `
+    <section class="print-annex" style="page-break-before:always;break-before:page;background:white">
+      <div style="border-bottom:3px solid ${headerAccent};padding-bottom:8px;margin-bottom:12px">
+        <div style="font-size:18px;font-weight:800;color:${headerBg};letter-spacing:1px">ANEXO DE IMÁGENES</div>
+        <div style="font-size:11px;color:#64748b;margin-top:2px">Presupuesto ${p.numero} · ${p.empresa_nombre || ""}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        ${imageItems.map((item, idx) => `
+          <article style="border:1px solid #dbe3ee;border-radius:8px;overflow:hidden;page-break-inside:avoid;break-inside:avoid;background:#ffffff">
+            <div style="background:#f8fafc;padding:8px 10px;border-bottom:1px solid #e2e8f0">
+              <div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.6px">Ítem ${idx + 1}</div>
+              <div style="font-size:12px;color:#0f172a;font-weight:700;margin-top:2px">${item.descripcion || "Producto / servicio"}</div>
+              ${item.imagen_comentario ? `<div style="font-size:10.5px;color:#475569;margin-top:2px">${item.imagen_comentario}</div>` : ""}
+            </div>
+            <div style="height:190px;display:flex;align-items:center;justify-content:center;background:#fff;padding:8px">
+              <img src="${item.imagen}" style="max-width:100%;max-height:100%;object-fit:contain" />
+            </div>
+          </article>
+        `).join("")}
+      </div>
+    </section>` : "";
 
   const buildLogoHTML = (logoTipo) => svgLogoMarcaRow(logoTipo);
 
@@ -1942,7 +2010,7 @@ function PresupuestoDocModal({
         `<div style="text-align:right;font-size:10px;color:#64748b;margin-top:6px;font-style:italic">Hoja ${partNum} de ${totalHojas} — continúa en siguiente hoja →</div>`;
 
       return `
-        <div style="page-break-after:${isLastHoja ? "avoid" : "always"};page-break-inside:avoid;padding:10mm 12mm 8mm;background:white;min-height:0">
+        <div class="print-page" style="page-break-after:${isLastHoja ? "avoid" : "always"};page-break-inside:avoid;background:white;min-height:0">
           <!-- ENCABEZADO OSCURO -->
           <div style="background:${headerBg};border-radius:8px;padding:12px 16px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center">
             <div style="display:flex;align-items:center">
@@ -2004,15 +2072,19 @@ function PresupuestoDocModal({
         </div>`;
     }).join("");
 
+    const anexosHTML = buildImageAnnexHTML(headerBg, headerAccent);
     const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>${printFileName}</title>
       <style>
-        @page{size:A4;margin:0}
+        @page{size:A4;margin:16mm 18mm}
         *{box-sizing:border-box;margin:0;padding:0}
         html,body{height:auto;overflow:visible;font-family:Arial,Helvetica,sans-serif;background:white;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+        body{padding:0}
+        .print-page,.print-annex{width:100%;max-width:174mm;margin:0 auto}
+        table{width:100%;max-width:100%;border-collapse:collapse}
         tr{page-break-inside:avoid;break-inside:avoid}
-        @media print{@page{size:A4;margin:0}html,body{height:auto;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr{page-break-inside:avoid;break-inside:avoid}}
+        @media print{@page{size:A4;margin:16mm 18mm}html,body{height:auto;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr{page-break-inside:avoid;break-inside:avoid}}
       </style>
-      </head><body>${pagesHTML}</body></html>`;
+      </head><body>${pagesHTML}${anexosHTML}</body></html>`;
 
     const pw = window.open("", "_blank", "width=900,height=700");
     if (!pw) { alert("Permita ventanas emergentes para imprimir."); return; }
@@ -2050,16 +2122,18 @@ function PresupuestoDocModal({
     const formaPagoLabel = (p.forma_pago||"contado")==="credito" ? "A crédito" : "Al contado";
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>${printFileName}</title>
       <style>
-        @page{size:A4;margin:0}
+        @page{size:A4;margin:16mm 18mm}
         *{box-sizing:border-box;margin:0;padding:0}
         html,body{height:auto;overflow:visible;font-family:Arial,Helvetica,sans-serif;background:white;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-        table{border-collapse:collapse;width:100%}
+        body{padding:0}
+        .print-page,.print-annex{width:100%;max-width:174mm;margin:0 auto}
+        table{border-collapse:collapse;width:100%;max-width:100%}
         tr{page-break-inside:avoid;break-inside:avoid}
         thead{display:table-header-group}
         tfoot{display:table-footer-group}
-        @media print{@page{size:A4;margin:0}html,body{height:auto;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr{page-break-inside:avoid;break-inside:avoid}}
+        @media print{@page{size:A4;margin:16mm 18mm}html,body{height:auto;-webkit-print-color-adjust:exact;print-color-adjust:exact}tr{page-break-inside:avoid;break-inside:avoid}}
       </style></head><body>
-      <div style="padding:11mm 13mm 9mm">
+      <div class="print-page">
         <!-- ENCABEZADO -->
         <div style="background:${headerBg};border-radius:9px;padding:14px 18px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
           <div style="display:flex;align-items:center">
@@ -2121,6 +2195,7 @@ function PresupuestoDocModal({
           ${p.condiciones ? `<div style="background:#f0fdf4;padding:9px 11px;border-left:4px solid #22c55e;border-radius:0 5px 5px 0;page-break-inside:avoid;break-inside:avoid"><strong style="color:#166534;font-size:10.5px">CONDICIONES:</strong><br><span style="font-size:10.5px;color:#15803d">${p.condiciones.replace(/\n/g,"<br>")}</span></div>` : ""}
         </div>` : ""}
       </div>
+      ${buildImageAnnexHTML(headerBg, headerAccent)}
     </body></html>`);
     w.document.close();
     setTimeout(() => { w.print(); }, 700);
@@ -2703,9 +2778,11 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
       ? (f.conceptos || []).map(c => `
           <tr>
             <td style="border:1px solid #d1d5db;padding:8px">${c.descripcion || ""}</td>
-            <td style="border:1px solid #d1d5db;padding:8px;text-align:right">${f.moneda === "PYG" ? "₲ " + Math.round(c.monto || 0).toLocaleString("es-PY") : f.moneda + " " + (c.monto || 0)}</td>
+            <td style="border:1px solid #d1d5db;padding:8px;text-align:center">${c.cantidad || 1}</td>
+            <td style="border:1px solid #d1d5db;padding:8px;text-align:right">${fmt(c.precio_unitario || (c.monto || 0))}</td>
+            <td style="border:1px solid #d1d5db;padding:8px;text-align:right">${fmt(c.monto || ((c.precio_unitario || 0) * (c.cantidad || 1)))}</td>
           </tr>`).join("")
-      : `<tr><td style="border:1px solid #d1d5db;padding:8px" colspan="2">${f.concepto || ""}</td></tr>`;
+      : `<tr><td style="border:1px solid #d1d5db;padding:8px" colspan="4">${f.concepto || ""}</td></tr>`;
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Factura ${f.numero}</title>
       <style>body{font-family:Arial,sans-serif;color:#111;padding:20px;max-width:800px;margin:0 auto}</style></head><body>
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;border-bottom:3px solid ${accentColor};padding-bottom:16px">
@@ -2732,13 +2809,15 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
       <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
         <thead><tr style="background:#e5e7eb">
           <th style="border:1px solid #d1d5db;padding:8px;text-align:left">Descripción / Concepto</th>
+          <th style="border:1px solid #d1d5db;padding:8px;text-align:center;width:70px">Cant.</th>
+          <th style="border:1px solid #d1d5db;padding:8px;text-align:right;width:130px">Precio unit.</th>
           <th style="border:1px solid #d1d5db;padding:8px;text-align:right;width:140px">Monto</th>
         </tr></thead>
         <tbody>${itemRows}</tbody>
         <tfoot>
-          <tr style="background:#f9fafb"><td style="border:1px solid #d1d5db;padding:6px;text-align:right;font-size:12px;color:#6b7280">Base imponible:</td><td style="border:1px solid #d1d5db;padding:6px;text-align:right;font-size:12px;color:#6b7280">${fmt(base)}</td></tr>
-          <tr style="background:#f9fafb"><td style="border:1px solid #d1d5db;padding:6px;text-align:right;font-size:12px;color:#6b7280">IVA 10%:</td><td style="border:1px solid #d1d5db;padding:6px;text-align:right;font-size:12px;color:#6b7280">${fmt(iva)}</td></tr>
-          <tr style="background:#dbeafe"><td style="border:1px solid #d1d5db;padding:8px;text-align:right;font-weight:700;font-size:16px">TOTAL:</td><td style="border:1px solid #d1d5db;padding:8px;text-align:right;font-weight:700;font-size:16px;color:${accentColor}">${fmt(total)}</td></tr>
+          <tr style="background:#f9fafb"><td colspan="3" style="border:1px solid #d1d5db;padding:6px;text-align:right;font-size:12px;color:#6b7280">Base imponible:</td><td style="border:1px solid #d1d5db;padding:6px;text-align:right;font-size:12px;color:#6b7280">${fmt(base)}</td></tr>
+          <tr style="background:#f9fafb"><td colspan="3" style="border:1px solid #d1d5db;padding:6px;text-align:right;font-size:12px;color:#6b7280">IVA 10%:</td><td style="border:1px solid #d1d5db;padding:6px;text-align:right;font-size:12px;color:#6b7280">${fmt(iva)}</td></tr>
+          <tr style="background:#dbeafe"><td colspan="3" style="border:1px solid #d1d5db;padding:8px;text-align:right;font-weight:700;font-size:16px">TOTAL:</td><td style="border:1px solid #d1d5db;padding:8px;text-align:right;font-weight:700;font-size:16px;color:${accentColor}">${fmt(total)}</td></tr>
         </tfoot>
       </table>
       ${f.notas ? `<div style="background:#fefce8;padding:10px;border-left:3px solid #ca8a04;"><strong style="color:#92400e">Notas:</strong><br>${f.notas}</div>` : ""}
@@ -2857,6 +2936,8 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
             <thead>
               <tr className="bg-gray-200">
                 <th className="border border-gray-300 p-2 text-left text-gray-700 font-bold text-sm">Concepto / Descripción</th>
+                <th className="border border-gray-300 p-2 text-center text-gray-700 font-bold text-sm w-20">Cant.</th>
+                <th className="border border-gray-300 p-2 text-right text-gray-700 font-bold text-sm w-36">Precio unit.</th>
                 <th className="border border-gray-300 p-2 text-right text-gray-700 font-bold text-sm w-40">Monto</th>
               </tr>
             </thead>
@@ -2864,27 +2945,32 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
               {(f.conceptos || []).length > 0 ? (
                 (f.conceptos || []).map((c, idx) => (
                   <tr key={idx} className="bg-white">
-                    <td className="border border-gray-300 p-2 text-gray-800 text-sm">{c.descripcion || ""}</td>
-                    <td className="border border-gray-300 p-2 text-right text-gray-800 text-sm">{fmt(c.monto)}</td>
+                    <td className="border border-gray-300 p-2 text-gray-800 text-sm">
+                      {c.descripcion || ""}
+                      {c.observacion && <p className="text-gray-500 text-xs italic mt-1">{c.observacion}</p>}
+                    </td>
+                    <td className="border border-gray-300 p-2 text-center text-gray-800 text-sm">{c.cantidad || 1}</td>
+                    <td className="border border-gray-300 p-2 text-right text-gray-800 text-sm">{fmt(c.precio_unitario || (c.monto || 0))}</td>
+                    <td className="border border-gray-300 p-2 text-right text-gray-800 text-sm">{fmt(c.monto || ((c.precio_unitario || 0) * (c.cantidad || 1)))}</td>
                   </tr>
                 ))
               ) : (
                 <tr className="bg-white">
-                  <td className="border border-gray-300 p-3 text-gray-800" colSpan={2}>{f.concepto || "-"}</td>
+                  <td className="border border-gray-300 p-3 text-gray-800" colSpan={4}>{f.concepto || "-"}</td>
                 </tr>
               )}
             </tbody>
             <tfoot>
               <tr className="bg-gray-50">
-                <td className="border border-gray-300 p-2 text-right text-sm text-gray-500">Base imponible:</td>
+                <td colSpan={3} className="border border-gray-300 p-2 text-right text-sm text-gray-500">Base imponible:</td>
                 <td className="border border-gray-300 p-2 text-right text-sm text-gray-500">{fmt(base)}</td>
               </tr>
               <tr className="bg-gray-50">
-                <td className="border border-gray-300 p-2 text-right text-sm text-gray-500">IVA incluido (10%):</td>
+                <td colSpan={3} className="border border-gray-300 p-2 text-right text-sm text-gray-500">IVA incluido (10%):</td>
                 <td className="border border-gray-300 p-2 text-right text-sm text-gray-500">{fmt(iva)}</td>
               </tr>
               <tr style={{ background: "#dbeafe" }}>
-                <td className="border border-gray-300 p-2 text-right font-bold text-lg text-gray-900">TOTAL:</td>
+                <td colSpan={3} className="border border-gray-300 p-2 text-right font-bold text-lg text-gray-900">TOTAL:</td>
                 <td className="border border-gray-300 p-2 text-right font-bold text-lg" style={{ color: accentColor }}>{fmt(total)}</td>
               </tr>
             </tfoot>
