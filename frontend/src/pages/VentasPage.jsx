@@ -448,10 +448,11 @@ export default function VentasPage() {
     try {
       const logoQc = logoFilter !== "todas" ? `?logo_tipo=${logoFilter}` : "";
       const mesParam = filtroTipo === "mes" ? mes : "";
+      const anioParam = filtroTipo === "anio" ? anio : "";
       const buildQ = (params) => { const p = Object.entries(params).filter(([,v]) => v != null && v !== "").map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join("&"); return p ? `?${p}` : ""; };
 	      const [rPres, rFac, rIng, rEmp, rProv, rProd, rCuentas, rRecibos, rNotas] = await Promise.all([
 	        hasPermission("presupuestos.ver")
-            ? fetch(`${API}/admin/presupuestos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers })
+            ? fetch(`${API}/admin/presupuestos${buildQ({ mes: mesParam || null, anio: anioParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers })
             : Promise.resolve({ ok: true, json: async () => [] }),
 	        fetch(`${API}/admin/facturas${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
 	        fetch(`${API}/admin/ingresos-varios${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),

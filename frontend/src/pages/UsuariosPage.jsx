@@ -225,10 +225,26 @@ const UsuariosPage = () => {
     });
   };
 
+  // Calcula los slugs de las empresas propias seleccionadas actualmente
+  const getSlugsSeleccionados = (logos_asignados) => {
+    const ids = (logos_asignados || []).map(String);
+    return empresasPropias
+      .filter(ep => ids.includes(String(ep.id)))
+      .map(ep => ep.slug);
+  };
+
+  // Empresas (clientes) que pertenecen a las logos seleccionadas
+  const getEmpresasFiltradas = (logos_asignados) => {
+    const slugs = getSlugsSeleccionados(logos_asignados);
+    if (!slugs.length) return [];
+    return empresas.filter(e => slugs.includes(e.logo_tipo));
+  };
+
   const selectAllEmpresas = () => {
-    const allIds = empresas.map(e => String(e.id));
+    const empresasFiltradas = getEmpresasFiltradas(formData.logos_asignados);
+    const allIds = empresasFiltradas.map(e => String(e.id));
     const selectedIds = (formData.empresas_asignadas || []).map(String);
-    const allSelected = allIds.every(id => selectedIds.includes(id));
+    const allSelected = allIds.length > 0 && allIds.every(id => selectedIds.includes(id));
 
     setFormData(prev => ({
       ...prev,
@@ -240,11 +256,31 @@ const UsuariosPage = () => {
     setFormData(prev => {
       const current = (prev.logos_asignados || []).map(String);
       const id = String(logoId);
+      const isAdding = !current.includes(id);
+      const newLogos = isAdding ? [...current, id] : current.filter(x => x !== id);
+
+      // Gestión automática de clientes según empresa propia
+      const empresaPropia = empresasPropias.find(ep => String(ep.id) === id);
+      let newEmpresas = (prev.empresas_asignadas || []).map(String);
+
+      if (empresaPropia) {
+        const clientesDeEsta = empresas
+          .filter(e => e.logo_tipo === empresaPropia.slug)
+          .map(e => String(e.id));
+
+        if (isAdding) {
+          // Al agregar empresa propia → auto-seleccionar todos sus clientes
+          newEmpresas = [...new Set([...newEmpresas, ...clientesDeEsta])];
+        } else {
+          // Al quitar empresa propia → remover sus clientes de la selección
+          newEmpresas = newEmpresas.filter(empId => !clientesDeEsta.includes(empId));
+        }
+      }
+
       return limpiarPermisosFueraDeModulos({
         ...prev,
-        logos_asignados: current.includes(id)
-          ? current.filter(x => x !== id)
-          : [...current, id]
+        logos_asignados: newLogos,
+        empresas_asignadas: newEmpresas,
       });
     });
   };
@@ -540,72 +576,73 @@ const UsuariosPage = () => {
                       )}
 
                       {/* ── CLIENTES ASIGNADOS (empresas_asignadas) ── */}
-                      <div className="border border-white/10 rounded-lg overflow-hidden">
-                        <div
-                          className="bg-arandu-dark p-3 flex items-center justify-between cursor-pointer"
-                          onClick={selectAllEmpresas}
-                        >
-                          <div className="flex items-center gap-2">
-                            <Building2 className="w-4 h-4 text-purple-400" />
-                            <span className="text-white font-medium text-sm">Clientes asignados</span>
-                            <span className="text-slate-500 text-xs">
-                              ({(formData.empresas_asignadas || []).length}/{empresas.length})
-                            </span>
-                          </div>
-
-                          <button
-                            type="button"
-                            className="text-xs text-purple-400 hover:underline"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              selectAllEmpresas();
-                            }}
-                          >
-                            {empresas.length === (formData.empresas_asignadas || []).length
-                              ? "Deseleccionar todas"
-                              : "Seleccionar todas"}
-                          </button>
-                        </div>
-
-                        <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto">
-                          {empresas.map(emp => {
-                            const isSelected = (formData.empresas_asignadas || [])
-                              .map(String)
-                              .includes(String(emp.id));
-
-                            return (
-                              <label
-                                key={emp.id}
-                                onClick={() => toggleEmpresa(String(emp.id))}
-                                className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all text-sm ${
-                                  isSelected
-                                    ? "border-purple-500/50 bg-purple-500/10 text-purple-300"
-                                    : "border-white/5 bg-arandu-dark text-slate-400 hover:border-white/10"
-                                }`}
-                                data-testid={`empresa-assign-${emp.id}`}
-                              >
-                                <div
-                                  className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
-                                    isSelected
-                                      ? "bg-purple-500 border-purple-500"
-                                      : "border-white/20"
-                                  }`}
+                      {(() => {
+                        const empresasFiltradas = getEmpresasFiltradas(formData.logos_asignados);
+                        const selectedIds = (formData.empresas_asignadas || []).map(String);
+                        const allFilteredSelected = empresasFiltradas.length > 0 && empresasFiltradas.every(e => selectedIds.includes(String(e.id)));
+                        const noLogosSelected = (formData.logos_asignados || []).length === 0;
+                        return (
+                          <div className="border border-white/10 rounded-lg overflow-hidden">
+                            <div className="bg-arandu-dark p-3 flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <Building2 className="w-4 h-4 text-purple-400" />
+                                <span className="text-white font-medium text-sm">Clientes asignados</span>
+                                <span className="text-slate-500 text-xs">
+                                  ({selectedIds.filter(id => empresasFiltradas.map(e => String(e.id)).includes(id)).length}/{empresasFiltradas.length})
+                                </span>
+                              </div>
+                              {empresasFiltradas.length > 0 && (
+                                <button
+                                  type="button"
+                                  className="text-xs text-purple-400 hover:underline"
+                                  onClick={(e) => { e.stopPropagation(); selectAllEmpresas(); }}
                                 >
-                                  {isSelected && <Check className="w-3 h-3 text-white" />}
-                                </div>
+                                  {allFilteredSelected ? "Deseleccionar todas" : "Seleccionar todas"}
+                                </button>
+                              )}
+                            </div>
 
-                                <span className="truncate">{emp.nombre}</span>
-                              </label>
-                            );
-                          })}
-
-                          {empresas.length === 0 && (
-                            <p className="text-slate-500 text-sm col-span-2">
-                              No hay clientes registrados
-                            </p>
-                          )}
-                        </div>
-                      </div>
+                            <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto">
+                              {noLogosSelected ? (
+                                <p className="text-slate-500 text-sm col-span-2 py-2">
+                                  Seleccioná primero una empresa propia para ver sus clientes.
+                                </p>
+                              ) : empresasFiltradas.length === 0 ? (
+                                <p className="text-slate-500 text-sm col-span-2 py-2">
+                                  Esta empresa no tiene clientes registrados.
+                                </p>
+                              ) : (
+                                empresasFiltradas.map(emp => {
+                                  const isSelected = selectedIds.includes(String(emp.id));
+                                  return (
+                                    <label
+                                      key={emp.id}
+                                      onClick={() => toggleEmpresa(String(emp.id))}
+                                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all text-sm ${
+                                        isSelected
+                                          ? "border-purple-500/50 bg-purple-500/10 text-purple-300"
+                                          : "border-white/5 bg-arandu-dark text-slate-400 hover:border-white/10"
+                                      }`}
+                                      data-testid={`empresa-assign-${emp.id}`}
+                                    >
+                                      <div
+                                        className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                                          isSelected
+                                            ? "bg-purple-500 border-purple-500"
+                                            : "border-white/20"
+                                        }`}
+                                      >
+                                        {isSelected && <Check className="w-3 h-3 text-white" />}
+                                      </div>
+                                      <span className="truncate">{emp.nombre}</span>
+                                    </label>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* ── PERMISOS ── */}
                       <div className="border border-white/10 rounded-lg overflow-hidden">

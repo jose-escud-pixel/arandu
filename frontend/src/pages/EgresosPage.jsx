@@ -556,6 +556,8 @@ const EgresosPage = () => {
   const [selectedPagoView, setSelectedPagoView] = useState(null);
   const [selectedCompraView, setSelectedCompraView] = useState(null);
   const [selectedCostoView, setSelectedCostoView] = useState(null);  // gasto (Costo Fijo)
+  const [editFacturaPagoMode, setEditFacturaPagoMode] = useState(false); // editar factura del pago del gasto
+  const [editFacturaPagoForm, setEditFacturaPagoForm] = useState({ tiene_factura: false, nro_factura: "" });
   // Detalle de un sueldo pagado
   const [sueldoView, setSueldoView] = useState(null);   // { emp, sueldo, adelantos, extras }
   const [loadingSueldoView, setLoadingSueldoView] = useState(false);
@@ -873,14 +875,40 @@ const EgresosPage = () => {
       cuenta_nombre: pagoCostoForm.cuenta_nombre || null,
     };
     const res = await fetch(`${API}/admin/costos-fijos/${v.costo_id}/pagos`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(payload) });
-    if (res.ok) { toast.success("Pago registrado"); setShowPagoCostoModal(null); fetchVencimientos(filtroMes, filtroTipo, filtroAnio); }
-    else { const err = await res.json().catch(() => ({})); toast.error(err.detail || "Error al registrar pago"); }
+    if (res.ok) {
+      toast.success("Pago registrado");
+      setShowPagoCostoModal(null);
+      // Refresh completo: actualiza vencimientos Y costos para reflejar el nuevo estado en balance
+      fetchVencimientos(filtroMes, filtroTipo, filtroAnio);
+      fetchCostos();
+    } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || "Error al registrar pago"); }
   };
 
   const handleAnularPagoCosto = async (v) => {
     if (!window.confirm("¿Anular este pago?")) return;
     const res = await fetch(`${API}/admin/pagos-costos/${v.pago.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
-    if (res.ok) { toast.success("Pago anulado"); fetchVencimientos(filtroMes, filtroTipo, filtroAnio); }
+    if (res.ok) {
+      toast.success("Pago anulado");
+      fetchVencimientos(filtroMes, filtroTipo, filtroAnio);
+      fetchCostos();
+    }
+  };
+
+  const handleEditarFacturaPago = async (pagoId, cambios) => {
+    const res = await fetch(`${API}/admin/pagos-costos/${pagoId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(cambios),
+    });
+    if (res.ok) {
+      toast.success("Pago actualizado");
+      fetchVencimientos(filtroMes, filtroTipo, filtroAnio);
+      fetchCostos();
+      setSelectedCostoView(null);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      toast.error(err.detail || "Error al actualizar pago");
+    }
   };
 
   const fetchEmpleados = async () => {
@@ -4632,7 +4660,7 @@ const EgresosPage = () => {
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4"
-            onMouseDown={(e) => e.target === e.currentTarget && setSelectedCostoView(null)}
+            onMouseDown={(e) => { if (e.target === e.currentTarget) { setSelectedCostoView(null); setEditFacturaPagoMode(false); } }}
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
@@ -4642,7 +4670,7 @@ const EgresosPage = () => {
                 <span className="text-xs bg-blue-500/20 text-blue-300 border border-blue-500/30 rounded-full px-3 py-1 font-medium">
                   Gasto
                 </span>
-                <button onClick={() => setSelectedCostoView(null)} className="text-slate-400 hover:text-white">
+                <button onClick={() => { setSelectedCostoView(null); setEditFacturaPagoMode(false); }} className="text-slate-400 hover:text-white">
                   <X className="w-5 h-5" />
                 </button>
               </div>
@@ -4723,6 +4751,72 @@ const EgresosPage = () => {
                     <p className="text-white text-sm font-medium">{selectedCostoView.pago.cuenta_nombre}</p>
                   </div>
                 )}
+                {/* ── Factura del pago ── */}
+                {selectedCostoView.pago?.fecha_pago && (
+                  <div className={`rounded-xl p-3 col-span-2 border ${selectedCostoView.pago.tiene_factura ? "bg-blue-500/5 border-blue-500/20" : "bg-arandu-dark/60 border-white/5"}`}>
+                    {!editFacturaPagoMode ? (
+                      <>
+                        <div className="flex items-center justify-between mb-0.5">
+                          <p className="text-slate-500 text-xs flex items-center gap-1">
+                            <FileText className="w-3 h-3" /> Factura
+                          </p>
+                          {hasPermission("costos_fijos.editar") && (
+                            <button
+                              onClick={() => {
+                                setEditFacturaPagoForm({
+                                  tiene_factura: selectedCostoView.pago.tiene_factura || false,
+                                  nro_factura: selectedCostoView.pago.nro_factura || "",
+                                });
+                                setEditFacturaPagoMode(true);
+                              }}
+                              className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
+                            >
+                              <Edit className="w-3 h-3" /> Editar
+                            </button>
+                          )}
+                        </div>
+                        {selectedCostoView.pago.tiene_factura ? (
+                          <p className="text-blue-300 text-sm font-medium">Nro. {selectedCostoView.pago.nro_factura || "—"}</p>
+                        ) : (
+                          <p className="text-slate-500 text-sm">Sin factura</p>
+                        )}
+                      </>
+                    ) : (
+                      <div>
+                        <p className="text-slate-500 text-xs mb-2 flex items-center gap-1"><FileText className="w-3 h-3" /> Editar factura</p>
+                        <div
+                          onClick={() => setEditFacturaPagoForm(f => ({ ...f, tiene_factura: !f.tiene_factura, nro_factura: "" }))}
+                          className={`w-10 h-6 rounded-full transition-colors flex-shrink-0 flex items-center cursor-pointer mb-2 ${editFacturaPagoForm.tiene_factura ? "bg-emerald-500" : "bg-slate-600"}`}
+                        >
+                          <div className={`w-4 h-4 bg-white rounded-full shadow transition-transform mx-1 ${editFacturaPagoForm.tiene_factura ? "translate-x-4" : "translate-x-0"}`} />
+                        </div>
+                        {editFacturaPagoForm.tiene_factura && (
+                          <input
+                            type="text"
+                            value={editFacturaPagoForm.nro_factura}
+                            onChange={e => setEditFacturaPagoForm(f => ({ ...f, nro_factura: e.target.value }))}
+                            placeholder="Número de factura"
+                            className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm mb-2 focus:outline-none focus:border-blue-500/50"
+                          />
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleEditarFacturaPago(selectedCostoView.pago.id, { tiene_factura: editFacturaPagoForm.tiene_factura, nro_factura: editFacturaPagoForm.nro_factura })}
+                            className="flex-1 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-all"
+                          >
+                            Guardar
+                          </button>
+                          <button
+                            onClick={() => setEditFacturaPagoMode(false)}
+                            className="flex-1 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs transition-all"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Notas */}
@@ -4742,6 +4836,7 @@ const EgresosPage = () => {
                     setPagoCostoForm({ monto_pagado: selectedCostoView.monto, fecha_pago: hoy(), notas: "", tiene_factura: false, nro_factura: "", cuenta_id: "", cuenta_nombre: "" });
                     setShowPagoCostoModal(selectedCostoView);
                     setSelectedCostoView(null);
+                    setEditFacturaPagoMode(false);
                   }}
                   className="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-all flex items-center justify-center gap-2 mb-2"
                 >

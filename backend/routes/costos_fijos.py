@@ -305,6 +305,41 @@ async def registrar_pago_costo(costo_id: str, data: PagoCostoFijoCreate, user: d
     return {k: v for k, v in doc.items() if k != "_id"}
 
 
+@router.patch("/admin/pagos-costos/{pago_id}")
+async def editar_pago_costo(pago_id: str, data: dict, user: dict = Depends(require_authenticated)):
+    """Edita un pago de costo fijo: monto, fecha, factura, cuenta, notas."""
+    if not has_permission(user, "costos_fijos.editar"):
+        raise HTTPException(status_code=403, detail="Sin permiso para editar pagos")
+    existing = await db.pagos_costos_fijos.find_one({"id": pago_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+    updates = {}
+    if "monto_pagado" in data:
+        updates["monto_pagado"] = float(data["monto_pagado"])
+    if "fecha_pago" in data:
+        updates["fecha_pago"] = data["fecha_pago"]
+    if "notas" in data:
+        updates["notas"] = data["notas"]
+    if "tiene_factura" in data:
+        updates["tiene_factura"] = bool(data["tiene_factura"])
+        updates["nro_factura"] = data.get("nro_factura") if data.get("tiene_factura") else None
+    if "nro_factura" in data and "tiene_factura" not in data:
+        updates["nro_factura"] = data["nro_factura"] if existing.get("tiene_factura") else None
+    if "cuenta_id" in data:
+        updates["cuenta_id"] = data["cuenta_id"]
+        if data["cuenta_id"]:
+            c = await db.cuentas_bancarias.find_one({"id": data["cuenta_id"]}, {"nombre": 1, "_id": 0})
+            updates["cuenta_nombre"] = c.get("nombre") if c else None
+        else:
+            updates["cuenta_nombre"] = None
+    if not updates:
+        return {**existing}
+    await db.pagos_costos_fijos.update_one({"id": pago_id}, {"$set": updates})
+    await log_auditoria(user, "costos_fijos", "editar_pago", f"Pago {pago_id} editado", pago_id)
+    updated = await db.pagos_costos_fijos.find_one({"id": pago_id}, {"_id": 0})
+    return {k: v for k, v in updated.items() if k != "_id"}
+
+
 @router.delete("/admin/pagos-costos/{pago_id}")
 async def anular_pago_costo(pago_id: str, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "costos_fijos.editar"):

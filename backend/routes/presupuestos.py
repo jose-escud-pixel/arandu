@@ -76,7 +76,7 @@ async def create_presupuesto(data: PresupuestoCreate, user: dict = Depends(requi
     return response
 
 @router.get("/admin/presupuestos", response_model=List[PresupuestoResponse])
-async def get_presupuestos(empresa_id: Optional[str] = None, estado: Optional[str] = None, logo_tipo: Optional[str] = None, user: dict = Depends(require_authenticated)):
+async def get_presupuestos(empresa_id: Optional[str] = None, estado: Optional[str] = None, logo_tipo: Optional[str] = None, mes: Optional[str] = None, anio: Optional[str] = None, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "presupuestos.ver"):
         raise HTTPException(status_code=403, detail="No tiene permiso para ver presupuestos")
     query = {}
@@ -90,6 +90,13 @@ async def get_presupuestos(empresa_id: Optional[str] = None, estado: Optional[st
         return []
     if estado:
         query["estado"] = estado
+    # Filtro por período de tiempo
+    if mes:
+        # mes = "YYYY-MM" → filtra presupuestos cuya fecha empieza con ese mes
+        query["fecha"] = {"$regex": f"^{mes}"}
+    elif anio:
+        # anio = "YYYY" → filtra presupuestos del año completo
+        query["fecha"] = {"$regex": f"^{anio}"}
     # Filtro estricto por logo_tipo activo (respeta logos_asignados y selección del usuario)
     logo_q: dict = {}
     await apply_logo_filter(logo_q, user, logo_tipo)
