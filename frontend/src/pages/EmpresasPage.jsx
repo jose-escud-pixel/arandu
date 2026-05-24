@@ -70,7 +70,7 @@ function matchChips(chips, inputVal, texto) {
 const EmpresasPage = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { token, user, hasPermission, activeEmpresaPropia } = useContext(AuthContext);
+  const { token, user, hasPermission, hasModule, activeEmpresaPropia } = useContext(AuthContext);
   const isAdmin = user?.role === "admin";
   const canCreate = isAdmin || hasPermission("empresas.crear");
   const canEdit   = isAdmin || hasPermission("empresas.editar");
@@ -86,7 +86,9 @@ const EmpresasPage = () => {
       setEditingEmpresa(null);
       setFormData({
         nombre: "", razon_social: "", ruc: "", direccion: "", telefono: "", email: "", contacto: "",
-        aplica_retencion: false, porcentaje_retencion: "", notas: "", logo_tipo: activeEmpresaPropia?.slug || "arandujar"
+        aplica_retencion: false, porcentaje_retencion: "", notas: "", logo_tipo: activeEmpresaPropia?.slug || "arandujar",
+        personeria: "fisica", fecha_nacimiento: "", nacionalidad: "", pais: "", ciudad: "", municipio: "",
+        con_inventario_tecnico: false
       });
       setShowForm(true);
     }
@@ -114,7 +116,14 @@ const EmpresasPage = () => {
     aplica_retencion: false,
     porcentaje_retencion: "",
     notas: "",
-    logo_tipo: "arandujar"
+    logo_tipo: "arandujar",
+    personeria: "fisica",
+    fecha_nacimiento: "",
+    nacionalidad: "",
+    pais: "",
+    ciudad: "",
+    municipio: "",
+    con_inventario_tecnico: false
   });
 
   // ── Nuestras Empresas (empresas_propias) ───────────────────────────────────
@@ -231,7 +240,15 @@ const EmpresasPage = () => {
       aplica_retencion: empresa.aplica_retencion || false,
       porcentaje_retencion: empresa.porcentaje_retencion ?? "",
       notas: empresa.notas || "",
-      logo_tipo: empresa.logo_tipo || "arandujar"
+      logo_tipo: empresa.logo_tipo || "arandujar",
+      personeria: empresa.personeria || "fisica",
+      fecha_nacimiento: empresa.fecha_nacimiento || "",
+      nacionalidad: empresa.nacionalidad || "",
+      pais: empresa.pais || "",
+      ciudad: empresa.ciudad || "",
+      municipio: empresa.municipio || "",
+      // null/undefined → true (retrocompatibilidad: clientes viejos tienen IT habilitado)
+      con_inventario_tecnico: empresa.con_inventario_tecnico ?? true
     });
     setShowForm(true);
   };
@@ -266,7 +283,14 @@ const EmpresasPage = () => {
       aplica_retencion: false,
       porcentaje_retencion: "",
       notas: "",
-      logo_tipo: activeEmpresaPropia?.slug || "arandujar"
+      logo_tipo: activeEmpresaPropia?.slug || "arandujar",
+      personeria: "fisica",
+      fecha_nacimiento: "",
+      nacionalidad: "",
+      pais: "",
+      ciudad: "",
+      municipio: "",
+      con_inventario_tecnico: false
     });
   };
 
@@ -603,6 +627,104 @@ const EmpresasPage = () => {
                       )}
                     </div>
 
+                    {/* ── Datos adicionales ─────────────────────────────── */}
+                    <div className="border border-white/10 rounded-lg p-4 space-y-4">
+                      <p className="text-slate-400 text-sm font-medium">Datos adicionales</p>
+
+                      {/* Personería */}
+                      <div>
+                        <label className="block text-slate-400 text-sm mb-2">Personería</label>
+                        <div className="flex gap-3">
+                          {[{ val: "fisica", label: "Física" }, { val: "juridica", label: "Jurídica" }].map(op => (
+                            <button
+                              key={op.val}
+                              type="button"
+                              onClick={() => setFormData({ ...formData, personeria: op.val })}
+                              className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-all ${
+                                formData.personeria === op.val
+                                  ? "bg-arandu-blue/20 border-arandu-blue text-arandu-blue"
+                                  : "border-white/10 text-slate-400 hover:border-white/30"
+                              }`}
+                            >
+                              {op.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Fecha de nacimiento */}
+                      <div>
+                        <label className="block text-slate-400 text-sm mb-2">Fecha de nacimiento</label>
+                        <Input
+                          type="date"
+                          value={formData.fecha_nacimiento}
+                          onChange={(e) => setFormData({ ...formData, fecha_nacimiento: e.target.value })}
+                          className="bg-arandu-dark border-white/10 text-white"
+                        />
+                      </div>
+
+                      {/* Nacionalidad */}
+                      <div>
+                        <label className="block text-slate-400 text-sm mb-2">Nacionalidad</label>
+                        <Input
+                          value={formData.nacionalidad}
+                          onChange={(e) => setFormData({ ...formData, nacionalidad: e.target.value })}
+                          className="bg-arandu-dark border-white/10 text-white"
+                          placeholder="Ej: Paraguaya"
+                        />
+                      </div>
+
+                      {/* País / Ciudad / Municipio */}
+                      <div className="grid grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-slate-400 text-sm mb-2">País</label>
+                          <Input
+                            value={formData.pais}
+                            onChange={(e) => setFormData({ ...formData, pais: e.target.value })}
+                            className="bg-arandu-dark border-white/10 text-white"
+                            placeholder="Paraguay"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-400 text-sm mb-2">Ciudad</label>
+                          <Input
+                            value={formData.ciudad}
+                            onChange={(e) => setFormData({ ...formData, ciudad: e.target.value })}
+                            className="bg-arandu-dark border-white/10 text-white"
+                            placeholder="Asunción"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-400 text-sm mb-2">Municipio</label>
+                          <Input
+                            value={formData.municipio}
+                            onChange={(e) => setFormData({ ...formData, municipio: e.target.value })}
+                            className="bg-arandu-dark border-white/10 text-white"
+                            placeholder=""
+                          />
+                        </div>
+                      </div>
+
+                      {/* Inventario técnico toggle — solo si tiene el módulo habilitado */}
+                      {(isAdmin || (hasModule?.("inventario_tecnico") && hasPermission?.("inventario.ver"))) && (
+                        <div className="flex items-center justify-between p-3 rounded-lg bg-cyan-900/10 border border-cyan-500/20">
+                          <div>
+                            <p className="text-cyan-300 text-sm font-medium">Inventario Técnico</p>
+                            <p className="text-slate-500 text-xs">Habilitar acceso al módulo de inventario para este cliente</p>
+                          </div>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={!!formData.con_inventario_tecnico}
+                              onChange={(e) => setFormData({ ...formData, con_inventario_tecnico: e.target.checked })}
+                              className="w-4 h-4 accent-cyan-500"
+                            />
+                            <span className="text-slate-300 text-sm">Habilitado</span>
+                          </label>
+                        </div>
+                      )}
+                    </div>
+
                     <div>
                       <label className="block text-slate-400 text-sm mb-2">Notas</label>
                       <Textarea
@@ -781,6 +903,7 @@ const EmpresasPage = () => {
                       <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">Datos fiscales</p>
                       <div className="space-y-3 text-sm">
                         <p className="flex justify-between gap-4"><span className="text-slate-400">RUC</span><span className="text-white text-right">{selectedEmpresa.ruc || "-"}</span></p>
+                        <p className="flex justify-between gap-4"><span className="text-slate-400">Personería</span><span className="text-white text-right capitalize">{selectedEmpresa.personeria || "física"}</span></p>
                         <p className="flex justify-between gap-4"><span className="text-slate-400">Empresa</span><span className="text-white text-right">{selectedEmpresa.logo_tipo || "-"}</span></p>
                         <p className="flex justify-between gap-4"><span className="text-slate-400">Retencion IVA</span><span className="text-white text-right">{selectedEmpresa.aplica_retencion ? `${selectedEmpresa.porcentaje_retencion}%` : "No aplica"}</span></p>
                       </div>
@@ -794,11 +917,24 @@ const EmpresasPage = () => {
                       </div>
                     </div>
                     <div className="bg-arandu-dark border border-white/5 rounded-xl p-4 md:col-span-2">
-                      <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">Direccion</p>
-                      <p className="flex items-start gap-2 text-slate-300 text-sm">
-                        <MapPin className="w-4 h-4 text-slate-600 mt-0.5 shrink-0" />
-                        {selectedEmpresa.direccion || "-"}
-                      </p>
+                      <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">Ubicación</p>
+                      <div className="space-y-2 text-sm">
+                        <p className="flex items-start gap-2 text-slate-300">
+                          <MapPin className="w-4 h-4 text-slate-600 mt-0.5 shrink-0" />
+                          {selectedEmpresa.direccion || "-"}
+                        </p>
+                        {(selectedEmpresa.pais || selectedEmpresa.ciudad || selectedEmpresa.municipio) && (
+                          <p className="text-slate-400 text-xs pl-6">
+                            {[selectedEmpresa.municipio, selectedEmpresa.ciudad, selectedEmpresa.pais].filter(Boolean).join(", ")}
+                          </p>
+                        )}
+                        {selectedEmpresa.nacionalidad && (
+                          <p className="text-slate-400 text-xs pl-6">Nacionalidad: {selectedEmpresa.nacionalidad}</p>
+                        )}
+                        {selectedEmpresa.fecha_nacimiento && (
+                          <p className="text-slate-400 text-xs pl-6">Fecha nac.: {selectedEmpresa.fecha_nacimiento}</p>
+                        )}
+                      </div>
                     </div>
                     <div className="bg-arandu-dark border border-white/5 rounded-xl p-4 md:col-span-2">
                       <p className="text-slate-500 text-xs uppercase tracking-wide mb-2">Notas</p>

@@ -21,13 +21,25 @@ PERMISOS_DISPONIBLES = {
     "presupuestos": ["ver", "crear", "editar", "eliminar", "modo_libre"],
     "inventario": ["ver", "crear", "editar", "eliminar"],
     "credenciales": ["ver", "editar"],
-    "reportes": ["ver", "exportar"],
+    "reportes": [
+        "ver", "exportar",
+        # Reportes financieros individuales
+        "balance_mensual", "balance_anual", "balance_detallado",
+        "facturas", "cliente_detallado",
+        "ingresos", "recibos", "notas_credito",
+        "presupuestos", "compras", "gastos",
+        "proveedores", "iva",
+        # Reportes de inventario
+        "productos_stock", "stock_historial",
+        # Reporte técnico
+        "inventario_tecnico",
+    ],
     "alertas": ["ver", "crear", "editar", "eliminar"],
     "costos": ["ver", "editar"],
     "proveedores": ["ver", "crear", "editar", "eliminar"],
     "costos_fijos": ["ver", "crear", "editar", "eliminar"],
     "empleados": ["ver", "crear", "editar", "eliminar"],
-    "facturas": ["ver", "crear", "editar", "eliminar", "modo_libre", "afectar_stock", "timbrado"],
+    "facturas": ["ver", "crear", "editar", "eliminar", "anular", "modo_libre", "afectar_stock", "timbrado"],
     "balance": ["ver", "editar"],
     "ingresos_varios": ["ver", "crear", "editar", "eliminar"],
     "pagos_proveedores": ["ver", "crear", "editar", "eliminar"],

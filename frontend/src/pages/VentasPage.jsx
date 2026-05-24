@@ -341,6 +341,12 @@ export default function VentasPage() {
   const [montoUSD, setMontoUSD] = useState("");       // monto en USD (para derivar TC)
   // Editar pago individual
   const [editPagoCtx, setEditPagoCtx] = useState(null); // { factura, pago }
+  // Pagos múltiples (bulk)
+  const [selectedFacIds, setSelectedFacIds] = useState(new Set());
+  const [showBulkPagoModal, setShowBulkPagoModal] = useState(false);
+  const [bulkFechaPago, setBulkFechaPago] = useState(new Date().toISOString().slice(0, 10));
+  const [bulkCuentaId, setBulkCuentaId] = useState("");
+  const [bulkLoading, setBulkLoading] = useState(false);
   // Recibos
   const [recibos, setRecibos] = useState([]);
   const [reciboDoc, setReciboDoc] = useState(null);
@@ -805,6 +811,54 @@ export default function VentasPage() {
       setShowPagoParcialModal(false);
       fetchAll();
     } catch (e) { toast.error(e.message || "Error al registrar pago"); }
+  };
+
+  // ── Pago en lote (bulk) — agrupa por cliente, un recibo por cliente ─
+  const handleBulkPago = async () => {
+    if (!bulkFechaPago) { toast.error("Fecha requerida"); return; }
+    const facsPendientes = filteredFac.filter(
+      f => selectedFacIds.has(f.id) && (f.estado === "pendiente" || f.estado === "parcial")
+    );
+    if (facsPendientes.length === 0) { toast.error("No hay facturas pendientes seleccionadas"); return; }
+    setBulkLoading(true);
+    try {
+      const res = await fetch(`${API}/admin/facturas/pago-bulk`, {
+        method: "POST",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          factura_ids: facsPendientes.map(f => f.id),
+          fecha_pago: bulkFechaPago,
+          cuenta_id: bulkCuentaId || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Error al registrar pagos");
+      const { ok, errors, recibos } = data;
+      if (ok > 0) {
+        // Mostrar resumen de recibos generados
+        const resumenRecibos = recibos.map(r =>
+          `${r.recibo_numero} · ${r.cliente} (${r.facturas_count} fac.)`
+        ).join(" | ");
+        toast.success(`${ok} factura${ok !== 1 ? "s" : ""} pagada${ok !== 1 ? "s" : ""} · ${recibos.length} recibo${recibos.length !== 1 ? "s" : ""}: ${resumenRecibos}`);
+      }
+      if (errors > 0) {
+        // Limpiar el mensaje: sacar UUIDs y mostrar solo el tipo de error
+        let detalle = "";
+        if (data.error_details?.length) {
+          const raw = data.error_details[0] || "";
+          // Quitar el prefijo "Cliente 'UUID':" y mostrar solo el error
+          const sinUuid = raw.replace(/Cliente '[^']*':\s*/i, "").replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "").trim();
+          detalle = sinUuid ? ` — ${sinUuid}` : "";
+        }
+        toast.error(`${errors} factura${errors !== 1 ? "s" : ""} no se pudieron registrar${detalle}`);
+      }
+    } catch (e) {
+      toast.error(e.message || "Error al registrar pagos");
+    }
+    setBulkLoading(false);
+    setShowBulkPagoModal(false);
+    setSelectedFacIds(new Set());
+    fetchAll();
   };
 
   // ── Editar pago individual ────────────────────────────────────
@@ -1433,8 +1487,21 @@ export default function VentasPage() {
         {/* ── Tab: Facturas ─────────────────────────────────────── */}
         {tab === "facturas" && (
           <div>
+            {/* ── Barra de acciones bulk ── */}
             <div className="flex items-center justify-between mb-3">
               <span className="text-slate-500 text-xs font-body">{filteredFac.length} factura{filteredFac.length !== 1 ? "s" : ""}</span>
+              {selectedFacIds.size > 0 && hasPermission("facturas.editar") && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400">{selectedFacIds.size} seleccionada{selectedFacIds.size !== 1 ? "s" : ""}</span>
+                  <button
+                    onClick={() => { setBulkFechaPago(new Date().toISOString().slice(0, 10)); setBulkCuentaId(cuentasDisp[0]?.id || ""); setShowBulkPagoModal(true); }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-600/30 rounded-lg transition-all font-body"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5" /> Pagar seleccionadas ({selectedFacIds.size})
+                  </button>
+                  <button onClick={() => setSelectedFacIds(new Set())} className="text-xs text-slate-500 hover:text-slate-300 transition-colors">Limpiar</button>
+                </div>
+              )}
             </div>
             {loading ? (
               <div className="text-center py-10 text-slate-500 animate-pulse font-body">Cargando...</div>
@@ -1452,6 +1519,27 @@ export default function VentasPage() {
                 <table className="w-full text-sm font-body">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/3">
+                      {hasPermission("facturas.editar") && (
+                        <th className="pl-4 py-3 w-8">
+                          {(() => {
+                            const pagables = filteredFac.filter(f => f.estado === "pendiente" || f.estado === "parcial");
+                            const allSelected = pagables.length > 0 && pagables.every(f => selectedFacIds.has(f.id));
+                            return (
+                              <input type="checkbox" checked={allSelected}
+                                onChange={() => {
+                                  if (allSelected) {
+                                    setSelectedFacIds(prev => { const n = new Set(prev); pagables.forEach(f => n.delete(f.id)); return n; });
+                                  } else {
+                                    setSelectedFacIds(prev => { const n = new Set(prev); pagables.forEach(f => n.add(f.id)); return n; });
+                                  }
+                                }}
+                                className="rounded border-slate-600 bg-arandu-dark accent-emerald-500 cursor-pointer"
+                                title="Seleccionar todas las pendientes"
+                              />
+                            );
+                          })()}
+                        </th>
+                      )}
                       <SortTh label="N° Factura"  sortKey="numero"       currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-left" />
                       <SortTh label="Cliente" sortKey="empresa_nombre" currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-left" />
                       <SortTh label="Fecha"       sortKey="fecha"        currentSort={sortBy.facturas} onClick={(k) => toggleSort("facturas", k)} className="text-left" />
@@ -1465,7 +1553,22 @@ export default function VentasPage() {
                       <tr key={f.id}
                         onClick={() => openFacDoc(f.id)}
                         data-testid={`fact-row-${f.id}`}
-                        className={`border-b border-white/5 hover:bg-white/3 cursor-pointer transition-colors ${f.estado === "anulada" ? "opacity-50" : ""}`}>
+                        className={`border-b border-white/5 hover:bg-white/3 cursor-pointer transition-colors ${f.estado === "anulada" ? "opacity-50" : ""} ${selectedFacIds.has(f.id) ? "bg-emerald-500/5" : ""}`}>
+                        {hasPermission("facturas.editar") && (
+                          <td className="pl-4 py-3" onClick={e => e.stopPropagation()}>
+                            {(f.estado === "pendiente" || f.estado === "parcial") && (
+                              <input type="checkbox"
+                                checked={selectedFacIds.has(f.id)}
+                                onChange={() => setSelectedFacIds(prev => {
+                                  const n = new Set(prev);
+                                  n.has(f.id) ? n.delete(f.id) : n.add(f.id);
+                                  return n;
+                                })}
+                                className="rounded border-slate-600 bg-arandu-dark accent-emerald-500 cursor-pointer"
+                              />
+                            )}
+                          </td>
+                        )}
                         <td className="px-4 py-3">
                           <span className={`font-mono ${f.sin_factura ? "text-violet-300" : "text-emerald-300"}`}>
                             {f.sin_factura ? (f.numero_boleta || f.numero || "-") : (f.numero || "-")}
@@ -1540,7 +1643,7 @@ export default function VentasPage() {
                             {/* Deshacer pago — deshabilitado, para corregir eliminar y recrear */}
                             {/* Editar factura — deshabilitado, para corregir eliminar y recrear */}
                             {/* Anular */}
-                            {f.estado !== "anulada" && hasPermission("facturas.editar") && (
+                            {f.estado !== "anulada" && hasPermission("facturas.anular") && (
                               <button onClick={() => handleAnularFac(f)} title="Anular"
                                 className="p-1.5 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 transition-all">
                                 <AlertCircle className="w-3.5 h-3.5" />
@@ -2107,6 +2210,118 @@ export default function VentasPage() {
           onDeletePago={handleDeletePago}
           cuentasDisp={cuentasDisp}
         />
+      )}
+
+      {/* ── Modal Pago en lote (bulk) ── */}
+      {showBulkPagoModal && createPortal(
+        (() => {
+          // Calcular grupos y totales para mostrar en el modal
+          const facsPendBulk = filteredFac.filter(f => selectedFacIds.has(f.id) && (f.estado === "pendiente" || f.estado === "parcial"));
+          // Agrupar por cliente (mismo criterio que el backend)
+          const gruposBulk = {};
+          facsPendBulk.forEach(f => {
+            const clave = f.empresa_id || f.razon_social || f.id;
+            const label = f.empresa_nombre || f.razon_social || "Sin cliente";
+            if (!gruposBulk[clave]) gruposBulk[clave] = { label, facturas: [] };
+            gruposBulk[clave].facturas.push(f);
+          });
+          const gruposArr = Object.values(gruposBulk);
+          const totalGeneral = facsPendBulk.reduce((s, f) => s + ((f.monto || 0) - (f.monto_pagado || 0)), 0);
+          const multipleClientes = gruposArr.length > 1;
+
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+              <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl">
+                {/* Header */}
+                <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-white/10">
+                  <div>
+                    <h2 className="text-white font-heading font-bold text-lg">Pagar facturas seleccionadas</h2>
+                    <p className="text-slate-400 text-sm mt-0.5">
+                      {facsPendBulk.length} factura{facsPendBulk.length !== 1 ? "s" : ""} · {gruposArr.length} cliente{gruposArr.length !== 1 ? "s" : ""}
+                      {multipleClientes && <span className="ml-2 text-xs bg-blue-500/15 text-blue-300 border border-blue-500/20 px-1.5 py-0.5 rounded-full">1 recibo por cliente</span>}
+                    </p>
+                  </div>
+                  <button onClick={() => setShowBulkPagoModal(false)} className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-all">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="px-6 py-5 space-y-4">
+                  {/* Facturas agrupadas por cliente con subtotales */}
+                  <div className="max-h-52 overflow-y-auto space-y-3">
+                    {gruposArr.map((grupo, gi) => (
+                      <div key={gi}>
+                        {/* Cabecera del grupo (cliente) — solo si hay más de 1 cliente */}
+                        {multipleClientes && (
+                          <div className="flex items-center justify-between mb-1 px-1">
+                            <span className="text-xs font-medium text-slate-300 truncate">{grupo.label}</span>
+                            <span className="text-xs text-emerald-300 font-medium ml-2 shrink-0">
+                              {fmtPYG(grupo.facturas.reduce((s, f) => s + ((f.monto || 0) - (f.monto_pagado || 0)), 0))}
+                            </span>
+                          </div>
+                        )}
+                        {/* Filas de facturas */}
+                        <div className="space-y-1">
+                          {grupo.facturas.map(f => (
+                            <div key={f.id} className="flex items-center justify-between bg-arandu-dark rounded-lg px-3 py-2 text-sm">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="text-emerald-300 font-mono shrink-0">{f.numero || f.numero_boleta || "-"}</span>
+                                {!multipleClientes && <span className="text-slate-400 text-xs truncate">{f.empresa_nombre || f.razon_social || "-"}</span>}
+                              </div>
+                              <span className="text-white font-medium shrink-0 ml-2">{fmtMonto((f.monto || 0) - (f.monto_pagado || 0), f.moneda)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Total general */}
+                  <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-4 py-2.5">
+                    <span className="text-emerald-300 text-sm font-medium">Total general</span>
+                    <span className="text-emerald-300 font-bold text-base">{fmtPYG(totalGeneral)}</span>
+                  </div>
+
+                  {/* Fecha de pago */}
+                  <div>
+                    <label className="block text-slate-400 text-xs mb-1.5">Fecha de pago</label>
+                    <input type="date" value={bulkFechaPago} onChange={e => setBulkFechaPago(e.target.value)}
+                      className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm" />
+                  </div>
+
+                  {/* Cuenta bancaria */}
+                  {cuentasDisp.length > 0 && (
+                    <div>
+                      <label className="block text-slate-400 text-xs mb-1.5">Cuenta bancaria (opcional)</label>
+                      <select value={bulkCuentaId} onChange={e => setBulkCuentaId(e.target.value)}
+                        className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm">
+                        <option value="">Sin especificar</option>
+                        {cuentasDisp.map(c => (
+                          <option key={c.id} value={c.id}>{c.nombre} {c.moneda ? `(${c.moneda})` : ""}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <p className="text-slate-500 text-xs">Se registra el monto pendiente completo de cada factura. {multipleClientes ? `Se generarán ${gruposArr.length} recibos (uno por cliente).` : "Se generará 1 recibo."}</p>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 px-6 pb-5">
+                  <button onClick={() => setShowBulkPagoModal(false)}
+                    className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors font-body">
+                    Cancelar
+                  </button>
+                  <button onClick={handleBulkPago} disabled={bulkLoading}
+                    className="flex items-center gap-2 px-5 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg transition-all font-body">
+                    {bulkLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                    {bulkLoading ? "Procesando..." : `Confirmar ${facsPendBulk.length} pago${facsPendBulk.length !== 1 ? "s" : ""}`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()
+        ,
+        document.body
       )}
 
       {/* ── Factura Form Modal (nueva/editar) ── */}

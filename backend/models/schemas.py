@@ -136,6 +136,14 @@ class EmpresaCreate(BaseModel):
     porcentaje_retencion: Optional[float] = None  # % de retención sobre el IVA (ej: 30)
     notas: Optional[str] = None
     logo_tipo: Optional[str] = "arandujar"  # arandu | arandujar | jar
+    # Datos adicionales del cliente
+    personeria: Optional[str] = "fisica"    # fisica | juridica
+    fecha_nacimiento: Optional[str] = None  # YYYY-MM-DD
+    nacionalidad: Optional[str] = None
+    pais: Optional[str] = None
+    ciudad: Optional[str] = None
+    municipio: Optional[str] = None
+    con_inventario_tecnico: Optional[bool] = None  # None = habilitado (compat. retroactiva)
 
 class EmpresaResponse(BaseModel):
     id: str
@@ -150,6 +158,14 @@ class EmpresaResponse(BaseModel):
     porcentaje_retencion: Optional[float] = None
     notas: Optional[str] = None
     logo_tipo: Optional[str] = "arandujar"
+    # Datos adicionales del cliente
+    personeria: Optional[str] = "fisica"
+    fecha_nacimiento: Optional[str] = None
+    nacionalidad: Optional[str] = None
+    pais: Optional[str] = None
+    ciudad: Optional[str] = None
+    municipio: Optional[str] = None
+    con_inventario_tecnico: Optional[bool] = None
     created_at: str
 
 

@@ -1152,11 +1152,11 @@ const ReportesPage = () => {
   }, [tab, activeEmpresaPropia?.id, user?.permisos]); // eslint-disable-line
 
   useEffect(() => {
-    const financieroVisible = hasPermission?.("balance.ver") || hasPermission?.("facturas.ver") || hasPermission?.("ingresos_varios.ver") || hasPermission?.("recibos.ver") || hasPermission?.("notas_credito.ver") || hasPermission?.("presupuestos.ver") || hasPermission?.("compras.ver") || hasPermission?.("costos_fijos.ver") || hasPermission?.("proveedores.ver") || hasPermission?.("pagos_proveedores.ver") || hasPermission?.("empleados.ver");
+    const financieroVisible = hasPermission?.("reportes.balance_mensual") || hasPermission?.("reportes.balance_anual") || hasPermission?.("reportes.balance_detallado") || hasPermission?.("reportes.facturas") || hasPermission?.("reportes.cliente_detallado") || hasPermission?.("reportes.ingresos") || hasPermission?.("reportes.recibos") || hasPermission?.("reportes.notas_credito") || hasPermission?.("reportes.presupuestos") || hasPermission?.("reportes.compras") || hasPermission?.("reportes.gastos") || hasPermission?.("reportes.proveedores") || hasPermission?.("reportes.iva");
     const visibles = [
       financieroVisible && "financiero",
-      (hasModule?.("productos_stock") && (hasPermission?.("inventario_productos.ver") || hasPermission?.("historial_stock.ver"))) && "inventario",
-      (hasModule?.("inventario_tecnico") && hasPermission?.("inventario.ver")) && "tecnico",
+      (hasModule?.("productos_stock") && (hasPermission?.("reportes.productos_stock") || hasPermission?.("reportes.stock_historial"))) && "inventario",
+      (hasModule?.("inventario_tecnico") && hasPermission?.("reportes.inventario_tecnico")) && "tecnico",
     ].filter(Boolean);
     if (visibles.length && !visibles.includes(reporteCategoria)) {
       setReporteCategoria(visibles[0]);
@@ -1715,9 +1715,9 @@ const ReportesPage = () => {
           {/* ── Categorías de reportes ─────────────────────────────────────── */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {[
-              { id: "financiero", visible: hasPermission?.("balance.ver") || hasPermission?.("facturas.ver") || hasPermission?.("ingresos_varios.ver") || hasPermission?.("recibos.ver") || hasPermission?.("notas_credito.ver") || hasPermission?.("presupuestos.ver") || hasPermission?.("compras.ver") || hasPermission?.("costos_fijos.ver") || hasPermission?.("proveedores.ver") || hasPermission?.("pagos_proveedores.ver") || hasPermission?.("empleados.ver"), label: "Financiero", icon: BarChart3, desc: "Balance, facturas, presupuestos e ingresos", activeClass: "bg-emerald-500/15 border-emerald-500/40", iconClass: "bg-emerald-500/20 text-emerald-300" },
-              { id: "inventario", visible: hasModule?.("productos_stock") && (hasPermission?.("inventario_productos.ver") || hasPermission?.("historial_stock.ver")), label: "Inventario", icon: Package, desc: "Stock de productos y movimientos", activeClass: "bg-blue-500/15 border-blue-500/40", iconClass: "bg-blue-500/20 text-blue-300" },
-              { id: "tecnico", visible: hasModule?.("inventario_tecnico") && hasPermission?.("inventario.ver"), label: "Inventario técnico", icon: Server, desc: "Activos técnicos, clientes y credenciales", activeClass: "bg-amber-500/15 border-amber-500/40", iconClass: "bg-amber-500/20 text-amber-300" },
+              { id: "financiero", visible: hasPermission?.("reportes.balance_mensual") || hasPermission?.("reportes.balance_anual") || hasPermission?.("reportes.balance_detallado") || hasPermission?.("reportes.facturas") || hasPermission?.("reportes.cliente_detallado") || hasPermission?.("reportes.ingresos") || hasPermission?.("reportes.recibos") || hasPermission?.("reportes.notas_credito") || hasPermission?.("reportes.presupuestos") || hasPermission?.("reportes.compras") || hasPermission?.("reportes.gastos") || hasPermission?.("reportes.proveedores") || hasPermission?.("reportes.iva"), label: "Financiero", icon: BarChart3, desc: "Balance, facturas, presupuestos e ingresos", activeClass: "bg-emerald-500/15 border-emerald-500/40", iconClass: "bg-emerald-500/20 text-emerald-300" },
+              { id: "inventario", visible: hasModule?.("productos_stock") && (hasPermission?.("reportes.productos_stock") || hasPermission?.("reportes.stock_historial")), label: "Inventario", icon: Package, desc: "Stock de productos y movimientos", activeClass: "bg-blue-500/15 border-blue-500/40", iconClass: "bg-blue-500/20 text-blue-300" },
+              { id: "tecnico", visible: hasModule?.("inventario_tecnico") && hasPermission?.("reportes.inventario_tecnico"), label: "Inventario técnico", icon: Server, desc: "Activos técnicos, clientes y credenciales", activeClass: "bg-amber-500/15 border-amber-500/40", iconClass: "bg-amber-500/20 text-amber-300" },
             ].filter(cat => cat.visible).map(cat => {
               const Icon = cat.icon;
               const active = reporteCategoria === cat.id;
@@ -1809,20 +1809,19 @@ const ReportesPage = () => {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                 {[
-                  { visible: hasPermission?.("balance.ver"), title: "Balance mensual", desc: `Resumen de ${mesLabel(reportMonth)} con ingresos, egresos y saldo`, tipo: "balance_mensual", color: "text-emerald-400", icon: TrendingUp },
-                  { visible: hasPermission?.("balance.ver"), title: "Balance anual", desc: `Resumen por meses del año ${reportYear}`, tipo: "balance_anual", color: "text-lime-400", icon: BarChart3 },
-                  { visible: hasPermission?.("balance.ver") || hasPermission?.("facturas.ver") || hasPermission?.("compras.ver") || hasPermission?.("costos_fijos.ver") || hasPermission?.("empleados.ver"), title: "Balance detallado", desc: "Facturas, compras, pagos proveedores, gastos y sueldos del mes", tipo: "balance_detallado", color: "text-teal-400", icon: FileText },
-                  { visible: hasPermission?.("facturas.ver"), title: "Facturas", desc: "Facturas emitidas, cobradas y pendientes del periodo mensual", tipo: "facturas", color: "text-cyan-400", icon: Receipt },
-                  { visible: hasPermission?.("facturas.ver"), title: "Ventas por cliente", desc: "Detalle de facturas, boletas, cobros y notas del cliente elegido", tipo: "cliente_detallado", color: "text-sky-400", icon: FileText },
-                  { visible: hasPermission?.("facturas.ver"), title: "Estado de cuenta cliente", desc: "Resumen compacto de facturado, cobrado, notas y saldo pendiente", tipo: "cliente_estado", color: "text-teal-400", icon: DollarSign },
-                  { visible: hasPermission?.("ingresos_varios.ver"), title: "Ingresos varios", desc: "Ingresos directos del periodo, categorias y clientes", tipo: "ingresos", color: "text-green-400", icon: TrendingUp },
-                  { visible: hasPermission?.("recibos.ver"), title: "Recibos", desc: "Cobros registrados contra facturas en el periodo", tipo: "recibos", color: "text-lime-400", icon: Receipt },
-                  { visible: hasPermission?.("notas_credito.ver"), title: "Notas de credito", desc: "Notas de ventas y compras, con motivo y monto", tipo: "notas_credito", color: "text-rose-400", icon: AlertTriangle },
-                  { visible: hasPermission?.("presupuestos.ver"), title: "Presupuestos", desc: "Presupuestos con estados, montos y facturación", tipo: "presupuestos", color: "text-blue-400", icon: ClipboardList },
-                  { visible: hasPermission?.("compras.ver"), title: "Compras", desc: "Compras contado/crédito, facturas y estado de pago del mes", tipo: "compras", color: "text-orange-400", icon: TrendingDown },
-                  { visible: hasPermission?.("costos_fijos.ver"), title: "Gastos", desc: "Pagos de gastos fijos del periodo", tipo: "gastos", color: "text-red-400", icon: Calendar },
-                  { visible: hasPermission?.("proveedores.ver") || hasPermission?.("pagos_proveedores.ver"), title: "Proveedores y deudas", desc: `Proveedores, pagos y pendientes del año ${reportYear}`, tipo: "proveedores", color: "text-amber-400", icon: DollarSign },
-                  { visible: hasPermission?.("balance.ver"), title: "IVA fiscal", desc: "Debito, credito, pagos y saldo actual acumulado", tipo: "iva", color: "text-purple-400", icon: Table },
+                  { visible: hasPermission?.("reportes.balance_mensual"), title: "Balance mensual", desc: `Resumen de ${mesLabel(reportMonth)} con ingresos, egresos y saldo`, tipo: "balance_mensual", color: "text-emerald-400", icon: TrendingUp },
+                  { visible: hasPermission?.("reportes.balance_anual"), title: "Balance anual", desc: `Resumen por meses del año ${reportYear}`, tipo: "balance_anual", color: "text-lime-400", icon: BarChart3 },
+                  { visible: hasPermission?.("reportes.balance_detallado"), title: "Balance detallado", desc: "Facturas, compras, pagos proveedores, gastos y sueldos del mes", tipo: "balance_detallado", color: "text-teal-400", icon: FileText },
+                  { visible: hasPermission?.("reportes.facturas"), title: "Facturas", desc: "Facturas emitidas, cobradas y pendientes del periodo mensual", tipo: "facturas", color: "text-cyan-400", icon: Receipt },
+                  { visible: hasPermission?.("reportes.cliente_detallado"), title: "Ventas por cliente", desc: "Detalle de facturas, boletas, cobros y notas del cliente elegido", tipo: "cliente_detallado", color: "text-sky-400", icon: FileText },
+                  { visible: hasPermission?.("reportes.ingresos"), title: "Ingresos varios", desc: "Ingresos directos del periodo, categorias y clientes", tipo: "ingresos", color: "text-green-400", icon: TrendingUp },
+                  { visible: hasPermission?.("reportes.recibos"), title: "Recibos", desc: "Cobros registrados contra facturas en el periodo", tipo: "recibos", color: "text-lime-400", icon: Receipt },
+                  { visible: hasPermission?.("reportes.notas_credito"), title: "Notas de credito", desc: "Notas de ventas y compras, con motivo y monto", tipo: "notas_credito", color: "text-rose-400", icon: AlertTriangle },
+                  { visible: hasPermission?.("reportes.presupuestos"), title: "Presupuestos", desc: "Presupuestos con estados, montos y facturación", tipo: "presupuestos", color: "text-blue-400", icon: ClipboardList },
+                  { visible: hasPermission?.("reportes.compras"), title: "Compras", desc: "Compras contado/crédito, facturas y estado de pago del mes", tipo: "compras", color: "text-orange-400", icon: TrendingDown },
+                  { visible: hasPermission?.("reportes.gastos"), title: "Gastos", desc: "Pagos de gastos fijos del periodo", tipo: "gastos", color: "text-red-400", icon: Calendar },
+                  { visible: hasPermission?.("reportes.proveedores"), title: "Proveedores y deudas", desc: `Proveedores, pagos y pendientes del año ${reportYear}`, tipo: "proveedores", color: "text-amber-400", icon: DollarSign },
+                  { visible: hasPermission?.("reportes.iva"), title: "IVA fiscal", desc: "Debito, credito, pagos y saldo actual acumulado", tipo: "iva", color: "text-purple-400", icon: Table },
                 ].filter(r => r.visible).map(r => {
                   const RIcon = r.icon;
                   return (
@@ -1852,9 +1851,9 @@ const ReportesPage = () => {
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {[
-                  { title: "Productos y stock", desc: "Estado actual del inventario, niveles de stock y valorización", tipo: "productos_stock", icon: Package, color: "text-blue-400" },
-                  { title: "Historial de stock", desc: "Entradas, salidas, ajustes, stock anterior/nuevo y usuario", tipo: "stock_historial", icon: Table, color: "text-cyan-400" },
-                ].map(r => {
+                  { visible: hasPermission?.("reportes.productos_stock"), title: "Productos y stock", desc: "Estado actual del inventario, niveles de stock y valorización", tipo: "productos_stock", icon: Package, color: "text-blue-400" },
+                  { visible: hasPermission?.("reportes.stock_historial"), title: "Historial de stock", desc: "Entradas, salidas, ajustes, stock anterior/nuevo y usuario", tipo: "stock_historial", icon: Table, color: "text-cyan-400" },
+                ].filter(r => r.visible).map(r => {
                   const RIcon = r.icon;
                   return (
                     <button key={r.title} onClick={() => generarReporte(r.tipo)} disabled={genericReportLoading}

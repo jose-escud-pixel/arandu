@@ -191,6 +191,11 @@ export default function ProductosPage() {
       toast.error("No tenés permiso para crear productos de tipo Servicios");
       return;
     }
+    // Categoría requerida
+    if (!formData.categoria) {
+      toast.error("Seleccioná una categoría para el producto");
+      return;
+    }
     // SKU requerido
     if (!formData.sku?.trim()) {
       toast.error("El SKU es obligatorio");
@@ -603,10 +608,10 @@ export default function ProductosPage() {
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm font-body focus:outline-none focus:border-cyan-500" />
                 </div>
                 <div>
-                  <label className="block text-slate-400 text-xs mb-1 font-body">Categoría</label>
+                  <label className="block text-slate-400 text-xs mb-1 font-body">Categoría <span className="text-red-400">*</span></label>
                   <select value={formData.categoria} onChange={e => handleCategoriaChange(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-slate-300 text-sm font-body focus:outline-none focus:border-cyan-500">
-                    <option value="">Sin categoría</option>
+                    className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-slate-300 text-sm font-body focus:outline-none focus:border-cyan-500 ${!formData.categoria ? "border-red-500/50" : "border-white/10"}`}>
+                    <option value="">— Seleccioná una categoría —</option>
                     {CATEGORIAS_PRODUCTO.map(c => (
                       <option key={c} value={c} disabled={c === "Servicios" && !puedeCrearServicio}>
                         {c}{c === "Servicios" && !puedeCrearServicio ? " (sin permiso)" : ""}

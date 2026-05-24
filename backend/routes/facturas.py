@@ -519,7 +519,10 @@ async def update_estado_factura(
     fecha_pago: Optional[str] = None,
     user: dict = Depends(require_authenticated)
 ):
-    if not has_permission(user, "facturas.editar"):
+    if estado == "anulada":
+        if not has_permission(user, "facturas.anular"):
+            raise HTTPException(status_code=403, detail="No tiene permiso para anular facturas")
+    elif not has_permission(user, "facturas.editar"):
         raise HTTPException(status_code=403, detail="Sin permiso")
     fac = await db.facturas.find_one({"id": factura_id}, {"_id": 0})
     if not fac:
@@ -685,6 +688,183 @@ async def pago_parcial_factura(
                 {"id": pid}, {"$set": {"estado": "cobrado"}}
             )
     return {**updates, "recibo": {"id": recibo_doc["id"], "numero": recibo_numero} if recibo_doc else None}
+
+
+@router.post("/admin/facturas/pago-bulk")
+async def pago_bulk_facturas(
+    data: dict,   # { factura_ids: [], fecha_pago, cuenta_id?, tipo_cambio? }
+    user: dict = Depends(require_authenticated)
+):
+    """Registra pagos en lote agrupando por cliente.
+    Por cada grupo de facturas del mismo cliente genera UN solo recibo.
+    Facturas de clientes distintos generan recibos separados.
+    """
+    if not has_permission(user, "facturas.editar"):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+
+    factura_ids  = data.get("factura_ids") or []
+    fecha_pago   = data.get("fecha_pago") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    cuenta_id    = data.get("cuenta_id")
+    tipo_cambio  = data.get("tipo_cambio")
+
+    if not factura_ids:
+        raise HTTPException(status_code=400, detail="No se enviaron facturas")
+
+    # Obtener nombre de la cuenta una sola vez
+    cuenta_nombre = None
+    if cuenta_id:
+        cuenta_doc = await db.cuentas_bancarias.find_one({"id": cuenta_id}, {"_id": 0, "nombre": 1})
+        if cuenta_doc:
+            cuenta_nombre = cuenta_doc.get("nombre")
+
+    # Cargar facturas — solo pendientes o parciales
+    facturas = []
+    for fid in factura_ids:
+        fac = await db.facturas.find_one({"id": fid}, {"_id": 0})
+        if fac and fac.get("estado") in ("pendiente", "parcial"):
+            facturas.append(fac)
+
+    if not facturas:
+        raise HTTPException(status_code=400, detail="No hay facturas pendientes válidas")
+
+    # ── Agrupar por cliente (empresa_id o razon_social si no hay empresa_id) ──
+    grupos: dict = {}
+    for fac in facturas:
+        clave = fac.get("empresa_id") or fac.get("razon_social") or fac["id"]
+        grupos.setdefault(clave, []).append(fac)
+
+    recibos_creados = []
+    ok = 0
+    errors = 0
+    error_details = []
+
+    for clave_cliente, grupo in grupos.items():
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            logo_tipo = grupo[0].get("logo_tipo", "arandujar")
+
+            # ── Generar número de recibo único para este grupo ──────────
+            # Usamos count + while-loop para evitar dependencia de sort en find_one
+            n = (await db.recibos.count_documents({"logo_tipo": logo_tipo})) + 1
+            while await db.recibos.find_one({"logo_tipo": logo_tipo, "numero": f"REC-{n:04d}"}):
+                n += 1
+            recibo_numero = f"REC-{n:04d}"
+
+            # ── Construir items del recibo (una línea por factura) ──────
+            monto_total_grupo = 0.0
+            items_recibo = []
+            for fac in grupo:
+                pendiente = float(fac.get("monto") or 0) - float(fac.get("monto_pagado") or 0)
+                if pendiente <= 0:
+                    pendiente = float(fac.get("monto") or 0)
+                monto_total_grupo += pendiente
+                items_recibo.append({
+                    "factura_id":     fac["id"],
+                    "factura_numero": fac.get("numero") or fac.get("numero_boleta") or "",
+                    "monto":          pendiente,
+                    "moneda":         fac.get("moneda", "PYG"),
+                })
+
+            monto_cuenta = None
+            if tipo_cambio and tipo_cambio > 0:
+                monto_cuenta = round(monto_total_grupo / tipo_cambio, 2)
+
+            # ── Crear recibo único para el grupo ────────────────────────
+            recibo_doc = {
+                "id":                str(uuid.uuid4()),
+                "numero":            recibo_numero,
+                "numero_normalizado": _numero_doc_normalizado(recibo_numero),
+                # Primer factura como referencia principal (compat. con vistas existentes)
+                "factura_id":        grupo[0]["id"],
+                "factura_numero":    grupo[0].get("numero") or grupo[0].get("numero_boleta") or "",
+                # Lista completa de facturas cubiertas
+                "facturas":          items_recibo,
+                "razon_social":      grupo[0].get("razon_social", ""),
+                "ruc":               grupo[0].get("ruc"),
+                "monto":             monto_total_grupo,
+                "moneda":            grupo[0].get("moneda", "PYG"),
+                "fecha_pago":        fecha_pago,
+                "logo_tipo":         logo_tipo,
+                "cuenta_id":         cuenta_id,
+                "cuenta_nombre":     cuenta_nombre,
+                "tipo_cambio":       tipo_cambio,
+                "monto_cuenta":      monto_cuenta,
+                "notas":             None,
+                "created_at":        now,
+                "bulk": True,
+            }
+            await db.recibos.insert_one(recibo_doc)
+
+            # ── Actualizar cada factura del grupo ───────────────────────
+            pago_id_grupo = str(uuid.uuid4())
+            for fac in grupo:
+                pendiente = float(fac.get("monto") or 0) - float(fac.get("monto_pagado") or 0)
+                if pendiente <= 0:
+                    pendiente = float(fac.get("monto") or 0)
+                pagos_previos   = fac.get("pagos") or []
+                nuevo_pago = {
+                    "id":            str(uuid.uuid4()),
+                    "monto":         pendiente,
+                    "fecha":         fecha_pago,
+                    "registrado_por": user.get("name", ""),
+                    "recibo_id":     recibo_doc["id"],
+                    "recibo_numero": recibo_numero,
+                    "cuenta_id":     cuenta_id,
+                    "cuenta_nombre": cuenta_nombre,
+                    "tipo_cambio":   tipo_cambio,
+                    "monto_cuenta":  round(pendiente / tipo_cambio, 2) if tipo_cambio and tipo_cambio > 0 else None,
+                    "created_at":    now,
+                    "bulk": True,
+                }
+                pagos_actualizados = pagos_previos + [nuevo_pago]
+                monto_acumulado    = sum(p["monto"] for p in pagos_actualizados)
+                monto_total_fac    = float(fac.get("monto") or 0)
+                nuevo_estado       = "pagada" if monto_acumulado >= monto_total_fac else "parcial"
+                monto_acumulado    = min(monto_acumulado, monto_total_fac)
+
+                await db.facturas.update_one({"id": fac["id"]}, {"$set": {
+                    "estado":       nuevo_estado,
+                    "monto_pagado": monto_acumulado,
+                    "fecha_pago":   fecha_pago,
+                    "pagos":        pagos_actualizados,
+                }})
+
+                # Marcar presupuestos como cobrados si aplica
+                if nuevo_estado == "pagada":
+                    pids = list(fac.get("presupuesto_ids") or [])
+                    if fac.get("presupuesto_id") and fac["presupuesto_id"] not in pids:
+                        pids.append(fac["presupuesto_id"])
+                    for pid in pids:
+                        await db.presupuestos.update_one({"id": pid}, {"$set": {"estado": "cobrado"}})
+
+                ok += 1
+
+            await log_auditoria(user, "facturas", "pago_bulk",
+                f"Pago bulk: {len(grupo)} factura(s) de cliente '{clave_cliente}' · recibo {recibo_numero}")
+
+            recibos_creados.append({
+                "recibo_id":     recibo_doc["id"],
+                "recibo_numero": recibo_numero,
+                "cliente":       grupo[0].get("razon_social") or clave_cliente,
+                "facturas_count": len(grupo),
+                "monto_total":   monto_total_grupo,
+            })
+
+        except Exception as exc:
+            errors += len(grupo)
+            detalle = f"Cliente '{clave_cliente}': {type(exc).__name__}: {str(exc)}"
+            error_details.append(detalle)
+            try:
+                await log_auditoria(user, "facturas", "pago_bulk_error", detalle)
+            except Exception:
+                pass
+
+    return {
+        "ok":           ok,
+        "errors":       errors,
+        "recibos":      recibos_creados,
+        "error_details": error_details,
+    }
 
 
 @router.patch("/admin/facturas/{factura_id}/pago/{pago_id}")
