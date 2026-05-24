@@ -32,7 +32,7 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 export const AuthContext = React.createContext(null);
 
 // Aplica el tema de la empresa activa al elemento raíz del admin
-// IMPORTANTE: solo aplica cuando el usuario está en /admin/*; en / (landing) y /login
+// IMPORTANTE: solo aplica cuando el usuario está en /sistema/*; en / (landing) y /login
 // mantiene el tema oscuro-azul por defecto para no "romper" el branding público.
 function applyTheme(tema) {
   const el = document.getElementById("arandu-admin-root");
@@ -40,12 +40,12 @@ function applyTheme(tema) {
   const temas = ["oscuro-azul", "oscuro-rojo", "claro-rojo", "claro-dorado", "claro-azul"];
   temas.forEach(t => el.removeAttribute("data-tema"));
 
-  const onAdmin = typeof window !== "undefined" && window.location.pathname.startsWith("/admin");
+  const onAdmin = typeof window !== "undefined" && window.location.pathname.startsWith("/sistema");
 
   if (onAdmin && tema && tema !== "oscuro-azul") {
     el.setAttribute("data-tema", tema);
   }
-  // Para temas claros también cambiamos el body bg — solo si estamos en /admin
+  // Para temas claros también cambiamos el body bg — solo si estamos en /sistema
   const lightBgs = { "claro-rojo": "#f8fafc", "claro-dorado": "#fefce8", "claro-azul": "#f0f9ff" };
   document.body.style.backgroundColor = onAdmin ? (lightBgs[tema] || "#0a1628") : "#0a1628";
 }
@@ -220,7 +220,7 @@ function AuthProvider({ children }) {
   const hasPermission = (permiso) => {
     if (!user) return false;
     if (!permisoHabilitadoPorEmpresa(activeEmpresaPropia, permiso)) return false;
-    if (user.role === "admin") return true;
+    if (user.role === "admin" || user.role === "gerente") return true;
     return (user.permisos || []).includes(permiso);
   };
 
@@ -287,16 +287,16 @@ function ProtectedRoute({ children, adminOnly = false, requiredPermission = null
     return <Navigate to="/login" replace />;
   }
 
-  if (adminOnly && user.role !== "admin") {
-    return <Navigate to="/admin" replace />;
+  if (adminOnly && user.role !== "admin" && user.role !== "gerente") {
+    return <Navigate to="/sistema" replace />;
   }
 
   if (requiredPermission && !hasPermission(requiredPermission)) {
-    return <Navigate to="/admin" replace />;
+    return <Navigate to="/sistema" replace />;
   }
 
   if (Array.isArray(anyPermission) && anyPermission.length && !anyPermission.some(p => hasPermission(p))) {
-    return <Navigate to="/admin" replace />;
+    return <Navigate to="/sistema" replace />;
   }
 
   return children;
@@ -324,64 +324,64 @@ function App() {
           <Routes>
             <Route path="/" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
-            <Route path="/admin" element={
+            <Route path="/sistema" element={
               <ProtectedRoute><AdminDashboard /></ProtectedRoute>
             } />
-            <Route path="/admin/empresas" element={
+            <Route path="/sistema/empresas" element={
               <ProtectedRoute requiredPermission="empresas.ver"><EmpresasPage /></ProtectedRoute>
             } />
-            <Route path="/admin/presupuestos" element={
+            <Route path="/sistema/presupuestos" element={
               <ProtectedRoute requiredPermission="presupuestos.ver"><VentasPage /></ProtectedRoute>
             } />
-            <Route path="/admin/usuarios" element={
+            <Route path="/sistema/usuarios" element={
               <ProtectedRoute requiredPermission="usuarios.ver"><UsuariosPage /></ProtectedRoute>
             } />
-            <Route path="/admin/perfil" element={
+            <Route path="/sistema/perfil" element={
               <ProtectedRoute><PerfilPage /></ProtectedRoute>
             } />
-            <Route path="/admin/auditoria" element={
+            <Route path="/sistema/auditoria" element={
               <ProtectedRoute requiredPermission="auditoria.ver"><AuditoriaPage /></ProtectedRoute>
             } />
-            <Route path="/admin/inventario" element={
+            <Route path="/sistema/inventario" element={
               <ProtectedRoute requiredPermission="inventario.ver"><InventarioPage /></ProtectedRoute>
             } />
-            <Route path="/admin/reportes" element={
+            <Route path="/sistema/reportes" element={
               <ProtectedRoute requiredPermission="reportes.ver"><ReportesPage /></ProtectedRoute>
             } />
-            <Route path="/admin/proveedores" element={
+            <Route path="/sistema/proveedores" element={
               <ProtectedRoute requiredPermission="proveedores.ver"><ProveedoresPage /></ProtectedRoute>
             } />
-            <Route path="/admin/costos-fijos" element={
+            <Route path="/sistema/costos-fijos" element={
               <ProtectedRoute requiredPermission="costos_fijos.ver"><CostosFijosPage /></ProtectedRoute>
             } />
-            <Route path="/admin/pagos-proveedores" element={
+            <Route path="/sistema/pagos-proveedores" element={
               <ProtectedRoute requiredPermission="pagos_proveedores.ver"><PagosProveedoresPage /></ProtectedRoute>
             } />
-            <Route path="/admin/empleados" element={
+            <Route path="/sistema/empleados" element={
               <ProtectedRoute requiredPermission="empleados.ver"><EmpleadosPage /></ProtectedRoute>
             } />
-            <Route path="/admin/balance" element={
+            <Route path="/sistema/balance" element={
               <ProtectedRoute requiredPermission="balance.ver"><BalancePage /></ProtectedRoute>
             } />
-            <Route path="/admin/ingresos-varios" element={
+            <Route path="/sistema/ingresos-varios" element={
               <ProtectedRoute requiredPermission="ingresos_varios.ver"><IngresoVarioPage /></ProtectedRoute>
             } />
-            <Route path="/admin/egresos" element={
+            <Route path="/sistema/egresos" element={
               <ProtectedRoute anyPermission={["compras.ver", "costos_fijos.ver", "empleados.ver", "balance.ver", "pagos_proveedores.ver"]}><EgresosPage /></ProtectedRoute>
             } />
-            <Route path="/admin/ventas" element={
+            <Route path="/sistema/ventas" element={
               <ProtectedRoute anyPermission={["presupuestos.ver", "facturas.ver", "ingresos_varios.ver", "recibos.ver", "notas_credito.ver"]}><VentasPage /></ProtectedRoute>
             } />
-            <Route path="/admin/productos" element={
+            <Route path="/sistema/productos" element={
               <ProtectedRoute requiredPermission="inventario_productos.ver"><ProductosPage /></ProtectedRoute>
             } />
-            <Route path="/admin/historial-stock" element={
+            <Route path="/sistema/historial-stock" element={
               <ProtectedRoute requiredPermission="historial_stock.ver"><StockHistorialPage /></ProtectedRoute>
             } />
-            <Route path="/admin/empresas-propias" element={
+            <Route path="/sistema/empresas-propias" element={
               <ProtectedRoute adminOnly={true}><EmpresasPropiasPage /></ProtectedRoute>
             } />
-            <Route path="/admin/bancos" element={
+            <Route path="/sistema/bancos" element={
               <ProtectedRoute requiredPermission="bancos.ver"><BancosPage /></ProtectedRoute>
             } />
           </Routes>

@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo } from "react";
-import { X, Save, Plus, Trash2, FileText, Package } from "lucide-react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { X, Save, Plus, Trash2, FileText, Package, Shield, AlertTriangle, Settings, Loader2, Receipt } from "lucide-react";
 import { toast } from "sonner";
 
 const FacturaFormModal = ({
   factura,           // null = nueva, objeto = editar
+  sinFactura = false, // true = modo boleta (venta sin comprobante fiscal)
   onClose,
   onSaved,
   token,
@@ -17,12 +18,14 @@ const FacturaFormModal = ({
   cuentasDisp = [],  // cuentas bancarias disponibles
 }) => {
   const isEdit = !!factura;
+  // En modo edición, respetar sin_factura del registro; en modo nuevo, usar la prop
+  const esBoleta = isEdit ? !!factura?.sin_factura : sinFactura;
 
   const canModoLibre = hasPermission?.("facturas.modo_libre");
   const canCambiarAfectaStock = hasPermission?.("facturas.afectar_stock");
   const defaultModo = productosHabilitados ? (canModoLibre ? "libre" : "productos") : "libre";
 
-  const defaultConcepto = () => ({ descripcion: "", cantidad: 1, precio_unitario: 0, subtotal: 0, producto_id: "" });
+  const defaultConcepto = () => ({ descripcion: "", cantidad: 1, precio_unitario: 0, subtotal: 0, producto_id: "", iva_tipo: "10" });
 
   const logoTipo = activeEmpresaPropia?.slug || "arandujar";
 
@@ -44,6 +47,8 @@ const FacturaFormModal = ({
     modo: defaultModo,
     afecta_stock: !!productosHabilitados,
     conceptos: [defaultConcepto()],
+    // timbrado
+    punto_expedicion: "001",
     // internal — no se envía al backend
     _empresa_id: "",
     _razon_social_locked: false, // true cuando viene de empresa seleccionada
@@ -52,6 +57,65 @@ const FacturaFormModal = ({
   const [form, setForm] = useState(getDefaultForm());
   const [saving, setSaving] = useState(false);
   const [tcInfo, setTcInfo] = useState(null);
+
+  // ── Timbrado config ────────────────────────────────────────────
+  const [timbradoConfig, setTimbradoConfig] = useState(null);   // null = cargando
+  const [loadingTimbrado, setLoadingTimbrado] = useState(false);
+  const [loadingNumero, setLoadingNumero] = useState(false);
+
+  const timbradoVigente = useMemo(() => {
+    if (!timbradoConfig?.fecha_vigencia) return false;
+    return timbradoConfig.fecha_vigencia >= new Date().toISOString().slice(0, 10);
+  }, [timbradoConfig]);
+
+  const esAutoNumerico = timbradoConfig?.modo_numeracion === "automatico";
+  const puntosExpedicion = timbradoConfig?.puntos_expedicion || [];
+
+  const fetchTimbrado = useCallback(async () => {
+    if (!logoTipo || !token) return;
+    setLoadingTimbrado(true);
+    try {
+      const res = await fetch(`${API}/admin/timbrado-vigente/${logoTipo}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTimbradoConfig(data.tiene_config ? data : null);
+        // Si modo automático y es nueva factura, pre-seleccionar primer punto de expedición
+        if (data.tiene_config && data.modo_numeracion === "automatico" && !isEdit) {
+          const primero = (data.puntos_expedicion || [])[0]?.codigo || "001";
+          setForm(prev => ({ ...prev, punto_expedicion: primero }));
+        }
+      }
+    } catch (e) { /* no bloquear */ }
+    finally { setLoadingTimbrado(false); }
+  }, [API, token, logoTipo, isEdit]);
+
+  useEffect(() => { fetchTimbrado(); }, [fetchTimbrado]);
+
+  const fetchSiguienteNumero = async (punto) => {
+    if (!logoTipo || !punto) return;
+    setLoadingNumero(true);
+    try {
+      const res = await fetch(`${API}/admin/siguiente-numero-factura/${logoTipo}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ punto_expedicion: punto }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setForm(prev => ({
+          ...prev,
+          numero: data.numero,
+          punto_expedicion: punto,
+        }));
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || "No se pudo obtener el siguiente número");
+      }
+    } catch (e) { toast.error("Error al obtener número automático"); }
+    finally { setLoadingNumero(false); }
+  };
 
   // Populate form when editing
   useEffect(() => {
@@ -90,7 +154,7 @@ const FacturaFormModal = ({
         empresa_id:         empIdFinal,
         empresa_nombre:     empData?.nombre || factura.empresa_nombre || "",
         concepto:           factura.concepto || "",
-        conceptos:          conceptosFromFac.map(c => ({ ...c, producto_id: c.producto_id || "" })),
+        conceptos:          conceptosFromFac.map(c => ({ ...c, producto_id: c.producto_id || "", producto_sku: c.producto_sku || "", iva_tipo: c.iva_tipo || "10" })),
         modo:               productosHabilitados ? (factura.modo || (conceptosFromFac.some(c => c.producto_id) ? "productos" : "libre")) : "libre",
         afecta_stock:       productosHabilitados ? (canCambiarAfectaStock ? factura.afecta_stock !== false : true) : false,
         monto:              factura.monto ?? "",
@@ -99,6 +163,7 @@ const FacturaFormModal = ({
         estado:             factura.estado || "pendiente",
         notas:              factura.notas || "",
         presupuesto_ids:    factura.presupuesto_ids || (factura.presupuesto_id ? [factura.presupuesto_id] : []),
+        punto_expedicion:   factura.punto_expedicion || "001",
         _empresa_id:        empIdFinal,
         _razon_social_locked: !!empIdFinal,
       });
@@ -182,9 +247,11 @@ const FacturaFormModal = ({
         return {
           ...c,
           producto_id: prod.id,
+          producto_sku: prod.sku || "",
           descripcion: prod.nombre || c.descripcion,
           precio_unitario: precio,
           subtotal: cantidad * precio,
+          iva_tipo: prod.iva_tipo || c.iva_tipo || "10",
         };
       });
       return { ...prev, conceptos };
@@ -194,6 +261,21 @@ const FacturaFormModal = ({
   // Total derivado
   const totalMonto = useMemo(() => {
     return (form.conceptos || []).reduce((s, c) => s + (Number(c.subtotal) || 0), 0);
+  }, [form.conceptos]);
+
+  // IVA breakdown por tipo
+  const ivaBreakdown = useMemo(() => {
+    let exenta = 0, grav5 = 0, grav10 = 0;
+    (form.conceptos || []).forEach(c => {
+      const sub = Number(c.subtotal) || 0;
+      const tipo = c.iva_tipo || "10";
+      if (tipo === "exenta") exenta += sub;
+      else if (tipo === "5") grav5 += sub;
+      else grav10 += sub;
+    });
+    const iva5 = Math.round(grav5 / 21);
+    const iva10 = Math.round(grav10 / 11);
+    return { exenta, grav5, grav10, iva5, iva10, total: iva5 + iva10 };
   }, [form.conceptos]);
 
   // Cliente / empresa
@@ -314,8 +396,17 @@ const FacturaFormModal = ({
 
   // Submit
   const handleSave = async () => {
-    if (!form.numero || !form.fecha || !form.razon_social) {
-      toast.error("Número, fecha y razón social son obligatorios");
+    if (!esBoleta && !form.numero && !isEdit) {
+      toast.error("El número de factura es obligatorio");
+      return;
+    }
+    if (!form.fecha || !form.razon_social) {
+      toast.error("Fecha y razón social son obligatorios");
+      return;
+    }
+    // Bloquear si el timbrado está vencido y hay config (solo para facturas nuevas emitidas, no boletas)
+    if (!isEdit && !esBoleta && timbradoConfig && !timbradoVigente) {
+      toast.error(`Timbrado vencido (${timbradoConfig.fecha_vigencia_timbrado}). Actualizá el timbrado antes de emitir facturas.`);
       return;
     }
     const conceptosValidos = (form.conceptos || []).filter(c =>
@@ -340,9 +431,11 @@ const FacturaFormModal = ({
     const conceptosOut = conceptosValidos.map(c => ({
       descripcion: c.descripcion,
       producto_id: form.modo === "productos" ? (c.producto_id || null) : null,
+      producto_sku: c.producto_sku || null,
       cantidad: parseFloat(c.cantidad) || 1,
       precio_unitario: parseFloat(c.precio_unitario) || 0,
       subtotal: (parseFloat(c.cantidad) || 1) * (parseFloat(c.precio_unitario) || 0),
+      iva_tipo: c.iva_tipo || "10",
     }));
     const montoTotal = conceptosOut.reduce((s, c) => s + c.subtotal, 0);
     const conceptoTexto = conceptosOut.length === 1
@@ -352,7 +445,8 @@ const FacturaFormModal = ({
     const payload = {
       logo_tipo: form.logo_tipo || logoTipo,
       tipo: form.tipo || "emitida",
-      numero: form.numero,
+      sin_factura: esBoleta,
+      numero: esBoleta ? null : form.numero,
       fecha: form.fecha,
       forma_pago: form.forma_pago || "contado",
       razon_social: form.razon_social,
@@ -373,6 +467,11 @@ const FacturaFormModal = ({
       cuenta_nombre: form.estado === "pagada" ? (form.cuenta_nombre || null) : null,
       presupuesto_ids: form.presupuesto_ids || [],
       notas: form.notas || null,
+      // Timbrado — solo si hay config activa y NO es boleta
+      nro_timbrado: (!esBoleta && timbradoConfig?.nro_timbrado) || null,
+      fecha_inicio_timbrado: (!esBoleta && timbradoConfig?.fecha_inicio) || null,
+      fecha_vigencia_timbrado: (!esBoleta && timbradoConfig?.fecha_vigencia) || null,
+      punto_expedicion: (!esBoleta && form.punto_expedicion) || null,
     };
 
     try {
@@ -393,7 +492,7 @@ const FacturaFormModal = ({
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || `HTTP ${res.status}`);
       }
-      toast.success(isEdit ? "Factura actualizada" : "Factura creada");
+      toast.success(isEdit ? (esBoleta ? "Boleta actualizada" : "Factura actualizada") : (esBoleta ? "Boleta creada" : "Factura creada"));
       if (onSaved) onSaved();
     } catch (e) {
       toast.error(e.message || "No se pudo guardar la factura");
@@ -421,15 +520,19 @@ const FacturaFormModal = ({
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 sticky top-0 bg-white rounded-t-2xl z-10">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center">
-              <FileText className="w-5 h-5 text-white" />
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${esBoleta ? "bg-violet-600" : "bg-blue-600"}`}>
+              {esBoleta ? <Receipt className="w-5 h-5 text-white" /> : <FileText className="w-5 h-5 text-white" />}
             </div>
             <div>
               <h2 className="text-base font-bold text-gray-900">
-                {isEdit ? `Editar Factura ${factura.numero}` : "Nueva Factura"}
+                {isEdit
+                  ? (esBoleta ? `Editar Boleta ${factura.numero_boleta || factura.numero}` : `Editar Factura ${factura.numero}`)
+                  : (esBoleta ? "Venta sin Factura (Boleta)" : "Nueva Factura")}
               </h2>
               <p className="text-xs text-gray-400">
-                {isEdit ? "Modificar datos de la factura" : "Crear nueva factura"}
+                {esBoleta
+                  ? "Venta sin comprobante fiscal — el número de boleta se genera automáticamente"
+                  : (isEdit ? "Modificar datos de la factura" : "Crear nueva factura")}
               </p>
             </div>
           </div>
@@ -443,17 +546,99 @@ const FacturaFormModal = ({
         </div>
 
         <div className="p-6 space-y-6">
-          {/* Row 1: Número, Fecha */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={labelCls}>Número *</label>
-              <input
-                className={inputCls}
-                value={form.numero}
-                onChange={(e) => set("numero", e.target.value)}
-                placeholder="001-001-0001234"
-              />
+
+          {/* ── Boleta notice ── */}
+          {esBoleta && (
+            <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 flex items-center gap-3 text-xs text-violet-700">
+              <Receipt className="w-4 h-4 flex-shrink-0" />
+              <span>Esta venta <strong>no genera comprobante fiscal</strong>. No afecta al IVA. El número de boleta se asignará automáticamente al guardar.</span>
             </div>
+          )}
+
+          {/* ── Timbrado Banner (solo para facturas normales) ── */}
+          {!esBoleta && (
+            loadingTimbrado ? (
+              <div className="flex items-center gap-2 text-gray-400 text-xs py-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Verificando timbrado...
+              </div>
+            ) : timbradoConfig ? (
+              <div className={`rounded-xl border px-4 py-3 flex items-start gap-3 ${
+                timbradoVigente
+                  ? "bg-emerald-50 border-emerald-200"
+                  : "bg-red-50 border-red-200"
+              }`}>
+                <Shield className={`w-4 h-4 mt-0.5 flex-shrink-0 ${timbradoVigente ? "text-emerald-600" : "text-red-500"}`} />
+                <div className="flex-1 min-w-0">
+                  <p className={`text-xs font-semibold ${timbradoVigente ? "text-emerald-800" : "text-red-700"}`}>
+                    {timbradoVigente ? "Timbrado vigente" : "⚠️ Timbrado vencido — no se pueden emitir nuevas facturas"}
+                  </p>
+                  <p className={`text-[11px] mt-0.5 ${timbradoVigente ? "text-emerald-600" : "text-red-500"}`}>
+                    N° {timbradoConfig.nro_timbrado} · Vigencia: {timbradoConfig.fecha_inicio} → {timbradoConfig.fecha_vigencia}
+                    {timbradoConfig.establecimiento && ` · Est. ${timbradoConfig.establecimiento}`}
+                  </p>
+                </div>
+                {hasPermission?.("facturas.timbrado") && (
+                  <span className="text-[10px] text-gray-400 flex-shrink-0">
+                    <Settings className="w-3 h-3 inline-block mr-0.5" />Config. Timbrado en Facturas
+                  </span>
+                )}
+              </div>
+            ) : hasPermission?.("facturas.timbrado") ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-center gap-3 text-xs text-amber-700">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                Sin timbrado configurado. Podés configurarlo en el botón <strong className="mx-1">⚙ Timbrado</strong> en la sección de Facturas.
+              </div>
+            ) : null
+          )}
+
+          {/* Row 1: Número (oculto en boleta), Fecha */}
+          <div className={`grid gap-4 ${esBoleta ? "grid-cols-1" : "grid-cols-2"}`}>
+            {!esBoleta && (
+              <div>
+                <label className={labelCls}>Número *</label>
+                {!isEdit && esAutoNumerico ? (
+                  <div className="space-y-2">
+                    {puntosExpedicion.length > 1 && (
+                      <select
+                        className={inputCls}
+                        value={form.punto_expedicion}
+                        onChange={(e) => setForm(prev => ({ ...prev, punto_expedicion: e.target.value, numero: "" }))}
+                      >
+                        {puntosExpedicion.map(p => (
+                          <option key={p.codigo} value={p.codigo}>
+                            Punto {p.codigo}{p.descripcion ? ` — ${p.descripcion}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <div className="flex gap-2">
+                      <input
+                        className={inputCls + " flex-1 bg-gray-50 text-gray-500"}
+                        value={form.numero || ""}
+                        readOnly
+                        placeholder="Número auto-generado"
+                      />
+                      <button
+                        type="button"
+                        disabled={loadingNumero || !timbradoVigente}
+                        onClick={() => fetchSiguienteNumero(form.punto_expedicion || "001")}
+                        className="px-3 py-2 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1 whitespace-nowrap"
+                      >
+                        {loadingNumero ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Generar N°"}
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-gray-400">El número se genera automáticamente y reserva el correlativo.</p>
+                  </div>
+                ) : (
+                  <input
+                    className={inputCls}
+                    value={form.numero}
+                    onChange={(e) => set("numero", e.target.value)}
+                    placeholder="001-001-0001234"
+                  />
+                )}
+              </div>
+            )}
             <div>
               <label className={labelCls}>Fecha *</label>
               <input
@@ -712,7 +897,7 @@ const FacturaFormModal = ({
                         onChange={(e) => selectProductoForConcepto(idx, e.target.value)}
                       >
                         <option value="">Seleccionar producto...</option>
-                        {productos.filter(p => p.activo !== false).map(p => (
+                        {productos.filter(p => p.activo !== false && (!p.logo_tipo || p.logo_tipo === logoTipo)).map(p => (
                           <option key={p.id} value={p.id}>
                             {p.nombre}{p.sku ? ` (${p.sku})` : ""} - stock: {p.stock_actual ?? p.stock ?? 0}
                           </option>
@@ -725,6 +910,38 @@ const FacturaFormModal = ({
                       onChange={(e) => handleConceptoChange(idx, "descripcion", e.target.value)}
                       placeholder="Descripción del ítem"
                     />
+                    {/* SKU badge cuando viene del catálogo */}
+                    {c.producto_sku && (
+                      <span className="text-[10px] text-slate-400 font-mono mt-0.5 block">SKU: {c.producto_sku}</span>
+                    )}
+                    {/* IVA tipo — editable en modo libre, solo lectura en catálogo */}
+                    {!esBoleta && (
+                      <div className="flex gap-1 mt-1">
+                        {[["exenta","Exenta"],["5","5%"],["10","10%"]].map(([v, l]) => {
+                          const isActive = (c.iva_tipo || "10") === v;
+                          const fromCatalog = !!c.producto_id;
+                          return (
+                            <button key={v} type="button"
+                              onClick={() => !fromCatalog && handleConceptoChange(idx, "iva_tipo", v)}
+                              title={fromCatalog ? "El IVA viene definido por el producto" : undefined}
+                              className={`text-[10px] px-2 py-0.5 rounded-full border font-medium transition-colors ${
+                                isActive
+                                  ? v === "exenta"
+                                    ? "bg-slate-500/30 border-slate-400/50 text-slate-300"
+                                    : v === "5"
+                                    ? "bg-amber-500/25 border-amber-400/50 text-amber-300"
+                                    : "bg-blue-500/25 border-blue-400/50 text-blue-300"
+                                  : "bg-white/5 border-white/10 text-gray-400"
+                              } ${fromCatalog ? "cursor-default opacity-70" : "hover:border-gray-400 cursor-pointer"}`}>
+                              {l}
+                            </button>
+                          );
+                        })}
+                        {!!c.producto_id && (
+                          <span className="text-[9px] text-slate-500 self-center ml-1">🔒 del producto</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="col-span-2">
                     <input
@@ -760,10 +977,19 @@ const FacturaFormModal = ({
                 </div>
               ))}
 
-              {/* Total */}
+              {/* Total + IVA breakdown */}
               <div className="flex justify-end pt-2 border-t border-gray-100">
-                <div className="bg-gray-50 rounded-xl px-4 py-2 text-right">
-                  <p className="text-xs text-gray-400 mb-0.5">Total factura</p>
+                <div className="bg-gray-50 rounded-xl px-4 py-2 text-right space-y-0.5 min-w-[220px]">
+                  {!esBoleta && ivaBreakdown.exenta > 0 && (
+                    <p className="text-xs text-gray-400">Exento: {fmtMonto(ivaBreakdown.exenta)}</p>
+                  )}
+                  {!esBoleta && ivaBreakdown.iva5 > 0 && (
+                    <p className="text-xs text-amber-600">IVA 5% incluido: {fmtMonto(ivaBreakdown.iva5)}</p>
+                  )}
+                  {!esBoleta && ivaBreakdown.iva10 > 0 && (
+                    <p className="text-xs text-blue-600">IVA 10% incluido: {fmtMonto(ivaBreakdown.iva10)}</p>
+                  )}
+                  <p className="text-xs text-gray-400 mb-0.5 pt-1 border-t border-gray-200">Total factura</p>
                   <p className="text-lg font-bold text-gray-800">{fmtMonto(totalMonto)}</p>
                   {form.moneda === "USD" && form.tipo_cambio && (
                     <p className="text-xs text-gray-400">
@@ -850,8 +1076,9 @@ const FacturaFormModal = ({
           </button>
           <button
             onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg shadow transition-all"
+            disabled={saving || (!isEdit && timbradoConfig && !timbradoVigente)}
+            title={!isEdit && timbradoConfig && !timbradoVigente ? "Timbrado vencido — renovalo antes de emitir" : undefined}
+            className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg shadow transition-all"
           >
             <Save className="w-4 h-4" />
             {saving ? "Guardando..." : isEdit ? "Guardar Cambios" : "Crear Factura"}

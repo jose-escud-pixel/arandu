@@ -8,7 +8,8 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, ExternalLink,
   CheckCircle, Clock, X, AlertCircle, Search,
 	  DollarSign, BarChart3, ShoppingCart, ClipboardList,
-	  Edit, Trash2, Copy, Wallet, Printer, Banknote, Save, RotateCcw
+	  Edit, Trash2, Copy, Wallet, Printer, Banknote, Save, RotateCcw,
+    Shield, Settings, Loader2
 	} from "lucide-react";
 import EmpresaSwitcher from "../components/EmpresaSwitcher";
 import PresupuestoFormModal from "../components/PresupuestoFormModal";
@@ -307,6 +308,20 @@ export default function VentasPage() {
   const [facDocLoading, setFacDocLoading] = useState(false);
   const [facFormItem, setFacFormItem] = useState(null); // { factura|null } — null = nueva
   const [showFacForm, setShowFacForm] = useState(false);
+  const [facSinFactura, setFacSinFactura] = useState(false); // modo boleta
+  const [facBoleta, setFacBoleta] = useState("todas"); // "todas" | "con_factura" | "sin_factura"
+  // Timbrado config modal
+  const [showTimbradoConfig, setShowTimbradoConfig] = useState(false);
+  const [timbradoData, setTimbradoData] = useState(null);
+  const [timbradoLoading, setTimbradoLoading] = useState(false);
+  const [savingTimbrado, setSavingTimbrado] = useState(false);
+  const [timbradoForm, setTimbradoForm] = useState({
+    modo_numeracion: "manual",
+    nro_timbrado: "", establecimiento: "001",
+    fecha_inicio: new Date().toISOString().slice(0,10),
+    fecha_vigencia: "",
+    puntos_expedicion: [{ codigo: "001", descripcion: "", numero_desde: "", numero_hasta: "" }],
+  });
 
   // Contrato: chips search + visual doc + form modal
   // Pago modals
@@ -458,7 +473,7 @@ export default function VentasPage() {
 	        fetch(`${API}/admin/ingresos-varios${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
         fetch(`${API}/admin/empresas${logoQc}`, { headers }),
         hasPermission("proveedores.ver") ? fetch(`${API}/admin/proveedores?activo=true`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
-	        hasModule?.("productos_stock") ? fetch(`${API}/admin/productos`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
+	        hasModule?.("productos_stock") ? fetch(`${API}/admin/productos${logoFilter !== "todas" ? `?logo_tipo=${logoFilter}` : ""}`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
 	        fetch(`${API}/admin/cuentas-bancarias${logoQc}`, { headers }),
 	        fetch(`${API}/admin/recibos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
 	        hasPermission("notas_credito.ver")
@@ -502,8 +517,8 @@ export default function VentasPage() {
 
 
   // ── Al entrar con ?empresa=<id> desde Clientes, pre-llenar el buscador chip ──
-  // (ruta vieja era /admin/presupuestos?empresa=X; ahora es /admin/ventas?tab=presupuestos&empresa=X
-  //  y también /admin/presupuestos?empresa=X sigue funcionando porque apunta a este mismo componente)
+  // (ruta vieja era /sistema/presupuestos?empresa=X; ahora es /sistema/ventas?tab=presupuestos&empresa=X
+  //  y también /sistema/presupuestos?empresa=X sigue funcionando porque apunta a este mismo componente)
   useEffect(() => {
     const empresaId = searchParams.get("empresa");
     if (!empresaId || empresas.length === 0) return;
@@ -858,14 +873,48 @@ export default function VentasPage() {
   const filteredFac = sortList(facturas
     .filter(f => matchesYear(f.fecha))
     .filter(f => {
+      // filtro boleta
+      if (facBoleta === "con_factura" && f.sin_factura) return false;
+      if (facBoleta === "sin_factura" && !f.sin_factura) return false;
       if (facAllChips.length === 0) return true;
       const texto = [
-        f.numero, f.empresa_nombre, f.razon_social, f.ruc, f.concepto, f.notas,
+        f.numero, f.numero_boleta, f.empresa_nombre, f.razon_social, f.ruc, f.concepto, f.notas,
         ...(f.conceptos || []).map(c => c.descripcion),
         String(f.monto || ""), f.estado, f.forma_pago
       ].filter(Boolean).join(" ").toLowerCase();
       return facAllChips.every(chip => texto.includes(chip.toLowerCase()));
     }), sortBy.facturas);
+
+  // Cargar config de timbrado
+  const fetchTimbradoConfig = async () => {
+    if (!activeEmpresaPropia?.slug) return;
+    setTimbradoLoading(true);
+    try {
+      const res = await fetch(`${API}/admin/configuracion-timbrado/${activeEmpresaPropia.slug}`, { headers });
+      if (res.ok) {
+        const cfg = await res.json();
+        setTimbradoData(cfg);
+        const t = cfg.timbrado_activo;
+        if (t) {
+          setTimbradoForm({
+            modo_numeracion: cfg.modo_numeracion || "manual",
+            nro_timbrado: t.nro_timbrado || "",
+            establecimiento: t.establecimiento || "001",
+            fecha_inicio: t.fecha_inicio || new Date().toISOString().slice(0,10),
+            fecha_vigencia: t.fecha_vigencia || "",
+            puntos_expedicion: t.puntos_expedicion?.length
+              ? t.puntos_expedicion.map(p => ({
+                  codigo: p.codigo, descripcion: p.descripcion || "",
+                  numero_desde: p.numero_desde != null ? String(p.numero_desde) : "",
+                  numero_hasta: p.numero_hasta != null ? String(p.numero_hasta) : "",
+                }))
+              : [{ codigo: "001", descripcion: "", numero_desde: "", numero_hasta: "" }],
+          });
+        }
+      }
+    } catch (e) { toast.error("Error al cargar timbrado"); }
+    setTimbradoLoading(false);
+  };
   // Recibos: chips search
   const reciboAllChips = [...reciboChips, ...(reciboInput.trim() ? [reciboInput.trim()] : [])];
   const filteredRecibos = sortList(recibos
@@ -962,7 +1011,7 @@ export default function VentasPage() {
       {/* Header */}
       <div className="border-b border-white/10 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Link to="/admin" className="text-slate-400 hover:text-white transition-colors" data-testid="back-btn" title="Volver al Dashboard">
+          <Link to="/sistema" className="text-slate-400 hover:text-white transition-colors" data-testid="back-btn" title="Volver al Dashboard">
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
@@ -1140,13 +1189,42 @@ export default function VentasPage() {
                     <Plus className="w-4 h-4" /> Nuevo presupuesto
                   </button>
                 )}
-                {isFacturas && hasPermission("facturas.crear") && (
-                  <button
-                    onClick={() => { setFacFormItem(null); setShowFacForm(true); }}
-                    className="flex items-center gap-2 px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded-lg transition-all font-body whitespace-nowrap"
-                  >
-                    <Plus className="w-4 h-4" /> Nueva factura
-                  </button>
+                {isFacturas && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Filtro Todas / Con Factura / Sin Factura */}
+                    <div className="flex rounded-lg border border-white/10 overflow-hidden text-xs font-body">
+                      {[{v:"todas",label:"Todas"},{v:"con_factura",label:"Con factura"},{v:"sin_factura",label:"Boletas"}].map(op => (
+                        <button key={op.v} onClick={() => setFacBoleta(op.v)}
+                          className={`px-3 py-1.5 transition-all ${facBoleta === op.v ? "bg-amber-600 text-white" : "text-slate-400 hover:text-white hover:bg-white/5"}`}>
+                          {op.label}
+                        </button>
+                      ))}
+                    </div>
+                    {hasPermission("facturas.crear") && (
+                      <button
+                        onClick={() => { setFacFormItem(null); setFacSinFactura(false); setShowFacForm(true); }}
+                        className="flex items-center gap-2 px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded-lg transition-all font-body whitespace-nowrap"
+                      >
+                        <Plus className="w-4 h-4" /> Nueva factura
+                      </button>
+                    )}
+                    {hasPermission("facturas.crear") && (
+                      <button
+                        onClick={() => { setFacFormItem(null); setFacSinFactura(true); setShowFacForm(true); }}
+                        className="flex items-center gap-2 px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm rounded-lg transition-all font-body whitespace-nowrap"
+                      >
+                        <Receipt className="w-4 h-4" /> Venta sin factura
+                      </button>
+                    )}
+                    {hasPermission("facturas.timbrado") && activeEmpresaPropia && (
+                      <button
+                        onClick={() => { setShowTimbradoConfig(true); fetchTimbradoConfig(); }}
+                        className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 text-sm rounded-lg transition-all font-body whitespace-nowrap"
+                      >
+                        <Shield className="w-4 h-4" /> Timbrado
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -1389,7 +1467,12 @@ export default function VentasPage() {
                         data-testid={`fact-row-${f.id}`}
                         className={`border-b border-white/5 hover:bg-white/3 cursor-pointer transition-colors ${f.estado === "anulada" ? "opacity-50" : ""}`}>
                         <td className="px-4 py-3">
-                          <span className="font-mono text-emerald-300">{f.numero || "-"}</span>
+                          <span className={`font-mono ${f.sin_factura ? "text-violet-300" : "text-emerald-300"}`}>
+                            {f.sin_factura ? (f.numero_boleta || f.numero || "-") : (f.numero || "-")}
+                          </span>
+                          {f.sin_factura && (
+                            <span className="ml-2 text-[10px] bg-violet-500/15 text-violet-300 border border-violet-500/20 px-1.5 py-0.5 rounded-full">boleta</span>
+                          )}
                           {f.forma_pago === "credito" && (
                             <span className="ml-2 text-[10px] bg-orange-500/15 text-orange-300 border border-orange-500/20 px-1.5 py-0.5 rounded-full">crédito</span>
                           )}
@@ -1454,20 +1537,8 @@ export default function VentasPage() {
                                 </button>
                               )
                             )}
-                            {/* Deshacer pago */}
-                            {(f.estado === "pagada" || f.estado === "parcial") && hasPermission("facturas.editar") && (
-                              <button onClick={() => handleDeshacerFac(f)} title="Deshacer pago"
-                                className="text-xs bg-white/5 hover:bg-white/10 text-slate-400 px-2 py-1 rounded-lg transition-all">
-                                Deshacer
-                              </button>
-                            )}
-                            {/* Editar */}
-                            {hasPermission("facturas.editar") && (
-                              <button onClick={() => { setFacFormItem(f); setShowFacForm(true); }} title="Editar"
-                                className="p-1.5 rounded-lg text-yellow-400 hover:bg-yellow-500/10 transition-all">
-                                <Edit className="w-3.5 h-3.5" />
-                              </button>
-                            )}
+                            {/* Deshacer pago — deshabilitado, para corregir eliminar y recrear */}
+                            {/* Editar factura — deshabilitado, para corregir eliminar y recrear */}
                             {/* Anular */}
                             {f.estado !== "anulada" && hasPermission("facturas.editar") && (
                               <button onClick={() => handleAnularFac(f)} title="Anular"
@@ -1541,10 +1612,7 @@ export default function VentasPage() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-2">
-                            <button onClick={() => { setIngFormItem(i); setShowIngForm(true); }}
-                              className="text-slate-400 hover:text-blue-400 transition-colors" title="Editar">
-                              <Edit className="w-4 h-4" />
-                            </button>
+                            {/* editar ingreso deshabilitado — para corregir eliminar y recrear */}
                             <button onClick={async () => {
                               if (!window.confirm("¿Eliminar este ingreso?")) return;
                               const res = await fetch(`${API}/admin/ingresos-varios/${i.id}`, { method: "DELETE", headers });
@@ -1655,11 +1723,7 @@ export default function VentasPage() {
 	                        <td className="px-4 py-3 text-right text-rose-300 font-medium">{fmtMonto(n.monto, n.moneda)}</td>
 	                        <td className="px-4 py-3 text-right">
 	                          <div className="flex items-center justify-end gap-2">
-	                            {hasPermission("notas_credito.editar") && (
-	                              <button onClick={() => { setNotaFormItem(n); setShowNotaForm(true); }} className="text-slate-400 hover:text-blue-400 transition-colors" title="Editar">
-	                                <Edit className="w-4 h-4" />
-	                              </button>
-	                            )}
+	                            {/* editar nota crédito deshabilitado — para corregir eliminar y recrear */}
 	                            {hasPermission("notas_credito.eliminar") && (
 	                              <button onClick={async () => {
 	                                if (!window.confirm("¿Eliminar esta nota de crédito?")) return;
@@ -1732,7 +1796,7 @@ export default function VentasPage() {
 	          token={token}
 	          API={API}
 	          onClose={() => { setShowNotaForm(false); setNotaFormItem(null); }}
-	          onSaved={() => { setShowNotaForm(false); setNotaFormItem(null); fetchAll(); toast.success("Nota de crédito guardada"); }}
+	          onSaved={() => { setShowNotaForm(false); setNotaFormItem(null); setTab("notas"); fetchAll(); toast.success("Nota de crédito guardada"); }}
 	        />
 	      )}
 
@@ -1800,6 +1864,228 @@ export default function VentasPage() {
         />
       )}
 
+      {/* ── Modal Config Timbrado ── */}
+      {showTimbradoConfig && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-[#0f1623] border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <Shield className="w-5 h-5 text-amber-400" />
+                <h2 className="text-white font-heading font-bold text-lg">Configuración de Timbrado</h2>
+              </div>
+              <button onClick={() => setShowTimbradoConfig(false)} className="text-slate-400 hover:text-white transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {timbradoLoading ? (
+              <div className="flex items-center justify-center py-16 gap-3 text-slate-400">
+                <Loader2 className="w-5 h-5 animate-spin" /> Cargando...
+              </div>
+            ) : (
+              <div className="p-6 space-y-6">
+                {/* Alertas */}
+                {timbradoData?.alertas?.map((a, i) => (
+                  <div key={i} className={`flex items-start gap-2 p-3 rounded-lg text-sm font-body ${a.tipo === "error" ? "bg-red-500/10 border border-red-500/20 text-red-300" : "bg-amber-500/10 border border-amber-500/20 text-amber-300"}`}>
+                    <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    {a.mensaje}
+                  </div>
+                ))}
+
+                {/* Modo numeración */}
+                <div>
+                  <label className="text-slate-400 text-xs font-body block mb-2">Modo de numeración</label>
+                  <div className="flex rounded-lg border border-white/10 overflow-hidden w-fit">
+                    {[{v:"manual",label:"Manual"},{v:"automatico",label:"Automático"}].map(op => (
+                      <button key={op.v} onClick={() => setTimbradoForm(f => ({...f, modo_numeracion: op.v}))}
+                        className={`px-4 py-2 text-sm font-body transition-all ${timbradoForm.modo_numeracion === op.v ? "bg-amber-600 text-white" : "text-slate-400 hover:text-white hover:bg-white/5"}`}>
+                        {op.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-slate-500 text-xs mt-1 font-body">
+                    {timbradoForm.modo_numeracion === "manual" ? "En modo manual, el número se ingresa en cada comprobante. El rango te sirve de referencia para saber qué números tenés habilitados." : "En modo automático, el sistema asigna el número correlativo dentro del rango habilitado por la SET."}
+                  </p>
+                </div>
+
+                {/* Datos del timbrado */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-slate-400 text-xs font-body block mb-1">Nro. Timbrado <span className="text-red-400">*</span></label>
+                    <input value={timbradoForm.nro_timbrado} onChange={e => setTimbradoForm(f => ({...f, nro_timbrado: e.target.value}))}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm font-body focus:outline-none focus:border-amber-500"
+                      placeholder="ej: 12345678" />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs font-body block mb-1">Establecimiento</label>
+                    <input value={timbradoForm.establecimiento} onChange={e => setTimbradoForm(f => ({...f, establecimiento: e.target.value}))}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm font-body focus:outline-none focus:border-amber-500"
+                      placeholder="001" maxLength={3} />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs font-body block mb-1">Fecha de inicio</label>
+                    <input type="date" value={timbradoForm.fecha_inicio} onChange={e => setTimbradoForm(f => ({...f, fecha_inicio: e.target.value}))}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm font-body focus:outline-none focus:border-amber-500" />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-xs font-body block mb-1">Fecha de vigencia <span className="text-red-400">*</span></label>
+                    <input type="date" value={timbradoForm.fecha_vigencia} onChange={e => setTimbradoForm(f => ({...f, fecha_vigencia: e.target.value}))}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm font-body focus:outline-none focus:border-amber-500" />
+                  </div>
+                </div>
+
+                {/* Puntos de expedición */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-slate-400 text-xs font-body">Puntos de expedición</label>
+                    <button onClick={() => setTimbradoForm(f => ({...f, puntos_expedicion: [...f.puntos_expedicion, {codigo:`00${f.puntos_expedicion.length+1}`.slice(-3), descripcion:"", numero_desde:1, numero_hasta:9999999}]}))}
+                      className="text-xs text-amber-400 hover:text-amber-300 font-body">+ Agregar punto</button>
+                  </div>
+                  <div className="space-y-3">
+                    {timbradoForm.puntos_expedicion.map((pto, idx) => (
+                      <div key={idx} className="bg-white/3 border border-white/10 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-300 text-xs font-body font-semibold">Punto {idx+1}</span>
+                          {timbradoForm.puntos_expedicion.length > 1 && (
+                            <button onClick={() => setTimbradoForm(f => ({...f, puntos_expedicion: f.puntos_expedicion.filter((_,i) => i !== idx)}))}
+                              className="text-slate-500 hover:text-red-400 transition-colors"><X className="w-3.5 h-3.5" /></button>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-slate-500 text-xs font-body block mb-1">Código (ej: 001)</label>
+                            <input value={pto.codigo} onChange={e => { const p=[...timbradoForm.puntos_expedicion]; p[idx]={...p[idx],codigo:e.target.value}; setTimbradoForm(f=>({...f,puntos_expedicion:p})); }}
+                              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm font-body focus:outline-none focus:border-amber-500" maxLength={3} />
+                          </div>
+                          <div>
+                            <label className="text-slate-500 text-xs font-body block mb-1">Descripción</label>
+                            <input value={pto.descripcion} onChange={e => { const p=[...timbradoForm.puntos_expedicion]; p[idx]={...p[idx],descripcion:e.target.value}; setTimbradoForm(f=>({...f,puntos_expedicion:p})); }}
+                              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm font-body focus:outline-none focus:border-amber-500" placeholder="ej: Oficina central" />
+                          </div>
+                          <>
+                            <div>
+                              <label className="text-slate-500 text-xs font-body block mb-1">Nro. factura desde</label>
+                              <input
+                                type="text"
+                                  value={pto.numero_desde}
+                                onChange={e => { const raw = e.target.value.replace(/\D/g,""); const p=[...timbradoForm.puntos_expedicion]; p[idx]={...p[idx],numero_desde:raw}; setTimbradoForm(f=>({...f,puntos_expedicion:p})); }}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm font-mono focus:outline-none focus:border-amber-500"
+                                placeholder="ej: 500"
+                              />
+                              <p className="text-[10px] text-slate-600 mt-0.5 font-mono">{timbradoForm.establecimiento||"001"}-{pto.codigo||"001"}-{pto.numero_desde||1}</p>
+                            </div>
+                            <div>
+                              <label className="text-slate-500 text-xs font-body block mb-1">Nro. factura hasta</label>
+                              <input
+                                type="text"
+                                value={pto.numero_hasta}
+                                onChange={e => { const raw = e.target.value.replace(/\D/g,""); const p=[...timbradoForm.puntos_expedicion]; p[idx]={...p[idx],numero_hasta:raw}; setTimbradoForm(f=>({...f,puntos_expedicion:p})); }}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm font-mono focus:outline-none focus:border-amber-500"
+                                placeholder="ej: 1000"
+                              />
+                              <p className="text-[10px] text-slate-600 mt-0.5 font-mono">{timbradoForm.establecimiento||"001"}-{pto.codigo||"001"}-{pto.numero_hasta||9999999}</p>
+                            </div>
+                          </>
+                        </div>
+                        {timbradoForm.modo_numeracion === "automatico" && (() => {
+                          const existPto = timbradoData?.timbrado_activo?.puntos_expedicion?.find(p => p.codigo === pto.codigo);
+                          if (!existPto) return null;
+                          const total = existPto.numero_hasta - existPto.numero_desde + 1;
+                          const usado = existPto.ultimo_numero >= existPto.numero_desde ? existPto.ultimo_numero - existPto.numero_desde + 1 : 0;
+                          const restantes = existPto.numero_hasta - Math.max(existPto.ultimo_numero, existPto.numero_desde - 1);
+                          const pct = total > 0 ? Math.round(usado / total * 100) : 0;
+                          return (
+                            <div className="mt-2">
+                              <div className="flex justify-between text-xs text-slate-500 font-body mb-1">
+                                <span>Uso del rango</span>
+                                <span>{usado}/{total} ({pct}%) — quedan {restantes}</span>
+                              </div>
+                              <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full transition-all ${pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-500" : "bg-emerald-500"}`} style={{width:`${pct}%`}} />
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Historial */}
+                {timbradoData?.historial_timbrados?.length > 0 && (
+                  <div>
+                    <p className="text-slate-400 text-xs font-body mb-2">Historial de timbrados</p>
+                    <div className="space-y-2">
+                      {timbradoData.historial_timbrados.map((h, i) => (
+                        <div key={i} className="bg-white/3 border border-white/8 rounded-lg px-4 py-2 text-xs font-body flex items-center justify-between">
+                          <div>
+                            <span className="text-slate-300 font-mono">{h.nro_timbrado}</span>
+                            <span className="text-slate-500 ml-3">{h.establecimiento}</span>
+                            <span className="text-slate-600 ml-3">{h.fecha_inicio} → {h.fecha_vigencia}</span>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded-full border text-[10px] ${h.motivo_cierre === "agotado" ? "bg-red-500/10 border-red-500/20 text-red-300" : h.motivo_cierre === "vencido" ? "bg-amber-500/10 border-amber-500/20 text-amber-300" : "bg-slate-500/10 border-slate-500/20 text-slate-400"}`}>
+                            {h.motivo_cierre}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Acciones */}
+                <div className="flex justify-end gap-3 pt-2 border-t border-white/10">
+                  <button onClick={() => setShowTimbradoConfig(false)}
+                    className="px-4 py-2 text-sm text-slate-400 hover:text-white border border-white/10 rounded-lg transition-all font-body">
+                    Cancelar
+                  </button>
+                  <button
+                    disabled={savingTimbrado || !timbradoForm.nro_timbrado || !timbradoForm.fecha_vigencia}
+                    onClick={async () => {
+                      // Validar rango desde < hasta
+                      for (const pto of timbradoForm.puntos_expedicion) {
+                        const desde = parseInt(pto.numero_desde);
+                        const hasta = parseInt(pto.numero_hasta);
+                        if (pto.numero_desde !== "" && pto.numero_hasta !== "" && !isNaN(desde) && !isNaN(hasta) && desde >= hasta) {
+                          toast.error(`Punto ${pto.codigo}: el número "desde" debe ser menor al "hasta"`);
+                          return;
+                        }
+                      }
+                      setSavingTimbrado(true);
+                      try {
+                        const puntosConvertidos = timbradoForm.puntos_expedicion.map(p => ({
+                          ...p,
+                          numero_desde: p.numero_desde !== "" ? parseInt(p.numero_desde) : null,
+                          numero_hasta: p.numero_hasta !== "" ? parseInt(p.numero_hasta) : null,
+                        }));
+                        const payload = {
+                          modo_numeracion: timbradoForm.modo_numeracion,
+                          timbrado: {
+                            nro_timbrado: timbradoForm.nro_timbrado,
+                            establecimiento: timbradoForm.establecimiento || "001",
+                            fecha_inicio: timbradoForm.fecha_inicio,
+                            fecha_vigencia: timbradoForm.fecha_vigencia,
+                            puntos_expedicion: puntosConvertidos,
+                          }
+                        };
+                        const res = await fetch(`${API}/admin/configuracion-timbrado/${activeEmpresaPropia.slug}`, {
+                          method: "PUT", headers: {...headers, "Content-Type": "application/json"}, body: JSON.stringify(payload)
+                        });
+                        if (res.ok) { toast.success("Timbrado guardado"); setShowTimbradoConfig(false); }
+                        else { const e = await res.json(); toast.error(e.detail || "Error al guardar"); }
+                      } catch { toast.error("Error de red"); }
+                      setSavingTimbrado(false);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 text-sm bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-lg transition-all font-body">
+                    {savingTimbrado ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    Guardar timbrado
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── Documento visual de factura ── */}
       {facDoc && (
         <FacturaDocModal
@@ -1827,8 +2113,9 @@ export default function VentasPage() {
       {showFacForm && (
         <FacturaFormModal
           factura={facFormItem || null}
-          onClose={() => { setShowFacForm(false); setFacFormItem(null); }}
-          onSaved={() => { setShowFacForm(false); setFacFormItem(null); fetchAll(); }}
+          sinFactura={facFormItem ? !!facFormItem.sin_factura : facSinFactura}
+          onClose={() => { setShowFacForm(false); setFacFormItem(null); setFacSinFactura(false); }}
+          onSaved={() => { setShowFacForm(false); setFacFormItem(null); setFacSinFactura(false); fetchAll(); }}
           token={token}
           API={API}
           empresas={empresas}
@@ -2385,9 +2672,9 @@ function PreviewModal({ item, onClose, navigate, token, onUpdated, cuentasDisp =
   }[kind] || "Detalle";
 
   const editUrl = {
-    presupuesto: "/admin/presupuestos",
-    factura:     "/admin/facturas",
-    ingreso:     "/admin/ingresos-varios",
+    presupuesto: "/sistema/presupuestos",
+    factura:     "/sistema/facturas",
+    ingreso:     "/sistema/ingresos-varios",
   }[kind];
 
   return (
@@ -2754,7 +3041,21 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
     return `${f.moneda} ${Number(n).toLocaleString("es-PY", { minimumFractionDigits: 2 })}`;
   };
   const total = f.monto || 0;
-  const iva = f.moneda === "PYG" ? Math.round(total / 11) : Math.round((total / 11) * 100) / 100;
+  // IVA breakdown por tipo de ítem (vista detalle)
+  const ivaDetailBreakdown = (() => {
+    let exenta = 0, grav5 = 0, grav10 = 0;
+    (f.conceptos || []).forEach(c => {
+      const sub = c.monto || c.subtotal || ((c.precio_unitario || 0) * (c.cantidad || 1));
+      const tipo = c.iva_tipo || "10";
+      if (tipo === "exenta") exenta += sub;
+      else if (tipo === "5") grav5 += sub;
+      else grav10 += sub;
+    });
+    const i5 = Math.round(grav5 / 21);
+    const i10 = Math.round(grav10 / 11);
+    return { exenta, grav5, grav10, i5, i10, totalIva: i5 + i10 };
+  })();
+  const iva = f.moneda === "PYG" ? ivaDetailBreakdown.totalIva || Math.round(total / 11) : Math.round((total / 11) * 100) / 100;
   const base = total - iva;
 
   const ESTADO_STYLE = {
@@ -2775,58 +3076,219 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
     const w = window.open("", "_blank");
     if (!w) return;
     const docLogo = svgDocumentHeaderLogoHtml(f.logo_tipo);
+    const esBoleta = !!f.sin_factura;
+    const docRef = esBoleta ? (f.numero_boleta || f.numero || "—") : (f.numero || "—");
+    const docTitle = esBoleta ? "COMPROBANTE DE VENTA" : "FACTURA";
+
+    // IVA breakdown por tipo de ítem (impresión)
+    let subExenta = 0, subGrav5 = 0, subGrav10 = 0;
+    (f.conceptos || []).forEach(c => {
+      const sub = c.monto || c.subtotal || ((c.precio_unitario || 0) * (c.cantidad || 1));
+      const tipo = c.iva_tipo || "10";
+      if (tipo === "exenta") subExenta += sub;
+      else if (tipo === "5") subGrav5 += sub;
+      else subGrav10 += sub;
+    });
+    const iva5Print = esBoleta ? 0 : Math.round(subGrav5 / 21);
+    const iva10 = esBoleta ? 0 : Math.round(subGrav10 / 11);
+    const base5 = esBoleta ? 0 : (subGrav5 - iva5Print);
+    const base10 = esBoleta ? 0 : (subGrav10 - iva10);
+    const totalIva = iva5Print + iva10;
+
+    // Monto en letras (guaraníes)
+    const numToLetras = (n) => {
+      const num = Math.round(Math.abs(n || 0));
+      if (num === 0) return "Cero";
+      const un = ["","un","dos","tres","cuatro","cinco","seis","siete","ocho","nueve","diez","once","doce","trece","catorce","quince","dieciséis","diecisiete","dieciocho","diecinueve"];
+      const dec = ["","","veinte","treinta","cuarenta","cincuenta","sesenta","setenta","ochenta","noventa"];
+      const cen = ["","cien","doscientos","trescientos","cuatrocientos","quinientos","seiscientos","setecientos","ochocientos","novecientos"];
+      const g = (x) => {
+        if (x < 20) return un[x];
+        const d = Math.floor(x/10), u = x%10;
+        if (x < 100) return dec[d] + (u ? " y " + un[u] : "");
+        const c2 = Math.floor(x/100), r = x%100;
+        return (c2===1&&r>0?"ciento ":cen[c2]+(r?" ":"")) + (r?g(r):"");
+      };
+      const mil = (x) => x===0?"":x===1?"un mil ":g(x)+" mil ";
+      const m = Math.floor(num/1000000), rest = num%1000000;
+      const k = Math.floor(rest/1000), u2 = rest%1000;
+      let r = (m>0?(m===1?"un millón ":g(m)+" millones "):"") + mil(k) + (u2>0?g(u2):"");
+      return r.trim().charAt(0).toUpperCase() + r.trim().slice(1);
+    };
+    const montoLetras = f.moneda === "PYG"
+      ? numToLetras(total) + " guaraníes"
+      : numToLetras(total) + " " + (f.moneda || "");
+
     const itemRows = (f.conceptos || []).length > 0
-      ? (f.conceptos || []).map(c => `
-          <tr>
-            <td style="border:1px solid #d1d5db;padding:8px">${c.descripcion || ""}</td>
-            <td style="border:1px solid #d1d5db;padding:8px;text-align:center">${c.cantidad || 1}</td>
-            <td style="border:1px solid #d1d5db;padding:8px;text-align:right">${fmt(c.precio_unitario || (c.monto || 0))}</td>
-            <td style="border:1px solid #d1d5db;padding:8px;text-align:right">${fmt(c.monto || ((c.precio_unitario || 0) * (c.cantidad || 1)))}</td>
-          </tr>`).join("")
-      : `<tr><td style="border:1px solid #d1d5db;padding:8px" colspan="4">${f.concepto || ""}</td></tr>`;
-    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Factura ${f.numero}</title>
-      <style>body{font-family:Arial,sans-serif;color:#111;padding:20px;max-width:800px;margin:0 auto}</style></head><body>
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;border-bottom:3px solid ${accentColor};padding-bottom:16px">
-        <div>
-          ${docLogo}
-          <div style="margin-top:12px;font-size:12px;color:#6b7280">
-            <p>De la Conquista 1132 c/ Isabel la Católica</p><p>Barrio Sajonia, Asunción - Paraguay</p>
-            <p>Tel: 021-421330 | info@aranduinformatica.net</p>
+      ? (f.conceptos || []).map((c, i) => {
+          const monto = c.monto || c.subtotal || ((c.precio_unitario||0)*(c.cantidad||1));
+          const tipo = c.iva_tipo || "10";
+          const colExenta = (!esBoleta && tipo === "exenta") ? fmt(monto) : "";
+          const col5 = (!esBoleta && tipo === "5") ? fmt(monto) : "";
+          const col10 = (!esBoleta && tipo !== "exenta" && tipo !== "5") ? fmt(monto) : "";
+          return `<tr style="background:${i%2===0?"#fff":"#fafafa"}">
+            <td style="padding:6px 8px;border:1px solid #d1d5db;text-align:center;font-size:12px">${c.cantidad || 1}</td>
+            <td style="padding:6px 8px;border:1px solid #d1d5db;font-size:12px">${c.descripcion || ""}</td>
+            <td style="padding:6px 8px;border:1px solid #d1d5db;text-align:right;font-size:12px">${fmt(c.precio_unitario || 0)}</td>
+            <td style="padding:6px 8px;border:1px solid #d1d5db;text-align:right;font-size:12px">${esBoleta ? fmt(monto) : colExenta}</td>
+            <td style="padding:6px 8px;border:1px solid #d1d5db;text-align:right;font-size:12px">${col5}</td>
+            <td style="padding:6px 8px;border:1px solid #d1d5db;text-align:right;font-size:12px;font-weight:600">${esBoleta ? "" : col10}</td>
+          </tr>`;
+        }).join("")
+      : `<tr><td style="padding:10px 8px;font-size:12px;border:1px solid #d1d5db" colspan="6">${f.concepto || ""}</td></tr>`;
+
+    // Marca de agua PAGADO — diagonal, discreta
+    const pagadoWatermark = f.estado === "pagada" ? `
+      <div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);
+        font-size:72px;font-weight:900;color:rgba(22,163,74,0.09);font-family:Arial,sans-serif;
+        pointer-events:none;white-space:nowrap;z-index:0;letter-spacing:8px">PAGADO</div>` : "";
+
+    // Caja de timbrado arriba a la derecha — como factura real paraguaya
+    const timbradoBox = !esBoleta ? `
+      <div style="border:2px solid #374151;border-radius:6px;padding:8px 12px;text-align:center;min-width:220px">
+        <div style="font-size:9.5px;color:#374151;font-weight:700;text-transform:uppercase;letter-spacing:0.3px">
+          TIMBRADO N°: <span style="font-size:13px;color:#111827;font-weight:800">${f.nro_timbrado || "—"}</span>
+        </div>
+        ${f.fecha_inicio_timbrado ? `<div style="font-size:9px;color:#6b7280;margin-top:2px">Inicio vigencia: ${f.fecha_inicio_timbrado}</div>` : ""}
+        ${f.fecha_vigencia_timbrado ? `<div style="font-size:9px;color:#6b7280">Fin vigencia: ${f.fecha_vigencia_timbrado}</div>` : ""}
+        <div style="margin-top:6px;border-top:1px solid #d1d5db;padding-top:6px">
+          <div style="font-size:18px;font-weight:900;color:#111827;letter-spacing:1px">${docTitle}</div>
+          <div style="font-size:14px;font-weight:800;color:${accentColor};letter-spacing:0.5px">${docRef}</div>
+        </div>
+      </div>` : `
+      <div style="border:2px solid #7c3aed;border-radius:6px;padding:10px 16px;text-align:center;min-width:200px">
+        <div style="font-size:20px;font-weight:900;color:#7c3aed">${docTitle}</div>
+        <div style="font-size:14px;font-weight:700;color:#7c3aed;margin-top:2px">${docRef}</div>
+        <div style="font-size:9.5px;color:#9ca3af;margin-top:4px">Comprobante interno · no fiscal</div>
+      </div>`;
+
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/>
+      <title>${docTitle} ${docRef}</title>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:'Segoe UI',Arial,sans-serif;color:#111827;padding:20px 24px;max-width:860px;margin:0 auto;background:#fff;position:relative;font-size:12px}
+        @media print{body{padding:10px 14px}@page{margin:0.8cm}}
+        .header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid ${accentColor};padding-bottom:12px;margin-bottom:10px;gap:16px}
+        .company-info{font-size:10.5px;color:#475569;line-height:1.55;margin-top:6px}
+        .client-section{border:1px solid #d1d5db;border-radius:4px;padding:8px 10px;margin-bottom:10px;font-size:11.5px}
+        .cl-row{display:flex;gap:0;margin-bottom:3px}
+        .cl-label{color:#6b7280;font-size:10px;font-weight:700;text-transform:uppercase;width:130px;flex-shrink:0}
+        .cl-val{color:#111827;font-weight:600;border-bottom:1px dotted #d1d5db;flex:1}
+        .cl-cond{display:flex;align-items:center;gap:12px;margin-top:6px;padding-top:6px;border-top:1px solid #e5e7eb;font-size:10.5px}
+        table.items{width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:0}
+        table.items thead tr{background:${accentColor};color:#fff}
+        table.items thead th{padding:6px 8px;font-size:10px;font-weight:700;text-transform:uppercase;border:1px solid rgba(255,255,255,0.15)}
+        table.items tfoot td{border:1px solid #d1d5db;padding:5px 8px;font-size:11.5px}
+        .sub-row{background:#f8fafc}
+        .iva-row{background:#f0fdf4}
+        .total-row{background:${accentColor}12;font-weight:800;font-size:13px}
+        .footer-note{margin-top:14px;font-size:9.5px;color:#94a3b8;text-align:center;border-top:1px dashed #e2e8f0;padding-top:8px}
+      </style>
+    </head><body>
+      ${pagadoWatermark}
+      <div style="position:relative;z-index:1">
+
+        <!-- CABECERA: logo izq, timbrado+factura der -->
+        <div class="header">
+          <div>
+            ${docLogo}
+            <div class="company-info">
+              <div>De la Conquista 1132 c/ Isabel la Católica · Sajonia, Asunción · Paraguay</div>
+              <div>Tel: 021-421330 &nbsp;|&nbsp; info@aranduinformatica.net</div>
+            </div>
+          </div>
+          ${timbradoBox}
+        </div>
+
+        <!-- DATOS DEL CLIENTE -->
+        <div class="client-section">
+          <div class="cl-row">
+            <span class="cl-label">RUC</span>
+            <span class="cl-val">${f.ruc || "&nbsp;"}</span>
+            <span class="cl-label" style="margin-left:16px">Fecha</span>
+            <span class="cl-val" style="max-width:110px">${f.fecha || "&nbsp;"}</span>
+          </div>
+          <div class="cl-row">
+            <span class="cl-label">Nombre / Razón Social</span>
+            <span class="cl-val">${f.empresa_nombre || f.razon_social || "&nbsp;"}</span>
+          </div>
+          <div class="cl-row">
+            <span class="cl-label">Dirección</span>
+            <span class="cl-val">&nbsp;</span>
+          </div>
+          <div class="cl-cond">
+            Condición de venta:
+            <span style="display:inline-flex;align-items:center;gap:4px">
+              <span style="width:11px;height:11px;border:1.5px solid #374151;display:inline-block;background:${f.forma_pago!=="credito"?"#374151":"#fff"}"></span> Contado
+            </span>
+            <span style="display:inline-flex;align-items:center;gap:4px">
+              <span style="width:11px;height:11px;border:1.5px solid #374151;display:inline-block;background:${f.forma_pago==="credito"?"#374151":"#fff"}"></span> Crédito
+            </span>
+            <span style="margin-left:auto">Nota de Remisión N°: ______________________</span>
+            <span style="margin-left:16px">Tel: _______________</span>
           </div>
         </div>
-        <div style="text-align:right">
-          <h1 style="font-size:22px;font-weight:700;color:#1f2937;margin:0">FACTURA</h1>
-          <p style="font-size:18px;font-weight:600;color:${accentColor};margin:4px 0">${f.numero}</p>
-          <p style="color:#6b7280;margin:2px 0;font-size:13px">Fecha: ${f.fecha || "-"}</p>
-          <p style="font-size:12px;color:#9ca3af">Forma de pago: ${f.forma_pago === "credito" ? "A crédito" : "Al contado"}</p>
-          ${f.fecha_vencimiento ? `<p style="font-size:11px;color:#9ca3af">Vencimiento: ${f.fecha_vencimiento}</p>` : ""}
+
+        <!-- TABLA DE ITEMS -->
+        <table class="items">
+          <thead>
+            <tr>
+              <th style="width:7%;text-align:center">Cant.</th>
+              <th style="width:41%;text-align:left">Descripción</th>
+              <th style="width:16%;text-align:right">Precio Unit.</th>
+              <th style="width:12%;text-align:right">Exentas</th>
+              <th style="width:12%;text-align:right">5%</th>
+              <th style="width:12%;text-align:right">10%</th>
+            </tr>
+          </thead>
+          <tbody>${itemRows}</tbody>
+          <tfoot>
+            <tr class="sub-row">
+              <td colspan="3" style="text-align:right;font-weight:700">SUBTOTAL</td>
+              <td style="text-align:right">${esBoleta ? fmt(total) : (subExenta > 0 ? fmt(subExenta) : "")}</td>
+              <td style="text-align:right">${!esBoleta && subGrav5 > 0 ? fmt(subGrav5) : ""}</td>
+              <td style="text-align:right;font-weight:700">${!esBoleta && subGrav10 > 0 ? fmt(subGrav10) : (!esBoleta && subGrav5 === 0 && subExenta === 0 ? fmt(total) : "")}</td>
+            </tr>
+            ${!esBoleta ? `
+            <tr class="iva-row">
+              <td colspan="2" style="font-size:10px;color:#374151;font-weight:600">LIQUIDACIÓN DEL IVA</td>
+              <td style="text-align:right;font-size:10.5px;color:#374151">5% de ${fmt(base5)}:</td>
+              <td></td>
+              <td style="text-align:right;font-size:10.5px">${fmt(iva5Print)}</td>
+              <td></td>
+            </tr>
+            <tr class="iva-row">
+              <td colspan="2"></td>
+              <td style="text-align:right;font-size:10.5px;color:#374151">10% de ${fmt(base10)}:</td>
+              <td></td>
+              <td></td>
+              <td style="text-align:right;font-size:10.5px">${fmt(iva10)}</td>
+            </tr>
+            <tr class="sub-row">
+              <td colspan="4" style="font-size:10px;color:#374151">
+                <strong>Son:</strong> ${montoLetras}
+              </td>
+              <td style="text-align:right;font-weight:700;font-size:10.5px">TOTAL IVA</td>
+              <td style="text-align:right;font-weight:700;font-size:10.5px">${fmt(totalIva)}</td>
+            </tr>` : ""}
+            <tr class="total-row">
+              <td colspan="4" style="font-size:10px;color:#6b7280">
+                ${f.notas ? `Notas: ${f.notas}` : ""}
+              </td>
+              <td style="text-align:right;font-size:12px">TOTAL A PAGAR</td>
+              <td style="text-align:right;font-size:14px;color:${accentColor}">${fmt(total)}</td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <div class="footer-note">
+          ${!esBoleta && f.nro_timbrado ? `Timbrado N° ${f.nro_timbrado} &nbsp;·&nbsp;` : ""}
+          ${f.logo_tipo?.toUpperCase()} &nbsp;·&nbsp; Impreso el ${new Date().toLocaleDateString("es-PY")}
         </div>
       </div>
-      <div style="background:#f9fafb;padding:12px;border-radius:4px;margin-bottom:20px">
-        <strong style="color:#374151">CLIENTE:</strong>
-        <p style="font-size:16px;font-weight:600;margin:4px 0">${f.razon_social || ""}</p>
-        ${f.ruc ? `<p style="font-size:12px;color:#6b7280">RUC: ${f.ruc}</p>` : ""}
-      </div>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
-        <thead><tr style="background:#e5e7eb">
-          <th style="border:1px solid #d1d5db;padding:8px;text-align:left">Descripción / Concepto</th>
-          <th style="border:1px solid #d1d5db;padding:8px;text-align:center;width:70px">Cant.</th>
-          <th style="border:1px solid #d1d5db;padding:8px;text-align:right;width:130px">Precio unit.</th>
-          <th style="border:1px solid #d1d5db;padding:8px;text-align:right;width:140px">Monto</th>
-        </tr></thead>
-        <tbody>${itemRows}</tbody>
-        <tfoot>
-          <tr style="background:#f9fafb"><td colspan="3" style="border:1px solid #d1d5db;padding:6px;text-align:right;font-size:12px;color:#6b7280">Base imponible:</td><td style="border:1px solid #d1d5db;padding:6px;text-align:right;font-size:12px;color:#6b7280">${fmt(base)}</td></tr>
-          <tr style="background:#f9fafb"><td colspan="3" style="border:1px solid #d1d5db;padding:6px;text-align:right;font-size:12px;color:#6b7280">IVA 10%:</td><td style="border:1px solid #d1d5db;padding:6px;text-align:right;font-size:12px;color:#6b7280">${fmt(iva)}</td></tr>
-          <tr style="background:#dbeafe"><td colspan="3" style="border:1px solid #d1d5db;padding:8px;text-align:right;font-weight:700;font-size:16px">TOTAL:</td><td style="border:1px solid #d1d5db;padding:8px;text-align:right;font-weight:700;font-size:16px;color:${accentColor}">${fmt(total)}</td></tr>
-        </tfoot>
-      </table>
-      ${f.notas ? `<div style="background:#fefce8;padding:10px;border-left:3px solid #ca8a04;"><strong style="color:#92400e">Notas:</strong><br>${f.notas}</div>` : ""}
-      ${f.estado === "pagada" ? `<div style="margin-top:16px;text-align:center;border:2px solid #16a34a;padding:8px;border-radius:4px;color:#16a34a;font-weight:bold;font-size:18px">PAGADA</div>` : ""}
-      ${(() => { const fb=getCuentaFallback(f.moneda,f.logo_tipo); const cs=[...new Set((f.pagos||[]).map(p=>p.cuenta_nombre||fb).filter(Boolean))]; if(!cs.length&&fb) cs.push(fb); return cs.length ? `<div style="margin-top:8px;text-align:center;font-size:13px;color:#1d4ed8">🏦 ${cs.join(' · ')}</div>` : ""; })()}
     </body></html>`);
     w.document.close();
-    setTimeout(() => w.print(), 400);
+    setTimeout(() => w.print(), 500);
   };
 
   return (
@@ -2834,7 +3296,9 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
       <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto relative" onClick={e => e.stopPropagation()}>
         {/* Toolbar */}
         <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-gray-200 px-4 py-3 flex items-center justify-between gap-2 flex-wrap">
-          <span className="text-gray-600 font-medium text-sm">Vista previa · Factura</span>
+          <span className="text-gray-600 font-medium text-sm">
+            Vista previa · {f.sin_factura ? <span className="text-violet-600">Boleta</span> : "Factura"}
+          </span>
           <div className="flex items-center gap-1.5 flex-wrap">
             <button onClick={handlePrint}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded-lg transition-all">
@@ -2846,18 +3310,8 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
                 <Banknote className="w-3.5 h-3.5" /> {f.forma_pago === "credito" ? "Registrar pago" : "Pagar"}
               </button>
             )}
-            {canEdit && (f.estado === "pagada" || f.estado === "parcial") && (
-              <button onClick={onDeshacer}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-slate-100 text-gray-600 text-xs rounded-lg border border-gray-200 transition-all">
-                Deshacer pago
-              </button>
-            )}
-            {canEdit && (
-              <button onClick={onEdit}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-50 hover:bg-yellow-100 text-yellow-700 text-xs rounded-lg border border-yellow-200 transition-all">
-                <Edit className="w-3.5 h-3.5" /> Editar
-              </button>
-            )}
+            {/* Deshacer pago deshabilitado — para corregir, eliminar y recrear */}
+{/* Editar factura deshabilitado — para corregir, eliminar y recrear */}
             {canDelete && (
               <button onClick={onDelete}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 text-xs rounded-lg border border-red-200 transition-all">
@@ -2872,8 +3326,14 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
         </div>
 
         {/* Cabecera del documento */}
-        <div className="p-6 border-b border-gray-200">
-          <div className="flex justify-between items-start">
+        <div className="relative p-6 border-b border-gray-200 overflow-hidden">
+          {/* PAGADO watermark */}
+          {f.estado === "pagada" && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none" style={{zIndex:0}}>
+              <span className="text-[100px] font-black text-emerald-500/10 rotate-[-35deg] leading-none tracking-widest whitespace-nowrap">PAGADO</span>
+            </div>
+          )}
+          <div className="relative flex justify-between items-start" style={{zIndex:1}}>
             <div>
               {f.logo_tipo === "arandu" && <LogoArandu />}
               {f.logo_tipo === "jar" && <LogoJar />}
@@ -2885,8 +3345,15 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
               </div>
             </div>
             <div className="text-right">
-              <h1 className="text-2xl font-bold text-gray-800">FACTURA</h1>
-              <p className="text-xl font-semibold mt-1" style={{ color: accentColor }}>{f.numero}</p>
+              <h1 className={`text-2xl font-bold ${f.sin_factura ? "text-violet-700" : "text-gray-800"}`}>
+                {f.sin_factura ? "COMPROBANTE DE VENTA" : "FACTURA"}
+              </h1>
+              {f.sin_factura && (
+                <p className="text-xs text-violet-500 font-medium -mt-1 mb-1">Sin comprobante fiscal</p>
+              )}
+              <p className="text-xl font-semibold mt-1" style={{ color: f.sin_factura ? "#7c3aed" : accentColor }}>
+                {f.sin_factura ? (f.numero_boleta || f.numero) : f.numero}
+              </p>
               <p className="text-gray-500 text-sm mt-1">Fecha: <strong className="text-gray-700">{f.fecha || "-"}</strong></p>
               <p className="text-gray-500 text-sm">Forma de pago: <strong className="text-gray-700">{f.forma_pago === "credito" ? "A crédito" : "Al contado"}</strong></p>
               {f.fecha_vencimiento && (
@@ -2922,8 +3389,10 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
         </div>
 
         {/* Cliente */}
-        <div className="p-6 bg-gray-50 border-b">
-          <p className="text-xs text-gray-400 uppercase tracking-wider font-semibold mb-2">CLIENTE</p>
+        <div className={`p-6 border-b ${f.sin_factura ? "bg-violet-50" : "bg-gray-50"}`}>
+          <p className={`text-xs font-semibold mb-2 uppercase tracking-wider ${f.sin_factura ? "text-violet-400" : "text-gray-400"}`}>
+            {f.sin_factura ? "COMPRADOR" : "CLIENTE"}
+          </p>
           <p className="text-xl font-semibold text-gray-800">{f.empresa_nombre || f.razon_social || "-"}</p>
           {f.empresa_nombre && f.razon_social && f.empresa_nombre !== f.razon_social && (
             <p className="text-sm text-gray-500">{f.razon_social}</p>
@@ -2962,14 +3431,30 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
               )}
             </tbody>
             <tfoot>
-              <tr className="bg-gray-50">
-                <td colSpan={3} className="border border-gray-300 p-2 text-right text-sm text-gray-500">Base imponible:</td>
-                <td className="border border-gray-300 p-2 text-right text-sm text-gray-500">{fmt(base)}</td>
-              </tr>
-              <tr className="bg-gray-50">
-                <td colSpan={3} className="border border-gray-300 p-2 text-right text-sm text-gray-500">IVA incluido (10%):</td>
-                <td className="border border-gray-300 p-2 text-right text-sm text-gray-500">{fmt(iva)}</td>
-              </tr>
+              {!f.sin_factura && ivaDetailBreakdown.exenta > 0 && (
+                <tr className="bg-gray-50">
+                  <td colSpan={3} className="border border-gray-300 p-2 text-right text-sm text-gray-500">Exentas:</td>
+                  <td className="border border-gray-300 p-2 text-right text-sm text-gray-500">{fmt(ivaDetailBreakdown.exenta)}</td>
+                </tr>
+              )}
+              {!f.sin_factura && ivaDetailBreakdown.i5 > 0 && (
+                <tr className="bg-gray-50">
+                  <td colSpan={3} className="border border-gray-300 p-2 text-right text-sm text-gray-500">IVA incluido (5%):</td>
+                  <td className="border border-gray-300 p-2 text-right text-sm text-gray-500">{fmt(ivaDetailBreakdown.i5)}</td>
+                </tr>
+              )}
+              {!f.sin_factura && ivaDetailBreakdown.i10 > 0 && (
+                <tr className="bg-gray-50">
+                  <td colSpan={3} className="border border-gray-300 p-2 text-right text-sm text-gray-500">IVA incluido (10%):</td>
+                  <td className="border border-gray-300 p-2 text-right text-sm text-gray-500">{fmt(ivaDetailBreakdown.i10)}</td>
+                </tr>
+              )}
+              {!f.sin_factura && ivaDetailBreakdown.i5 === 0 && ivaDetailBreakdown.i10 === 0 && ivaDetailBreakdown.exenta === 0 && (
+                <tr className="bg-gray-50">
+                  <td colSpan={3} className="border border-gray-300 p-2 text-right text-sm text-gray-500">Base imponible:</td>
+                  <td className="border border-gray-300 p-2 text-right text-sm text-gray-500">{fmt(base)}</td>
+                </tr>
+              )}
               <tr style={{ background: "#dbeafe" }}>
                 <td colSpan={3} className="border border-gray-300 p-2 text-right font-bold text-lg text-gray-900">TOTAL:</td>
                 <td className="border border-gray-300 p-2 text-right font-bold text-lg" style={{ color: accentColor }}>{fmt(total)}</td>
@@ -3074,10 +3559,32 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
 
         {/* Notas */}
         {f.notas && (
-          <div className="px-6 pb-6">
+          <div className="px-6 pb-4">
             <div className="bg-yellow-50 p-3 border-l-4 border-yellow-400 rounded-r">
               <strong className="text-yellow-800 text-sm">Notas:</strong>
               <p className="text-gray-700 text-sm mt-1 whitespace-pre-line">{f.notas}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Timbrado info */}
+        {!f.sin_factura && f.nro_timbrado && (
+          <div className="px-6 pb-4">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5 flex items-center gap-2 text-xs text-emerald-700">
+              <Shield className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>
+                <strong>Timbrado N° {f.nro_timbrado}</strong>
+                {f.establecimiento && <span className="ml-2 text-emerald-500">Est. {f.establecimiento}</span>}
+                {f.fecha_vigencia_timbrado && <span className="ml-2 text-emerald-500">Vigencia: {f.fecha_vigencia_timbrado}</span>}
+              </span>
+            </div>
+          </div>
+        )}
+        {f.sin_factura && (
+          <div className="px-6 pb-4">
+            <div className="bg-violet-50 border border-violet-200 rounded-lg px-4 py-2.5 flex items-center gap-2 text-xs text-violet-600">
+              <Receipt className="w-3.5 h-3.5 flex-shrink-0" />
+              <span>Comprobante interno · {f.numero_boleta || f.numero} · No genera crédito fiscal IVA</span>
             </div>
           </div>
         )}

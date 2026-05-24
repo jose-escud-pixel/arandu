@@ -95,7 +95,8 @@ const TemaPreview = ({ tema, selected, onClick }) => (
 
 // ── Componente principal ──────────────────────────────────────────────────────
 const EmpresasPropiasPage = () => {
-  const { token, refreshEmpresasPropias } = useContext(AuthContext);
+  const { token, refreshEmpresasPropias, user } = useContext(AuthContext);
+  const isSuperAdmin = user?.role === "admin";
   const [empresas, setEmpresas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -120,7 +121,15 @@ const EmpresasPropiasPage = () => {
     setLoading(true);
     try {
       const res = await fetch(`${API}/admin/empresas-propias`, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) setEmpresas(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        if (!isSuperAdmin) {
+          const asignados = user?.logos_asignados || [];
+          setEmpresas(data.filter(e => asignados.includes(e.id)));
+        } else {
+          setEmpresas(data);
+        }
+      }
     } catch (e) { toast.error("Error al cargar empresas"); }
     finally { setLoading(false); }
   };
@@ -250,7 +259,7 @@ const EmpresasPropiasPage = () => {
 
         {/* Header */}
         <div className="mb-8">
-          <Link to="/admin" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-3 text-sm w-fit">
+          <Link to="/sistema" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-3 text-sm w-fit">
             <ArrowLeft className="w-4 h-4" /> Volver al Dashboard
           </Link>
           <div className="flex items-center justify-between gap-4">
@@ -258,12 +267,18 @@ const EmpresasPropiasPage = () => {
               <Building2 className="w-8 h-8 text-arandu-blue" />
               <div>
                 <h1 className="font-heading text-3xl font-bold text-white">Empresas Propias</h1>
-                <p className="text-slate-400 text-sm">Configurá tus empresas con logo, tema de color y acceso multi-empresa</p>
+                <p className="text-slate-400 text-sm">
+                  {isSuperAdmin
+                    ? "Configurá tus empresas con logo, tema de color y acceso multi-empresa"
+                    : "Las empresas que administrás"}
+                </p>
               </div>
             </div>
-            <Button onClick={openNew} className="bg-arandu-blue hover:bg-arandu-blue-dark text-white">
-              <Plus className="w-4 h-4 mr-2" /> Nueva Empresa
-            </Button>
+            {isSuperAdmin && (
+              <Button onClick={openNew} className="bg-arandu-blue hover:bg-arandu-blue-dark text-white">
+                <Plus className="w-4 h-4 mr-2" /> Nueva Empresa
+              </Button>
+            )}
           </div>
         </div>
 
@@ -323,10 +338,12 @@ const EmpresasPropiasPage = () => {
                           className="text-slate-400 hover:text-yellow-400 hover:bg-yellow-500/10">
                           <Edit className="w-4 h-4" />
                         </Button>
-                        <Button onClick={() => handleDelete(ep.id, ep.nombre)} variant="ghost"
-                          className="text-slate-400 hover:text-red-400 hover:bg-red-500/10">
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        {isSuperAdmin && (
+                          <Button onClick={() => handleDelete(ep.id, ep.nombre)} variant="ghost"
+                            className="text-slate-400 hover:text-red-400 hover:bg-red-500/10">
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -336,10 +353,14 @@ const EmpresasPropiasPage = () => {
             {empresas.length === 0 && (
               <div className="col-span-2 text-center py-16 bg-arandu-dark-light border border-white/5 rounded-xl">
                 <Building2 className="w-14 h-14 text-slate-700 mx-auto mb-3" />
-                <p className="text-slate-400 mb-4">No hay empresas propias creadas</p>
-                <Button onClick={openNew} className="bg-arandu-blue hover:bg-arandu-blue-dark text-white">
-                  <Plus className="w-4 h-4 mr-2" /> Crear primera empresa
-                </Button>
+                <p className="text-slate-400 mb-4">
+                  {isSuperAdmin ? "No hay empresas propias creadas" : "No tenés empresas asignadas"}
+                </p>
+                {isSuperAdmin && (
+                  <Button onClick={openNew} className="bg-arandu-blue hover:bg-arandu-blue-dark text-white">
+                    <Plus className="w-4 h-4 mr-2" /> Crear primera empresa
+                  </Button>
+                )}
               </div>
             )}
           </div>

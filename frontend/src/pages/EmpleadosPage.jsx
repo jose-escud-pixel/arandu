@@ -536,7 +536,7 @@ export default function EmpleadosPage() {
       <header className="bg-arandu-dark-light border-b border-white/5 px-6 py-4">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
           <div className="flex items-center gap-4">
-            <button onClick={() => navigate("/admin")} className="p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">
+            <button onClick={() => navigate("/sistema")} className="p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div className="flex items-center gap-3">
@@ -1278,7 +1278,7 @@ export default function EmpleadosPage() {
       {/* ══ MODAL ADELANTO ══ */}
       {showAdelantoModal && adelantoEmp && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-arandu-dark-card border border-white/10 rounded-2xl w-full max-w-sm">
+          <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-sm">
             <div className="flex items-center justify-between p-5 border-b border-white/10">
               <div>
                 <h2 className="text-white font-heading font-bold text-lg">Registrar adelanto</h2>
@@ -1344,7 +1344,7 @@ export default function EmpleadosPage() {
       {/* ══ MODAL EXTRA ══ */}
       {showExtraModal && extraEmp && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-arandu-dark-card border border-white/10 rounded-2xl w-full max-w-sm">
+          <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-sm">
             <div className="flex items-center justify-between p-5 border-b border-white/10">
               <div>
                 <h2 className="text-white font-heading font-bold text-lg">Registrar extra</h2>

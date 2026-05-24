@@ -208,7 +208,7 @@ export default function CostosFijosPage() {
       {/* Header */}
       <div className="border-b border-white/10 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Link to="/admin" className="text-slate-400 hover:text-white transition-colors"><ArrowLeft className="w-5 h-5" /></Link>
+          <Link to="/sistema" className="text-slate-400 hover:text-white transition-colors"><ArrowLeft className="w-5 h-5" /></Link>
           <div>
             <h1 className="font-heading text-2xl text-white flex items-center gap-2">
               <TrendingDown className="w-6 h-6 text-red-400" /> Costos Fijos
@@ -414,7 +414,7 @@ export default function CostosFijosPage() {
       {/* ── Form Modal ───────────────────────────────────────────────────────── */}
       {showForm && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
-          <div className="bg-arandu-dark-card border border-white/10 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+          <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-6 border-b border-white/10">
               <h2 className="font-heading text-lg text-white">{editingId ? "Editar costo fijo" : "Nuevo costo fijo"}</h2>
               <button onClick={() => setShowForm(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
@@ -530,7 +530,7 @@ export default function CostosFijosPage() {
       {/* ── Pago Modal ───────────────────────────────────────────────────────── */}
       {showPagoModal && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
-          <div className="bg-arandu-dark-card border border-white/10 rounded-2xl w-full max-w-md">
+          <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-md">
             <div className="flex items-center justify-between p-6 border-b border-white/10">
               <h2 className="font-heading text-lg text-white">Registrar pago</h2>
               <button onClick={() => setShowPagoModal(null)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>

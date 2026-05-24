@@ -319,10 +319,10 @@ const ReportesPage = () => {
         return `${API}${path}${qs ? `?${qs}` : ""}`;
       };
       const [empRes, alertRes, proxRes, actRes] = await Promise.all([
-        fetch(buildUrl("/admin/empresas"), { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(buildUrl("/admin/alertas", { empresa_id: empresaFromUrl }), { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(buildUrl("/admin/alertas/proximas"), { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(buildUrl("/admin/activos"), { headers: { Authorization: `Bearer ${token}` } })
+        fetch(buildUrl("/sistema/empresas"), { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(buildUrl("/sistema/alertas", { empresa_id: empresaFromUrl }), { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(buildUrl("/sistema/alertas/proximas"), { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(buildUrl("/sistema/activos"), { headers: { Authorization: `Bearer ${token}` } })
       ]);
       if (empRes.ok) setEmpresas(await empRes.json());
       if (alertRes.ok) setAlertas(await alertRes.json());
@@ -545,15 +545,15 @@ const ReportesPage = () => {
     try {
       let report = null;
       const periodoSub = `Empresa activa: ${activeEmpresaPropia?.nombre || "Todas"} · Generado: ${nowFull}`;
-      const cuentasReporte = await fetchJson("/admin/cuentas-bancarias").catch(() => []);
+      const cuentasReporte = await fetchJson("/sistema/cuentas-bancarias").catch(() => []);
       const cuentaResolver = buildCuentaResolver(cuentasReporte);
-      const fetchSaldosCuentas = (hasta) => fetchJson("/admin/cuentas-bancarias/saldos", { hasta }).catch(() => cuentasReporte);
+      const fetchSaldosCuentas = (hasta) => fetchJson("/sistema/cuentas-bancarias/saldos", { hasta }).catch(() => cuentasReporte);
       const currencyLabel = reportCurrency === "USD" ? "Dolares" : reportCurrency === "AMBOS" ? "Guaranies y dolares" : "Guaranies";
       const showPYG = reportCurrency === "PYG" || reportCurrency === "AMBOS";
       const showUSD = reportCurrency === "USD" || reportCurrency === "AMBOS";
       if (tipo === "balance_mensual") {
         const [b, saldosCuentas] = await Promise.all([
-          fetchJson("/admin/balance", { periodo: reportMonth }),
+          fetchJson("/sistema/balance", { periodo: reportMonth }),
           fetchSaldosCuentas(endOfMonthDate(reportMonth)),
         ]);
         const summary = [];
@@ -591,9 +591,9 @@ const ReportesPage = () => {
         };
       } else if (tipo === "balance_anual") {
         const [b, mesesBalance, saldosCuentas] = await Promise.all([
-          fetchJson("/admin/balance/anual", { anio: reportYear }),
+          fetchJson("/sistema/balance/anual", { anio: reportYear }),
           showUSD
-            ? Promise.all(Array.from({ length: 12 }, (_, idx) => fetchJson("/admin/balance", { periodo: `${reportYear}-${String(idx + 1).padStart(2, "0")}` }).catch(() => null)))
+            ? Promise.all(Array.from({ length: 12 }, (_, idx) => fetchJson("/sistema/balance", { periodo: `${reportYear}-${String(idx + 1).padStart(2, "0")}` }).catch(() => null)))
             : Promise.resolve([]),
           fetchSaldosCuentas(`${reportYear}-12-31`),
         ]);
@@ -623,16 +623,16 @@ const ReportesPage = () => {
         };
       } else if (tipo === "balance_detallado") {
         const [b, facturas, ingresosVarios, recibos, notasCredito, compras, pagos, gastos, sueldos, iva, saldosCuentas] = await Promise.all([
-          fetchJson("/admin/balance", { periodo: reportMonth }),
-          fetchJson("/admin/facturas", { mes: reportMonth }),
-          fetchJson("/admin/ingresos-varios", { mes: reportMonth }).catch(() => []),
-          fetchJson("/admin/recibos", { mes: reportMonth }).catch(() => []),
-          fetchJson("/admin/notas-credito", { mes: reportMonth }).catch(() => []),
-          fetchJson("/admin/compras", { mes: reportMonth }),
-          fetchJson("/admin/pagos-proveedores", { mes: reportMonth }),
-          fetchJson("/admin/costos-fijos-pagos", { mes: reportMonth }).catch(() => []),
-          fetchJson("/admin/empleados/sueldos", { periodo: reportMonth }).catch(() => []),
-          fetchJson("/admin/balance/iva", { periodo: reportMonth }).catch(() => ({ pagos_iva_detalle: [] })),
+          fetchJson("/sistema/balance", { periodo: reportMonth }),
+          fetchJson("/sistema/facturas", { mes: reportMonth }),
+          fetchJson("/sistema/ingresos-varios", { mes: reportMonth }).catch(() => []),
+          fetchJson("/sistema/recibos", { mes: reportMonth }).catch(() => []),
+          fetchJson("/sistema/notas-credito", { mes: reportMonth }).catch(() => []),
+          fetchJson("/sistema/compras", { mes: reportMonth }),
+          fetchJson("/sistema/pagos-proveedores", { mes: reportMonth }),
+          fetchJson("/sistema/costos-fijos-pagos", { mes: reportMonth }).catch(() => []),
+          fetchJson("/sistema/empleados/sueldos", { periodo: reportMonth }).catch(() => []),
+          fetchJson("/sistema/balance/iva", { periodo: reportMonth }).catch(() => ({ pagos_iva_detalle: [] })),
           fetchSaldosCuentas(endOfMonthDate(reportMonth)),
         ]);
         const sueldosPagados = (sueldos || []).filter(s => s.sueldo_registrado);
@@ -677,7 +677,7 @@ const ReportesPage = () => {
           ],
         };
       } else if (tipo === "facturas") {
-        const data = await fetchJson("/admin/facturas", { mes: reportMonth });
+        const data = await fetchJson("/sistema/facturas", { mes: reportMonth });
         const total = sectionTotal(data, x => montoReportePYG(x, ["monto"]));
         const cobrado = sectionTotal(data, x => {
           const pagado = Number(x.monto_pagado ?? 0);
@@ -709,24 +709,24 @@ const ReportesPage = () => {
           }, r => montoCuenta(r, ["monto"])),
         };
       } else if (tipo === "ingresos") {
-        const data = await fetchJson("/admin/ingresos-varios", { mes: reportMonth });
+        const data = await fetchJson("/sistema/ingresos-varios", { mes: reportMonth });
         const total = data.reduce((s, x) => s + Number(x.monto || 0), 0);
         report = { title: `Ingresos varios - ${mesLabel(reportMonth)}`, subtitle: periodoSub, summary: [["Registros", data.length], ["Total", fmtPYG(total)], ["Categorias", new Set(data.map(x => x.categoria).filter(Boolean)).size], ["Clientes", new Set(data.map(x => x.empresa_id).filter(Boolean)).size]], accountSummary: resumenCuentasDesdeItems(data, cuentaResolver, r => montoCuenta(r, ["monto"]), "Ingresos por banco/cuenta"), sections: sectionsPorCuenta(data, { title: "Ingresos por cuenta", totalLabel: "Total", columns: ["Fecha", "Cliente", "Categoria", "Concepto", "Monto"] }, cuentaResolver, (r, cuenta) => [r.fecha || "-", r.empresa_nombre || r.razon_social || "-", r.categoria || "-", r.descripcion || r.concepto || "-", fmtCuentaMonto(montoCuenta(r, ["monto"]), cuenta)], r => montoCuenta(r, ["monto"])) };
       } else if (tipo === "recibos") {
-        const data = await fetchJson("/admin/recibos", { mes: reportMonth });
+        const data = await fetchJson("/sistema/recibos", { mes: reportMonth });
         const total = data.reduce((s, x) => s + Number(x.monto || 0), 0);
         report = { title: `Recibos - ${mesLabel(reportMonth)}`, subtitle: periodoSub, summary: [["Recibos", data.length], ["Total", fmtPYG(total)], ["Facturas", new Set(data.map(x => x.factura_id).filter(Boolean)).size], ["Clientes", new Set(data.map(x => x.empresa_id).filter(Boolean)).size]], accountSummary: resumenCuentasDesdeItems(data, cuentaResolver, r => montoCuenta(r, ["monto"]), "Recibos por banco/cuenta"), sections: sectionsPorCuenta(data, { title: "Recibos por cuenta", totalLabel: "Total", columns: ["Fecha", "Cliente", "Factura", "Metodo", "Monto"] }, cuentaResolver, (r, cuenta) => [r.fecha_pago || "-", r.empresa_nombre || r.cliente_nombre || "-", r.factura_numero || r.factura_id || "-", r.metodo_pago || "-", fmtCuentaMonto(montoCuenta(r, ["monto"]), cuenta)], r => montoCuenta(r, ["monto"])) };
       } else if (tipo === "notas_credito") {
-        const data = await fetchJson("/admin/notas-credito", { mes: reportMonth });
+        const data = await fetchJson("/sistema/notas-credito", { mes: reportMonth });
         const total = data.reduce((s, x) => s + montoReportePYG(x, ["monto"]), 0);
         const ventas = data.filter(x => (x.tipo || "venta") === "venta");
         const comprasNc = data.filter(x => x.tipo === "compra");
         report = { title: `Notas de credito - ${mesLabel(reportMonth)}`, subtitle: periodoSub, summary: [["Notas", data.length], ["Total Gs", fmtPYG(total)], ["Ventas", ventas.length], ["Compras", comprasNc.length]], sections: [{ title: "Detalle", columns: ["Fecha", "Tipo", "Cliente/Proveedor", "Factura/Compra", "Motivo", "Monto Gs"], rows: rowsOf(data, [{value:"fecha"}, {value: r => (r.tipo || "venta") === "compra" ? "Compra" : "Venta"}, {value: r => r.empresa_nombre || r.proveedor_nombre || r.razon_social}, {value: r => r.factura_numero || r.compra_numero_factura || r.factura_id || r.compra_id}, {value:"motivo"}, {value: r => fmtPYG(montoReportePYG(r, ["monto"]))}]) }] };
       } else if (tipo === "presupuestos") {
-        const data = await fetchJson("/admin/presupuestos");
+        const data = await fetchJson("/sistema/presupuestos");
         report = { title: "Presupuestos", subtitle: periodoSub, summary: [["Total", data.length], ["Aprobados", data.filter(x => x.estado === "aprobado").length], ["Rechazados", data.filter(x => x.estado === "rechazado").length], ["Facturados", data.filter(x => x.facturado).length]], sections: [{ title: "Detalle", columns: ["Fecha", "Cliente", "Estado", "Total", "Facturas"], rows: rowsOf(data, [{value: r => (r.created_at || "").slice(0,10)}, {value:"empresa_nombre"}, {value:"estado"}, {value: r => fmtPYG(r.total)}, {value:"facturas_count"}]) }] };
       } else if (tipo === "compras") {
-        const data = await fetchJson("/admin/compras", { mes: reportMonth });
+        const data = await fetchJson("/sistema/compras", { mes: reportMonth });
         const movimientos = movimientosDeCompras(data);
         const totalMovPYG = sectionTotal(movimientos.filter(x => (x.cuenta_moneda || x.moneda) !== "USD"), x => x.monto_movimiento);
         const totalMovUSD = sectionTotal(movimientos.filter(x => (x.cuenta_moneda || x.moneda) === "USD"), x => x.monto_movimiento);
@@ -752,13 +752,13 @@ const ReportesPage = () => {
           ],
         };
       } else if (tipo === "gastos") {
-        const data = await fetchJson("/admin/costos-fijos-pagos", { mes: reportMonth });
+        const data = await fetchJson("/sistema/costos-fijos-pagos", { mes: reportMonth });
         const total = data.reduce((s, x) => s + Number(x.monto_pagado || x.monto || 0), 0);
         report = { title: `Gastos - ${mesLabel(reportMonth)}`, subtitle: periodoSub, summary: [["Pagos", data.length], ["Total", fmtPYG(total)], ["Categorias", new Set(data.map(x => x.categoria).filter(Boolean)).size], ["Pendientes", data.filter(x => x.estado && x.estado !== "pagado").length]], accountSummary: resumenCuentasDesdeItems(data, cuentaResolver, r => montoCuenta(r, ["monto_pagado", "monto"]), "Gastos por banco/cuenta"), sections: sectionsPorCuenta(data, { title: "Gastos por cuenta", totalLabel: "Total", columns: ["Periodo", "Gasto", "Categoria", "Estado", "Monto"] }, cuentaResolver, (r, cuenta) => [r.periodo || r.fecha_pago || r.fecha || "-", r.costo_nombre || r.nombre || "-", r.categoria || "-", r.estado || "-", fmtCuentaMonto(montoCuenta(r, ["monto_pagado", "monto"]), cuenta)], r => montoCuenta(r, ["monto_pagado", "monto"])) };
       } else if (tipo === "proveedores") {
         const [proveedores, resumenProveedores] = await Promise.all([
-          fetchJson("/admin/proveedores"),
-          fetchJson("/admin/compras/resumen/por-proveedor", { anio: reportYear }),
+          fetchJson("/sistema/proveedores"),
+          fetchJson("/sistema/compras/resumen/por-proveedor", { anio: reportYear }),
         ]);
         const resumenMap = {};
         (resumenProveedores || []).forEach(r => {
@@ -818,7 +818,7 @@ const ReportesPage = () => {
           ],
         };
       } else if (tipo === "iva") {
-        const data = await fetchJson("/admin/balance/iva", { periodo: reportMonth });
+        const data = await fetchJson("/sistema/balance/iva", { periodo: reportMonth });
         report = {
           title: `IVA fiscal - ${mesLabel(reportMonth)}`,
           subtitle: periodoSub,
@@ -832,10 +832,10 @@ const ReportesPage = () => {
           ],
         };
       } else if (tipo === "stock_historial") {
-        const data = await fetchJson("/admin/stock-movimientos");
+        const data = await fetchJson("/sistema/stock-movimientos");
         report = { title: "Historial de stock", subtitle: periodoSub, summary: [["Movimientos", data.length], ["Entradas", data.filter(x => x.tipo === "entrada").length], ["Salidas", data.filter(x => x.tipo === "salida").length], ["Ajustes", data.filter(x => x.tipo === "ajuste").length]], sections: [{ title: "Movimientos", columns: ["Fecha", "Producto", "SKU", "Tipo", "Cantidad", "Stock", "Motivo", "Usuario"], rows: rowsOf(data, [{value:"fecha"}, {value:"producto_nombre"}, {value:"sku"}, {value:"tipo"}, {value:"cantidad"}, {value: r => `${r.stock_anterior ?? "-"} -> ${r.stock_nuevo ?? "-"}`}, {value:"motivo"}, {value:"usuario_nombre"}]) }] };
       } else if (tipo === "productos_stock") {
-        const data = await fetchJson("/admin/productos");
+        const data = await fetchJson("/sistema/productos");
         const valor = data.reduce((s, p) => s + Number(p.stock_actual || 0) * Number(p.precio_costo || 0), 0);
         report = {
           title: "Productos y stock",
@@ -1617,7 +1617,7 @@ const ReportesPage = () => {
       {/* ══════════════════ ENCABEZADO DE PÁGINA ══════════════════ */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
-          <Link to={empresaFromUrl ? "/admin/empresas" : "/admin"} className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2">
+          <Link to={empresaFromUrl ? "/sistema/empresas" : "/sistema"} className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2">
             <ArrowLeft className="w-4 h-4" /> {empresaFromUrl ? "Volver a Empresas" : "Volver al Dashboard"}
           </Link>
           <h1 className="font-heading text-2xl md:text-3xl font-bold text-white flex items-center gap-3" data-testid="reportes-title">

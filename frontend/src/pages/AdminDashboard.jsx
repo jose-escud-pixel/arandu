@@ -68,7 +68,7 @@ const mesLabel = (m) => {
 
 
 const AdminDashboard = () => {
-  const { user, token, logout, hasPermission, empresasPropias, activeEmpresaPropia } = useContext(AuthContext);
+  const { user, token, logout, hasPermission, hasModule, empresasPropias, activeEmpresaPropia } = useContext(AuthContext);
   const navigate = useNavigate();
   const [messages, setMessages] = useState([]);
   const [stats, setStats] = useState({ total_messages: 0, unread_messages: 0, read_messages: 0, total_empresas: 0, total_presupuestos: 0, presupuestos_borrador: 0, presupuestos_aprobados: 0, presupuestos_facturados: 0, presupuestos_cobrados: 0 });
@@ -204,7 +204,7 @@ const AdminDashboard = () => {
               <BarChart3 className="w-5 h-5" />
               <span className="font-body font-medium">Dashboard</span>
             </div>
-            {hasPermission("usuarios.ver") && (
+            {hasModule("mensajes") && (
               <button className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all">
                 <Inbox className="w-5 h-5" />
                 <span className="font-body">Mensajes</span>
@@ -217,7 +217,7 @@ const AdminDashboard = () => {
             )}
             {hasPermission("empresas.ver") && (
               <Link 
-                to="/admin/empresas"
+                to="/sistema/empresas"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
               >
                 <Building2 className="w-5 h-5" />
@@ -229,7 +229,7 @@ const AdminDashboard = () => {
             )}
             {(hasPermission("presupuestos.ver") || hasPermission("facturas.ver") || hasPermission("ingresos_varios.ver") || hasPermission("recibos.ver") || hasPermission("notas_credito.ver")) && (
               <Link
-                to="/admin/ventas"
+                to="/sistema/ventas"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
               >
                 <BarChart3 className="w-5 h-5" />
@@ -241,7 +241,7 @@ const AdminDashboard = () => {
             )}
             {hasPermission("proveedores.ver") && (
               <Link
-                to="/admin/proveedores"
+                to="/sistema/proveedores"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
               >
                 <Truck className="w-5 h-5" />
@@ -250,7 +250,7 @@ const AdminDashboard = () => {
             )}
             {(hasPermission("compras.ver") || hasPermission("costos_fijos.ver") || hasPermission("empleados.ver") || hasPermission("pagos_proveedores.ver") || hasPermission("balance.ver")) && (
               <Link
-                to="/admin/egresos"
+                to="/sistema/egresos"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
               >
                 <ShoppingBag className="w-5 h-5" />
@@ -259,7 +259,7 @@ const AdminDashboard = () => {
             )}
             {hasPermission("balance.ver") && (
               <Link
-                to="/admin/balance"
+                to="/sistema/balance"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
               >
                 <Scale className="w-5 h-5" />
@@ -268,7 +268,7 @@ const AdminDashboard = () => {
             )}
             {hasPermission("bancos.ver") && (
               <Link
-                to="/admin/bancos"
+                to="/sistema/bancos"
                 data-testid="menu-bancos"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
               >
@@ -278,7 +278,7 @@ const AdminDashboard = () => {
             )}
             {hasPermission("inventario.ver") && (
               <Link
-                to="/admin/inventario"
+                to="/sistema/inventario"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
                 data-testid="nav-inventario"
               >
@@ -288,7 +288,7 @@ const AdminDashboard = () => {
             )}
             {hasPermission("inventario_productos.ver") && (
               <Link
-                to="/admin/productos"
+                to="/sistema/productos"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
                 data-testid="nav-productos"
               >
@@ -298,7 +298,7 @@ const AdminDashboard = () => {
             )}
             {hasPermission("historial_stock.ver") && (
               <Link
-                to="/admin/historial-stock"
+                to="/sistema/historial-stock"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
                 data-testid="nav-historial-stock"
               >
@@ -308,7 +308,7 @@ const AdminDashboard = () => {
             )}
             {hasPermission("reportes.ver") && (
               <Link 
-                to="/admin/reportes"
+                to="/sistema/reportes"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
                 data-testid="nav-reportes"
               >
@@ -318,7 +318,7 @@ const AdminDashboard = () => {
             )}
             {hasPermission("auditoria.ver") && (
               <Link 
-                to="/admin/usuarios"
+                to="/sistema/usuarios"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
                 data-testid="nav-usuarios"
               >
@@ -326,9 +326,9 @@ const AdminDashboard = () => {
                 <span className="font-body">Usuarios</span>
               </Link>
             )}
-            {user?.role === "admin" && (
+            {(user?.role === "admin" || user?.role === "gerente") && (
               <Link
-                to="/admin/auditoria"
+                to="/sistema/auditoria"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
                 data-testid="nav-auditoria"
               >
@@ -336,9 +336,9 @@ const AdminDashboard = () => {
                 <span className="font-body">Auditoria</span>
               </Link>
             )}
-            {user?.role === "admin" && (
+            {(user?.role === "admin" || user?.role === "gerente") && (
               <Link
-                to="/admin/empresas-propias"
+                to="/sistema/empresas-propias"
                 className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
                 data-testid="nav-empresas-propias"
               >
@@ -350,7 +350,7 @@ const AdminDashboard = () => {
 
           <div className="p-4 border-t border-white/5">
             <div className="flex items-center gap-3 mb-3 px-2">
-              <Link to="/admin/perfil" className="shrink-0">
+              <Link to="/sistema/perfil" className="shrink-0">
                 <div className="w-10 h-10 rounded-full bg-arandu-blue/20 flex items-center justify-center overflow-hidden hover:ring-2 hover:ring-arandu-blue/40 transition-all cursor-pointer">
                   {user?.avatar ? (
                     <img src={user.avatar} alt="Avatar" className="w-full h-full object-cover" />
@@ -363,14 +363,16 @@ const AdminDashboard = () => {
                 <p className="text-white font-body text-sm truncate">{user?.name}</p>
                 <p className="text-slate-500 text-xs truncate">{user?.email}</p>
                 <span className={`text-xs px-1.5 py-0.5 rounded mt-0.5 inline-block ${
-                  user?.role === "admin" ? "bg-arandu-red/20 text-arandu-red" : "bg-arandu-blue/20 text-arandu-blue"
+                  user?.role === "admin" ? "bg-arandu-red/20 text-arandu-red" :
+                  user?.role === "gerente" ? "bg-violet-500/20 text-violet-400" :
+                  "bg-arandu-blue/20 text-arandu-blue"
                 }`}>
-                  {user?.role === "admin" ? "Admin" : "Usuario"}
+                  {user?.role === "admin" ? "Admin" : user?.role === "gerente" ? "Administrador" : "Usuario"}
                 </span>
               </div>
             </div>
             <Link
-              to="/admin/perfil"
+              to="/sistema/perfil"
               className="w-full px-4 py-2 text-slate-400 hover:text-arandu-blue hover:bg-arandu-blue/10 rounded-lg flex items-center gap-2 transition-all mb-1"
               data-testid="nav-perfil"
             >
@@ -484,7 +486,7 @@ const AdminDashboard = () => {
           {/* Estadísticas operativas */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8" data-testid="stats-grid">
             {[
-              { perm: user?.role === "admin", title: "Mensajes", icon: MessageSquare, color: "text-blue-400", value: resumen?.mensajes?.total || 0, lines: [`Sin leer: ${resumen?.mensajes?.sin_leer || 0}`] },
+              { perm: hasModule("mensajes"), title: "Mensajes", icon: MessageSquare, color: "text-blue-400", value: resumen?.mensajes?.total || 0, lines: [`Sin leer: ${resumen?.mensajes?.sin_leer || 0}`] },
               { perm: hasPermission("empresas.ver"), title: "Clientes", icon: Building2, color: "text-purple-400", value: resumen?.clientes?.total || 0, lines: ["clientes registrados"] },
               { perm: hasPermission("presupuestos.ver"), title: "Presupuestos", icon: FileText, color: "text-green-400", value: resumen?.presupuestos?.total || 0, lines: [`Aprobados: ${resumen?.presupuestos?.aprobados || 0}`, `Rechazados: ${resumen?.presupuestos?.rechazados || 0}`, `Cobrados: ${resumen?.presupuestos?.cobrados || 0}`, `Faltantes: ${resumen?.presupuestos?.faltantes || 0}`] },
               { perm: hasPermission("facturas.ver"), title: "Facturación", icon: Receipt, color: "text-cyan-400", value: fmtMixed(resumen?.facturacion?.total, resumen?.facturacion?.total_usd), lines: [`Facturas: ${resumen?.facturacion?.cantidad || 0}`, `Cobrado: ${fmtMixed(resumen?.facturacion?.cobrado, resumen?.facturacion?.cobrado_usd)}`, `Pendiente: ${fmtMixed(resumen?.facturacion?.pendiente, resumen?.facturacion?.pendiente_usd)}`] },
@@ -522,24 +524,24 @@ const AdminDashboard = () => {
             </h2>
             {[
               { title: "Ingresos", items: [
-                { label: "Nuevo presupuesto", icon: FileText, path: "/admin/ventas?nuevo=presupuesto", perm: "presupuestos.crear", color: "emerald" },
-                { label: "Nueva factura", icon: Receipt, path: "/admin/ventas?nuevo=factura", perm: "facturas.crear", color: "cyan" },
-                { label: "Nueva nota crédito", icon: AlertCircle, path: "/admin/ventas?nuevo=nota_credito", perm: "notas_credito.crear", color: "rose" },
-                { label: "Nuevo ingreso", icon: TrendingUp, path: "/admin/ventas?nuevo=ingreso", perm: "ingresos_varios.crear", color: "green" },
+                { label: "Nuevo presupuesto", icon: FileText, path: "/sistema/ventas?nuevo=presupuesto", perm: "presupuestos.crear", color: "emerald" },
+                { label: "Nueva factura", icon: Receipt, path: "/sistema/ventas?nuevo=factura", perm: "facturas.crear", color: "cyan" },
+                { label: "Nueva nota crédito", icon: AlertCircle, path: "/sistema/ventas?nuevo=nota_credito", perm: "notas_credito.crear", color: "rose" },
+                { label: "Nuevo ingreso", icon: TrendingUp, path: "/sistema/ventas?nuevo=ingreso", perm: "ingresos_varios.crear", color: "green" },
               ]},
               { title: "Egresos", items: [
-                { label: "Nuevo gasto", icon: DollarSign, path: "/admin/egresos?nuevo=gasto", perm: "costos_fijos.crear", color: "red" },
-                { label: "Nueva compra", icon: ShoppingBag, path: "/admin/egresos?nuevo=compra", perm: "compras.crear", color: "orange" },
-                { label: "Nuevo pago proveedor", icon: Truck, path: "/admin/egresos?nuevo=pago_proveedor", perm: "pagos_proveedores.crear", color: "amber" },
-                { label: "Nuevo pago IVA", icon: Scale, path: "/admin/egresos?nuevo=pago_iva", perm: "balance.editar", color: "violet" },
+                { label: "Nuevo gasto", icon: DollarSign, path: "/sistema/egresos?nuevo=gasto", perm: "costos_fijos.crear", color: "red" },
+                { label: "Nueva compra", icon: ShoppingBag, path: "/sistema/egresos?nuevo=compra", perm: "compras.crear", color: "orange" },
+                { label: "Nuevo pago proveedor", icon: Truck, path: "/sistema/egresos?nuevo=pago_proveedor", perm: "pagos_proveedores.crear", color: "amber" },
+                { label: "Nuevo pago IVA", icon: Scale, path: "/sistema/egresos?nuevo=pago_iva", perm: "balance.editar", color: "violet" },
               ]},
               { title: "Administrativo", items: [
-                { label: "Nuevo cliente", icon: Building2, path: "/admin/empresas?nuevo=cliente", perm: "empresas.crear", color: "purple" },
-                { label: "Nuevo proveedor", icon: Package, path: "/admin/proveedores?nuevo=proveedor", perm: "proveedores.crear", color: "yellow" },
-                { label: "Nuevo empleado", icon: UserCheck, path: "/admin/egresos?nuevo=empleado", perm: "empleados.crear", color: "pink" },
-                { label: "Nuevo dispositivo", icon: Server, path: "/admin/inventario?nuevo=dispositivo", perm: "inventario.crear", color: "blue" },
-                { label: "Nuevo producto", icon: Package, path: "/admin/productos?nuevo=producto", perm: "inventario_productos.crear", color: "teal" },
-                { label: "Nueva alerta", icon: Bell, path: "/admin/reportes?nuevo=alerta", perm: "alertas.crear", color: "red" },
+                { label: "Nuevo cliente", icon: Building2, path: "/sistema/empresas?nuevo=cliente", perm: "empresas.crear", color: "purple" },
+                { label: "Nuevo proveedor", icon: Package, path: "/sistema/proveedores?nuevo=proveedor", perm: "proveedores.crear", color: "yellow" },
+                { label: "Nuevo empleado", icon: UserCheck, path: "/sistema/egresos?nuevo=empleado", perm: "empleados.crear", color: "pink" },
+                { label: "Nuevo dispositivo", icon: Server, path: "/sistema/inventario?nuevo=dispositivo", perm: "inventario.crear", color: "blue" },
+                { label: "Nuevo producto", icon: Package, path: "/sistema/productos?nuevo=producto", perm: "inventario_productos.crear", color: "teal" },
+                { label: "Nueva alerta", icon: Bell, path: "/sistema/reportes?nuevo=alerta", perm: "alertas.crear", color: "red" },
               ]},
             ].map(section => {
               const items = section.items.filter(item => hasPermission(item.perm));

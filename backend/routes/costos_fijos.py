@@ -296,6 +296,8 @@ async def registrar_pago_costo(costo_id: str, data: PagoCostoFijoCreate, user: d
         "notas": data.notas,
         "tiene_factura": data.tiene_factura,
         "nro_factura": data.nro_factura if data.tiene_factura else None,
+        "nro_timbrado": data.nro_timbrado if data.tiene_factura else None,
+        "fecha_vigencia_timbrado": data.fecha_vigencia_timbrado if data.tiene_factura else None,
         "cuenta_id": data.cuenta_id,
         "cuenta_nombre": data.cuenta_nombre,
         "created_at": datetime.now(timezone.utc).isoformat()
@@ -321,10 +323,17 @@ async def editar_pago_costo(pago_id: str, data: dict, user: dict = Depends(requi
     if "notas" in data:
         updates["notas"] = data["notas"]
     if "tiene_factura" in data:
-        updates["tiene_factura"] = bool(data["tiene_factura"])
-        updates["nro_factura"] = data.get("nro_factura") if data.get("tiene_factura") else None
+        tiene = bool(data["tiene_factura"])
+        updates["tiene_factura"] = tiene
+        updates["nro_factura"] = data.get("nro_factura") if tiene else None
+        updates["nro_timbrado"] = data.get("nro_timbrado") if tiene else None
+        updates["fecha_vigencia_timbrado"] = data.get("fecha_vigencia_timbrado") if tiene else None
     if "nro_factura" in data and "tiene_factura" not in data:
         updates["nro_factura"] = data["nro_factura"] if existing.get("tiene_factura") else None
+    if "nro_timbrado" in data and "tiene_factura" not in data:
+        updates["nro_timbrado"] = data["nro_timbrado"] if existing.get("tiene_factura") else None
+    if "fecha_vigencia_timbrado" in data and "tiene_factura" not in data:
+        updates["fecha_vigencia_timbrado"] = data["fecha_vigencia_timbrado"] if existing.get("tiene_factura") else None
     if "cuenta_id" in data:
         updates["cuenta_id"] = data["cuenta_id"]
         if data["cuenta_id"]:

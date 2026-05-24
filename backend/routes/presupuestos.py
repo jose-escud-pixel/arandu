@@ -64,6 +64,7 @@ async def create_presupuesto(data: PresupuestoCreate, user: dict = Depends(requi
         "moneda": data.moneda, "forma_pago": data.forma_pago or "contado",
         "numero": numero, "nombre_archivo": data.nombre_archivo or None,
         "fecha": fecha, "tipo_cambio": data.tipo_cambio,
+        "modo": data.modo or "libre",
         "validez_dias": data.validez_dias, "items": [item.dict() for item in data.items],
         "observaciones": data.observaciones,
         "condiciones": data.condiciones or f"- Precios expresados en {moneda_text} (IVA incluido).\n- Validez de la oferta: {data.validez_dias} dias.\n- Forma de pago: {pago_text}.\n- Tiempo de entrega: A confirmar segun stock.",
@@ -245,7 +246,7 @@ async def update_presupuesto(presupuesto_id: str, data: PresupuestoCreate, user:
             "forma_pago": data.forma_pago or "contado",
             "numero": data.numero or existing.get("numero"),
             "nombre_archivo": data.nombre_archivo if data.nombre_archivo is not None else existing.get("nombre_archivo"),
-            "tipo_cambio": data.tipo_cambio,
+            "tipo_cambio": data.tipo_cambio, "modo": data.modo or existing.get("modo", "libre"),
             "fecha": data.fecha or existing["fecha"], "validez_dias": data.validez_dias,
             "items": [item.dict() for item in data.items], "observaciones": data.observaciones,
             "condiciones": data.condiciones, "subtotal": data.subtotal, "iva": data.iva, "total": data.total

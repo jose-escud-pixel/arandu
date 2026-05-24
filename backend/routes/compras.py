@@ -20,6 +20,7 @@ class CompraItemCreate(BaseModel):
     precio_unitario: float
     subtotal: float = 0
     producto_id: Optional[str] = None   # referencia al catálogo de productos
+    producto_sku: Optional[str] = None  # código SKU del producto (solo referencia)
     iva: Optional[int] = 10             # tasa IVA del ítem: 0, 5 ó 10
 
 class CompraCreate(BaseModel):
@@ -32,6 +33,8 @@ class CompraCreate(BaseModel):
     tipo_pago: str = "contado"             # contado | credito
     tiene_factura: bool = False
     numero_factura: Optional[str] = None
+    nro_timbrado: Optional[str] = None              # Timbrado del proveedor (SET)
+    fecha_vigencia_timbrado: Optional[str] = None   # Vigencia del timbrado YYYY-MM-DD
     monto_total: float
     moneda: str = "PYG"
     tipo_cambio: Optional[float] = None
@@ -58,6 +61,8 @@ class CompraUpdate(BaseModel):
     tipo_pago: Optional[str] = None
     tiene_factura: Optional[bool] = None
     numero_factura: Optional[str] = None
+    nro_timbrado: Optional[str] = None
+    fecha_vigencia_timbrado: Optional[str] = None
     monto_total: Optional[float] = None
     moneda: Optional[str] = None
     tipo_cambio: Optional[float] = None
@@ -380,6 +385,8 @@ async def create_compra(data: CompraCreate, user: dict = Depends(require_authent
         "tipo_pago": data.tipo_pago,
         "tiene_factura": data.tiene_factura,
         "numero_factura": data.numero_factura,
+        "nro_timbrado": data.nro_timbrado if data.tiene_factura else None,
+        "fecha_vigencia_timbrado": data.fecha_vigencia_timbrado if data.tiene_factura else None,
         "monto_total": data.monto_total,
         "moneda": data.moneda,
         "tipo_cambio": tipo_cambio_final,
@@ -407,6 +414,10 @@ async def create_compra(data: CompraCreate, user: dict = Depends(require_authent
             pid = item.get("producto_id")
             if pid:
                 from routes.productos import registrar_movimiento
+                # Leer stock y costo actual ANTES del movimiento para costo promedio
+                prod_antes = await db.productos.find_one(
+                    {"id": pid}, {"_id": 0, "stock_actual": 1, "precio_costo": 1}
+                )
                 await registrar_movimiento(
                     producto_id=pid,
                     tipo="entrada",
@@ -419,6 +430,24 @@ async def create_compra(data: CompraCreate, user: dict = Depends(require_authent
                     usuario_id=user.get("id"),
                     usuario_nombre=user.get("name"),
                 )
+                # Actualizar precio_costo con costo promedio ponderado
+                # Fórmula: (stock_ant × costo_ant + qty_nueva × precio_nuevo) / (stock_ant + qty_nueva)
+                # Solo actualiza precio_costo; NO modifica movimientos históricos
+                if prod_antes:
+                    stock_ant = prod_antes.get("stock_actual", 0) or 0
+                    costo_ant = prod_antes.get("precio_costo", 0) or 0
+                    qty_nueva = item["cantidad"]
+                    precio_nuevo = item.get("precio_unitario") or 0
+                    total_qty = stock_ant + qty_nueva
+                    if precio_nuevo > 0 and total_qty > 0:
+                        costo_promedio = (stock_ant * costo_ant + qty_nueva * precio_nuevo) / total_qty
+                        await db.productos.update_one(
+                            {"id": pid},
+                            {"$set": {
+                                "precio_costo": round(costo_promedio, 2),
+                                "updated_at": datetime.now(timezone.utc).isoformat()
+                            }}
+                        )
 
     return _fmt(doc)
 
@@ -470,6 +499,8 @@ async def update_compra(compra_id: str, data: CompraUpdate, user: dict = Depends
         update_data["numero_factura_normalizado"] = _numero_doc_normalizado(numero_final)
     else:
         update_data["numero_factura_normalizado"] = None
+        update_data["nro_timbrado"] = None
+        update_data["fecha_vigencia_timbrado"] = None
     if update_data.get("solo_iva"):
         update_data["afecta_stock"] = False
         update_data["cuenta_id"] = None

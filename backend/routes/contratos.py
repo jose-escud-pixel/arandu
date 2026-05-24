@@ -4,7 +4,7 @@ import uuid
 from typing import List, Optional
 
 from config import db
-from auth import require_authenticated, has_permission, log_auditoria, get_logos_acceso
+from auth import require_authenticated, has_permission, log_auditoria, get_logos_acceso, apply_logo_filter, is_forbidden
 from models.schemas import ContratoCreate, ContratoResponse
 
 router = APIRouter()
@@ -22,11 +22,11 @@ async def get_contratos(
     if not has_permission(user, "contratos.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso para ver contratos")
     query = {}
-    logos_acceso = await get_logos_acceso(user)
-    if logos_acceso is not None:
-        query["logo_tipo"] = {"$in": logos_acceso}
-    elif logo_tipo and logo_tipo != "todas":
-        query["logo_tipo"] = logo_tipo
+    logo_q: dict = {}
+    await apply_logo_filter(logo_q, user, logo_tipo if logo_tipo and logo_tipo != "todas" else None)
+    if is_forbidden(logo_q):
+        return []
+    query.update(logo_q)
     contratos = await db.contratos.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
     # Enriquecer con nombre de empresa
     for c in contratos:

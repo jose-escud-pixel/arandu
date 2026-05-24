@@ -1,20 +1,48 @@
 from pydantic import BaseModel, EmailStr, field_validator, ConfigDict
 from typing import List, Optional
+import re
 
 TEMAS_EMPRESA = frozenset({
     "oscuro-azul", "oscuro-rojo", "claro-rojo", "claro-dorado", "claro-azul",
 })
 
+_EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
+_USER_RE  = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9._\-]{1,49}$')
+
+def _validate_login_id(v: str) -> str:
+    """Acepta email completo o nombre de usuario simple (sin @)."""
+    v = (v or "").strip().lower()
+    if not v:
+        raise ValueError("El usuario/email no puede estar vacío")
+    if "@" in v:
+        if not _EMAIL_RE.match(v):
+            raise ValueError(
+                "El formato del email no es válido. "
+                "Ejemplo correcto: usuario@dominio.com"
+            )
+    else:
+        if not _USER_RE.match(v):
+            raise ValueError(
+                "El usuario debe tener al menos 2 caracteres y solo puede "
+                "contener letras, números, puntos, guiones y guión bajo"
+            )
+    return v
+
 
 # ================== USER MODELS ==================
 
 class UserCreate(BaseModel):
-    email: EmailStr
+    email: str
     password: str
     name: str
 
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v):
+        return _validate_login_id(v)
+
 class AdminUserCreate(BaseModel):
-    email: EmailStr
+    email: str
     password: str
     name: str
     role: str = "usuario"
@@ -23,9 +51,19 @@ class AdminUserCreate(BaseModel):
     logos_asignados: List[str] = []
     empresa_default: Optional[str] = None
 
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v):
+        return _validate_login_id(v)
+
 class UserLogin(BaseModel):
-    email: EmailStr
+    email: str
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v):
+        return _validate_login_id(v)
 
 class UserResponse(BaseModel):
     id: str
@@ -41,7 +79,14 @@ class UserResponse(BaseModel):
 
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v):
+        if v is None:
+            return v
+        return _validate_login_id(v)
 
 class PasswordChange(BaseModel):
     current_password: str
@@ -151,6 +196,7 @@ class PresupuestoItem(BaseModel):
     subtotal: float
     producto_id: Optional[str] = None
     observacion: Optional[str] = None
+    observacion_oculta: Optional[str] = None
     imagen: Optional[str] = None
     imagen_comentario: Optional[str] = None
     moneda_item: Optional[str] = None
@@ -194,6 +240,7 @@ class PresupuestoCreate(BaseModel):
     fecha: Optional[str] = None
     validez_dias: int = 15
     tipo_cambio: Optional[float] = None
+    modo: Optional[str] = "libre"
     items: List[PresupuestoItem]
     observaciones: Optional[str] = None
     condiciones: Optional[str] = None
@@ -214,6 +261,7 @@ class PresupuestoResponse(BaseModel):
     fecha: str
     validez_dias: int
     tipo_cambio: Optional[float] = None
+    modo: Optional[str] = "libre"
     items: List[PresupuestoItem]
     observaciones: Optional[str] = None
     condiciones: Optional[str] = None
@@ -406,9 +454,11 @@ class PagoCostoFijoCreate(BaseModel):
     fecha_pago: str
     notas: Optional[str] = None
     tiene_factura: bool = False
-    nro_factura: Optional[str] = None   # Nro. de factura para IVA crédito fiscal
-    cuenta_id: Optional[str] = None     # cuenta bancaria desde la que se pagó
-    cuenta_nombre: Optional[str] = None # nombre desnormalizado para display
+    nro_factura: Optional[str] = None       # Nro. de factura para IVA crédito fiscal
+    nro_timbrado: Optional[str] = None      # Número de timbrado del proveedor (SET)
+    fecha_vigencia_timbrado: Optional[str] = None  # Vigencia del timbrado YYYY-MM-DD
+    cuenta_id: Optional[str] = None         # cuenta bancaria desde la que se pagó
+    cuenta_nombre: Optional[str] = None     # nombre desnormalizado para display
 
 class PagoCostoFijoResponse(BaseModel):
     id: str
@@ -419,6 +469,8 @@ class PagoCostoFijoResponse(BaseModel):
     notas: Optional[str] = None
     tiene_factura: bool = False
     nro_factura: Optional[str] = None
+    nro_timbrado: Optional[str] = None
+    fecha_vigencia_timbrado: Optional[str] = None
     cuenta_id: Optional[str] = None
     cuenta_nombre: Optional[str] = None
     created_at: str
@@ -615,7 +667,8 @@ class AlertaResponse(BaseModel):
 class FacturaCreate(BaseModel):
     logo_tipo: str = "arandujar"          # arandu | arandujar | jar
     tipo: str = "emitida"                 # emitida | recibida
-    numero: str                           # Nro de factura
+    sin_factura: bool = False             # True = boleta (venta sin comprobante fiscal)
+    numero: Optional[str] = None         # Nro de factura (vacío si sin_factura=True)
     fecha: str                            # YYYY-MM-DD
     forma_pago: str = "contado"           # contado | credito
     razon_social: str                     # cliente o proveedor (razón social formal)
@@ -637,10 +690,17 @@ class FacturaCreate(BaseModel):
     presupuesto_id: Optional[str] = None # DEPRECATED: usar presupuesto_ids
     presupuesto_ids: List[str] = []      # lista de presupuestos vinculados (muchos-a-muchos)
     notas: Optional[str] = None
+    # Timbrado (autorización SET para emitir comprobantes)
+    nro_timbrado: Optional[str] = None          # Número de timbrado
+    fecha_inicio_timbrado: Optional[str] = None  # YYYY-MM-DD inicio vigencia
+    fecha_vigencia_timbrado: Optional[str] = None # YYYY-MM-DD fin de vigencia
+    punto_expedicion: Optional[str] = None       # formato: "XXX-YYY" ej: "001-001"
     # Cuenta bancaria a la que entró (o de la que salió) la plata,
     # cuando se crea/edita la factura ya marcada como pagada.
     cuenta_id: Optional[str] = None
     cuenta_nombre: Optional[str] = None
+    # Boleta (venta sin comprobante fiscal)
+    numero_boleta: Optional[str] = None  # Auto-generado: BOL-YYYYMM-NNNNNN
 
 class PagoItem(BaseModel):
     """Un pago individual dentro del historial de pagos de una factura."""
@@ -660,7 +720,9 @@ class FacturaResponse(BaseModel):
     id: str
     logo_tipo: str
     tipo: str
-    numero: str
+    sin_factura: bool = False
+    numero: Optional[str] = None
+    numero_boleta: Optional[str] = None
     fecha: str
     forma_pago: str = "contado"
     razon_social: str
@@ -682,6 +744,15 @@ class FacturaResponse(BaseModel):
     presupuesto_id: Optional[str] = None  # DEPRECATED: usar presupuesto_ids
     presupuesto_ids: List[str] = []       # lista de presupuestos vinculados
     notas: Optional[str] = None
+    nro_timbrado: Optional[str] = None
+    fecha_inicio_timbrado: Optional[str] = None
+    fecha_vigencia_timbrado: Optional[str] = None
+    punto_expedicion: Optional[str] = None
     cuenta_id: Optional[str] = None
     cuenta_nombre: Optional[str] = None
     created_at: str
+    # Soft delete
+    eliminada: bool = False
+    eliminada_at: Optional[str] = None
+    eliminada_por: Optional[str] = None
+    eliminada_por_id: Optional[str] = None

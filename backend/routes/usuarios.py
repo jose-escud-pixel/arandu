@@ -10,22 +10,27 @@ from models.schemas import AdminUserCreate, UserResponse
 router = APIRouter()
 
 
+ROLE_RANK = {"usuario": 1, "gerente": 2, "admin": 3}
+
+def _rank(user: dict) -> int:
+    return ROLE_RANK.get(user.get("role", "usuario"), 1)
+
 def _puede_administrar_usuarios(user: dict, accion: str = "ver") -> bool:
-    return user.get("role") == "admin" or has_permission(user, f"usuarios.{accion}")
+    return user.get("role") in ("admin", "gerente") or has_permission(user, f"usuarios.{accion}")
 
 
 def _logos_permitidos_admin(user: dict, requested: List[str]) -> List[str]:
     requested = list(map(str, requested or []))
     if user.get("role") == "admin":
-        return requested
+        return requested  # admin global puede asignar cualquier logo
     permitidos = set(map(str, user.get("logos_asignados", []) or []))
-    return [logo for logo in requested if logo in permitidos]
+    return [logo for logo in requested if logo in permitidos]  # gerente: solo sus logos
 
 
 def _permisos_permitidos_admin(user: dict, requested: List[str]) -> List[str]:
     requested = list(map(str, requested or []))
-    if user.get("role") == "admin":
-        return requested
+    if user.get("role") in ("admin", "gerente"):
+        return requested  # admin y gerente pueden asignar cualquier permiso
     disponibles = set(user.get("permisos", []) or [])
     return [permiso for permiso in requested if permiso in disponibles]
 
@@ -55,7 +60,16 @@ async def get_usuarios(admin: dict = Depends(require_authenticated)):
     if not _puede_administrar_usuarios(admin, "ver"):
         raise HTTPException(status_code=403, detail="No tiene permiso: usuarios.ver")
     query = {}
-    if admin.get("role") != "admin":
+    actor_role = admin.get("role", "usuario")
+    if actor_role == "admin":
+        # Admin global: ve todos los usuarios (gerentes y usuarios de todas las empresas)
+        query = {"role": {"$in": ["admin", "gerente", "usuario"]}}
+    elif actor_role == "gerente":
+        # Gerente: ve solo los usuarios de sus propias empresas
+        logos = list(map(str, admin.get("logos_asignados", []) or []))
+        query = {"role": "usuario", "logos_asignados": {"$in": logos}} if logos else {"id": "__none__"}
+    else:
+        # Usuario con permiso usuarios.ver: misma restricción que gerente
         logos = list(map(str, admin.get("logos_asignados", []) or []))
         query = {"role": "usuario", "logos_asignados": {"$in": logos}} if logos else {"id": "__none__"}
     users = await db.users.find(query, {"_id": 0, "password": 0}).sort("created_at", -1).to_list(100)
@@ -68,12 +82,18 @@ async def create_usuario(data: AdminUserCreate, admin: dict = Depends(require_au
     existing = await db.users.find_one({"email": data.email})
     if existing:
         raise HTTPException(status_code=400, detail="Ya existe un usuario con ese email")
-    if data.role not in ["admin", "usuario"]:
-        raise HTTPException(status_code=400, detail="Rol invalido. Use: admin o usuario")
-    if admin.get("role") != "admin" and data.role == "admin":
-        raise HTTPException(status_code=403, detail="No puede crear super administradores")
+    actor_role = admin.get("role", "usuario")
+    # Roles que cada nivel puede crear
+    if actor_role == "admin":
+        allowed_target_roles = ["gerente", "usuario"]  # admin puede crear gerentes y usuarios
+    elif actor_role == "gerente":
+        allowed_target_roles = ["usuario"]  # gerente solo puede crear usuarios
+    else:
+        allowed_target_roles = []
+    if data.role not in allowed_target_roles:
+        raise HTTPException(status_code=403, detail=f"No puede crear usuarios con rol '{data.role}'")
     user_id = str(uuid.uuid4())
-    logos_asignados = _logos_permitidos_admin(admin, data.logos_asignados) if data.role == "usuario" else []
+    logos_asignados = _logos_permitidos_admin(admin, data.logos_asignados) if data.role in ("usuario", "gerente") else []
     permisos_solicitados = _permisos_permitidos_admin(admin, data.permisos)
     permisos = await _filtrar_permisos_por_empresas_propias(permisos_solicitados, logos_asignados) if data.role == "usuario" else []
     empresa_default = data.empresa_default if data.empresa_default in logos_asignados else (logos_asignados[0] if logos_asignados else None)
@@ -103,18 +123,19 @@ async def update_usuario(user_id: str, data: AdminUserCreate, admin: dict = Depe
     existing = await db.users.find_one({"id": user_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    if admin.get("role") != "admin":
+    if admin.get("role") == "gerente":
+        # Gerente: solo puede editar usuarios dentro de sus logos
         admin_logos = set(map(str, admin.get("logos_asignados", []) or []))
         existing_logos = set(map(str, existing.get("logos_asignados", []) or []))
-        if existing.get("role") == "admin" or not existing_logos.intersection(admin_logos):
+        if existing.get("role") in ("admin", "gerente") or not existing_logos.intersection(admin_logos):
             raise HTTPException(status_code=403, detail="No puede editar este usuario")
-        if data.role == "admin":
-            raise HTTPException(status_code=403, detail="No puede crear super administradores")
+        if data.role in ("admin", "gerente"):
+            raise HTTPException(status_code=403, detail="No puede asignar este rol")
     if data.email != existing["email"]:
         email_taken = await db.users.find_one({"email": data.email, "id": {"$ne": user_id}})
         if email_taken:
             raise HTTPException(status_code=400, detail="Ya existe un usuario con ese email")
-    logos_asignados = _logos_permitidos_admin(admin, data.logos_asignados) if data.role == "usuario" else []
+    logos_asignados = _logos_permitidos_admin(admin, data.logos_asignados) if data.role in ("usuario", "gerente") else []
     permisos_solicitados = _permisos_permitidos_admin(admin, data.permisos)
     permisos = await _filtrar_permisos_por_empresas_propias(permisos_solicitados, logos_asignados) if data.role == "usuario" else []
     empresa_default = data.empresa_default if data.empresa_default in logos_asignados else (logos_asignados[0] if logos_asignados else None)
@@ -139,10 +160,14 @@ async def delete_usuario(user_id: str, admin: dict = Depends(require_authenticat
     if admin["id"] == user_id:
         raise HTTPException(status_code=400, detail="No puede eliminarse a si mismo")
     existing = await db.users.find_one({"id": user_id}, {"_id": 0})
-    if admin.get("role") != "admin":
+    target_role = (existing or {}).get("role", "usuario")
+    if _rank({"role": target_role}) >= _rank(admin):
+        raise HTTPException(status_code=403, detail="No puede eliminar a un usuario de igual o mayor jerarquía")
+    if admin.get("role") == "gerente":
+        # Gerente solo puede eliminar usuarios dentro de sus logos
         admin_logos = set(map(str, admin.get("logos_asignados", []) or []))
         existing_logos = set(map(str, (existing or {}).get("logos_asignados", []) or []))
-        if (existing or {}).get("role") == "admin" or not existing_logos.intersection(admin_logos):
+        if not existing_logos.intersection(admin_logos):
             raise HTTPException(status_code=403, detail="No puede eliminar este usuario")
     result = await db.users.delete_one({"id": user_id})
     if result.deleted_count == 0:

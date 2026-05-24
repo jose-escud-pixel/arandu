@@ -360,7 +360,7 @@ const EmpresasPage = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
-          <Link to="/admin" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2" data-testid="back-btn">
+          <Link to="/sistema" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2" data-testid="back-btn">
             <ArrowLeft className="w-4 h-4" />
             Volver al Dashboard
           </Link>
@@ -714,12 +714,12 @@ const EmpresasPage = () => {
                         </td>
                         <td className="px-4 py-4">
                           <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                            <Link to={`/admin/presupuestos?empresa=${empresa.id}`}>
+                            <Link to={`/sistema/presupuestos?empresa=${empresa.id}`}>
                               <Button size="sm" variant="outline" className="border-arandu-blue/30 text-arandu-blue hover:bg-arandu-blue/10">
                                 <FileText className="w-4 h-4" />
                               </Button>
                             </Link>
-                            <Link to={`/admin/inventario?empresa=${empresa.id}`}>
+                            <Link to={`/sistema/inventario?empresa=${empresa.id}`}>
                               <Button size="sm" variant="outline" className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10">
                                 <Server className="w-4 h-4" />
                               </Button>
@@ -807,13 +807,13 @@ const EmpresasPage = () => {
                   </div>
 
                   <div className="p-6 border-t border-white/10 flex flex-wrap gap-3 justify-end">
-                    <Link to={`/admin/presupuestos?empresa=${selectedEmpresa.id}`}>
+                    <Link to={`/sistema/presupuestos?empresa=${selectedEmpresa.id}`}>
                       <Button variant="outline" className="border-arandu-blue/30 text-arandu-blue hover:bg-arandu-blue/10">
                         <FileText className="w-4 h-4 mr-2" />
                         Presupuestos
                       </Button>
                     </Link>
-                    <Link to={`/admin/inventario?empresa=${selectedEmpresa.id}`}>
+                    <Link to={`/sistema/inventario?empresa=${selectedEmpresa.id}`}>
                       <Button variant="outline" className="border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10">
                         <Server className="w-4 h-4 mr-2" />
                         Inventario

@@ -51,7 +51,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
                 status_code=401,
                 detail="Tu sesión expiró. Iniciá sesión de nuevo.",
             )
-        if user.get("role") != "admin":
+        if user.get("role") not in ("admin", "super_admin", "gerente"):
             user = await _aplicar_modulos_empresa_al_usuario(user)
         return user
     except jwt.ExpiredSignatureError:
@@ -86,8 +86,13 @@ async def _aplicar_modulos_empresa_al_usuario(user: dict) -> dict:
 
 
 async def require_admin(current_user: dict = Depends(get_current_user)):
-    if current_user.get("role") != "admin":
+    if current_user.get("role") not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="Acceso denegado - Se requiere rol de administrador")
+    return current_user
+
+async def require_super_admin(current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="Acceso denegado - Se requiere rol de super administrador")
     return current_user
 
 async def require_authenticated(current_user: dict = Depends(get_current_user)):
@@ -95,12 +100,13 @@ async def require_authenticated(current_user: dict = Depends(get_current_user)):
 
 
 def has_permission(user: dict, permiso: str) -> bool:
-    if user.get("role") == "admin":
+    # admin y gerente tienen todos los permisos dentro de sus empresas accesibles
+    if user.get("role") in ("admin", "super_admin", "gerente"):
         return True
     return permiso in user.get("permisos", [])
 
 def can_access_empresa(user: dict, empresa_id: str) -> bool:
-    if user.get("role") == "admin":
+    if user.get("role") == "super_admin":
         return True
     asignadas = user.get("empresas_asignadas", [])
     if not asignadas:
@@ -142,11 +148,11 @@ async def log_auditoria(usuario: dict, modulo: str, accion: str, detalle: str = 
 async def get_logos_acceso(user: dict):
     """
     Returns the logo_tipo slugs the user can access.
-    - Admin → None  (no restriction, sees everything)
-    - User with logos_asignados → list of slugs (e.g. ["arandu", "jar"])
-    - User with NO logos_asignados → []  (sees nothing — must have at least one assigned)
+    - super_admin / admin → None  (sin restricción, ve todo)
+    - gerente/usuario con logos_asignados → lista de slugs accesibles
+    - gerente/usuario sin logos_asignados → []  (no ve nada)
     """
-    if user.get("role") == "admin":
+    if user.get("role") in ("super_admin", "admin"):
         return None
     logos_ids = user.get("logos_asignados", [])
     if not logos_ids:

@@ -334,7 +334,7 @@ export default function BalancePage() {
       <header className="bg-arandu-dark-light border-b border-white/5 px-6 py-4">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
           <div className="flex items-center gap-4">
-            <button onClick={() => navigate("/admin")} className="p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">
+            <button onClick={() => navigate("/sistema")} className="p-2 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg transition-all">
               <ArrowLeft className="w-5 h-5" />
             </button>
             <div className="flex items-center gap-3">

@@ -15,7 +15,7 @@ router = APIRouter()
 class ProductoCreate(BaseModel):
     nombre: str
     descripcion: Optional[str] = None
-    sku: Optional[str] = None
+    sku: str                              # SKU obligatorio
     categoria: Optional[str] = None
     precio_costo: float = 0
     precio_venta: float = 0
@@ -24,6 +24,7 @@ class ProductoCreate(BaseModel):
     unidad: str = "unidad"   # unidad | kg | litro | metro | caja | etc.
     logo_tipo: str = "arandujar"
     activo: bool = True
+    iva_tipo: str = "10"                  # exenta | 5 | 10
 
 class ProductoUpdate(BaseModel):
     nombre: Optional[str] = None
@@ -36,6 +37,7 @@ class ProductoUpdate(BaseModel):
     unidad: Optional[str] = None
     logo_tipo: Optional[str] = None
     activo: Optional[bool] = None
+    iva_tipo: Optional[str] = None        # exenta | 5 | 10
 
 class MovimientoManualCreate(BaseModel):
     tipo: str           # "entrada" | "salida" | "ajuste"
@@ -139,20 +141,57 @@ async def get_productos(
 async def create_producto(data: ProductoCreate, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "inventario_productos.crear"):
         raise HTTPException(status_code=403, detail="Sin permiso")
+
+    # Validar SKU único
+    sku_trimmed = (data.sku or "").strip()
+    if not sku_trimmed:
+        raise HTTPException(status_code=400, detail="El SKU es obligatorio")
+    existe_sku = await db.productos.find_one({"sku": sku_trimmed}, {"_id": 0, "id": 1})
+    if existe_sku:
+        raise HTTPException(status_code=400, detail=f"Ya existe un producto con el SKU '{sku_trimmed}'")
+
+    # Validar nombre único (case-insensitive)
+    nombre_trimmed = (data.nombre or "").strip()
+    if not nombre_trimmed:
+        raise HTTPException(status_code=400, detail="El nombre es obligatorio")
+    existe_nombre = await db.productos.find_one(
+        {"nombre": {"$regex": f"^{nombre_trimmed}$", "$options": "i"}}, {"_id": 0, "id": 1}
+    )
+    if existe_nombre:
+        raise HTTPException(status_code=400, detail=f"Ya existe un producto con el nombre '{nombre_trimmed}'")
+
+    # Validar permiso para crear servicios
+    es_servicio = (data.categoria or "").strip() == "Servicios"
+    if es_servicio and not has_permission(user, "inventario_productos.crear_servicio"):
+        raise HTTPException(status_code=403, detail="No tenés permiso para crear productos de tipo Servicios")
+
+    # Los servicios no manejan stock
+    stock_actual = 0 if es_servicio else data.stock_actual
+    stock_minimo = 0 if es_servicio else data.stock_minimo
+
+    # Validar permiso para cargar stock inicial
+    if stock_actual > 0 and not has_permission(user, "inventario_productos.stock_inicial"):
+        raise HTTPException(status_code=403, detail="No tenés permiso para cargar stock inicial")
+
+    data_dict = data.dict()
+    data_dict["sku"] = sku_trimmed
+    data_dict["stock_actual"] = stock_actual
+    data_dict["stock_minimo"] = stock_minimo
+
     doc = {
         "id": str(uuid.uuid4()),
-        **data.dict(),
+        **data_dict,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.productos.insert_one(doc)
 
     # Si se carga con stock inicial, registrar el movimiento de entrada
-    if data.stock_actual > 0:
+    if stock_actual > 0:
         await registrar_movimiento(
             producto_id=doc["id"],
             tipo="entrada",
-            cantidad=data.stock_actual,
+            cantidad=stock_actual,
             motivo="stock_inicial",
             notas="Stock inicial al crear producto",
             usuario_id=user.get("id"),
@@ -171,9 +210,45 @@ async def update_producto(
 ):
     if not has_permission(user, "inventario_productos.editar"):
         raise HTTPException(status_code=403, detail="Sin permiso")
+
     update_fields = {k: v for k, v in data.dict().items() if v is not None}
     if not update_fields:
         raise HTTPException(status_code=400, detail="Sin campos para actualizar")
+
+    # Validar SKU único al editar (debe ser distinto al del mismo producto)
+    if "sku" in update_fields:
+        sku_trimmed = (update_fields["sku"] or "").strip()
+        if not sku_trimmed:
+            raise HTTPException(status_code=400, detail="El SKU es obligatorio")
+        update_fields["sku"] = sku_trimmed
+        existe_sku = await db.productos.find_one(
+            {"sku": sku_trimmed, "id": {"$ne": producto_id}}, {"_id": 0, "id": 1}
+        )
+        if existe_sku:
+            raise HTTPException(status_code=400, detail=f"Ya existe otro producto con el SKU '{sku_trimmed}'")
+
+    # Validar nombre único al editar (case-insensitive, excluyendo el mismo)
+    if "nombre" in update_fields:
+        nombre_trimmed = (update_fields["nombre"] or "").strip()
+        if not nombre_trimmed:
+            raise HTTPException(status_code=400, detail="El nombre es obligatorio")
+        update_fields["nombre"] = nombre_trimmed
+        existe_nombre = await db.productos.find_one(
+            {"nombre": {"$regex": f"^{nombre_trimmed}$", "$options": "i"}, "id": {"$ne": producto_id}},
+            {"_id": 0, "id": 1}
+        )
+        if existe_nombre:
+            raise HTTPException(status_code=400, detail=f"Ya existe otro producto con el nombre '{nombre_trimmed}'")
+
+    # Validar permiso de servicios si se está cambiando la categoría
+    if "categoria" in update_fields:
+        es_servicio = (update_fields.get("categoria") or "").strip() == "Servicios"
+        if es_servicio and not has_permission(user, "inventario_productos.crear_servicio"):
+            raise HTTPException(status_code=403, detail="No tenés permiso para asignar categoría Servicios")
+        # Los servicios no manejan stock mínimo
+        if es_servicio:
+            update_fields["stock_minimo"] = 0
+
     update_fields["updated_at"] = datetime.now(timezone.utc).isoformat()
     result = await db.productos.update_one({"id": producto_id}, {"$set": update_fields})
     if result.matched_count == 0:

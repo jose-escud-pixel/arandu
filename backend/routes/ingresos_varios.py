@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 import uuid
 
 from config import db
-from auth import require_authenticated, has_permission, get_logos_acceso
+from auth import require_authenticated, has_permission, get_logos_acceso, apply_logo_filter, is_forbidden
 
 router = APIRouter()
 
@@ -86,11 +86,11 @@ async def get_ingresos_varios(
     user: dict = Depends(require_authenticated)
 ):
     query = {"categoria": {"$ne": "Pago IVA"}}
-    logos_acceso = await get_logos_acceso(user)
-    if logos_acceso is not None:
-        query["logo_tipo"] = {"$in": logos_acceso}
-    elif logo_tipo and logo_tipo not in ("todas", ""):
-        query["logo_tipo"] = logo_tipo
+    logo_q: dict = {}
+    await apply_logo_filter(logo_q, user, logo_tipo if logo_tipo and logo_tipo not in ("todas", "") else None)
+    if is_forbidden(logo_q):
+        return []
+    query.update(logo_q)
     if mes:
         query["fecha"] = {"$regex": f"^{mes}"}
 

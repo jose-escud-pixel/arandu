@@ -923,7 +923,7 @@ const filteredActivos = useMemo(() => {
       {/* Header */}
       <div className="flex flex-col gap-4 mb-6">
         <div>
-          <Link to={filterEmpresa ? "/admin/empresas" : "/admin"} className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2 text-sm">
+          <Link to={filterEmpresa ? "/sistema/empresas" : "/sistema"} className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2 text-sm">
             <ArrowLeft className="w-4 h-4" /> {filterEmpresa ? "Volver a Empresas" : "Volver al Dashboard"}
           </Link>
           <h1 className="font-heading text-xl sm:text-2xl md:text-3xl font-bold text-white flex items-center gap-3" data-testid="inventario-title">

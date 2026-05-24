@@ -120,5 +120,8 @@ async def update_avatar(data: AvatarUpdate, current_user: dict = Depends(get_cur
     return {"success": True}
 
 @router.get("/admin/permisos-disponibles")
-async def get_permisos_disponibles(admin: dict = Depends(require_admin)):
+async def get_permisos_disponibles(user: dict = Depends(require_authenticated)):
+    # Gerentes y admins pueden ver los permisos disponibles para configurar usuarios
+    if user.get("role") not in ("admin", "super_admin", "gerente"):
+        raise HTTPException(status_code=403, detail="Sin permiso")
     return PERMISOS_DISPONIBLES

@@ -59,7 +59,7 @@ const LoginPage = () => {
       
       login(data.user, data.access_token);
       toast.success(`¡Bienvenido, ${data.user.name}!`);
-      navigate("/admin");
+      navigate("/sistema");
       
     } catch (error) {
       toast.error(error.message);
@@ -103,17 +103,18 @@ const LoginPage = () => {
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
-              <Label htmlFor="email" className="text-slate-400 font-body">Email</Label>
+              <Label htmlFor="email" className="text-slate-400 font-body">Usuario / Email</Label>
               <div className="relative">
                 <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-600" />
                 <Input
                   id="email"
-                  type="email"
-                  placeholder="admin@email.com"
+                  type="text"
+                  placeholder="usuario o correo@dominio.com"
                   value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value.trim() })}
                   className="bg-arandu-dark border-white/10 pl-12 py-6 text-white placeholder-slate-600 focus:border-arandu-blue"
                   data-testid="login-email"
+                  autoComplete="username"
                   required
                 />
               </div>

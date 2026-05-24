@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import uuid
 
 from config import db
-from auth import require_authenticated, has_permission, get_logos_acceso, log_auditoria
+from auth import require_authenticated, has_permission, get_logos_acceso, log_auditoria, apply_logo_filter, is_forbidden
 from routes.cotizaciones import tipo_cambio_usd_sugerido
 
 router = APIRouter()
@@ -135,11 +135,11 @@ async def get_notas_credito(
     if not has_permission(user, "notas_credito.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso")
     query = {}
-    logos_acceso = await get_logos_acceso(user)
-    if logos_acceso is not None:
-        query["logo_tipo"] = {"$in": logos_acceso}
-    elif logo_tipo and logo_tipo != "todas":
-        query["logo_tipo"] = logo_tipo
+    logo_q: dict = {}
+    await apply_logo_filter(logo_q, user, logo_tipo if logo_tipo and logo_tipo != "todas" else None)
+    if is_forbidden(logo_q):
+        return []
+    query.update(logo_q)
     if mes:
         query["fecha"] = {"$regex": f"^{mes}"}
     elif anio:

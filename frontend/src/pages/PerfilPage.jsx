@@ -150,7 +150,7 @@ const PerfilPage = () => {
     <div className="p-4 md:p-8 max-w-3xl mx-auto">
       {/* Header */}
       <div className="mb-8">
-        <Link to="/admin" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2">
+        <Link to="/sistema" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2">
           <ArrowLeft className="w-4 h-4" />
           Volver al Dashboard
         </Link>

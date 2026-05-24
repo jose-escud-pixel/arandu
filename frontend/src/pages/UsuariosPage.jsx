@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users, Plus, ArrowLeft, Edit, Trash2, Shield, Save, X,
-  ChevronDown, ChevronUp, Building2, Check, Lock, Star, Search
+  ChevronDown, ChevronUp, Building2, Check, Lock, Star, Search, UserCog
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -14,7 +14,7 @@ import { DEFAULT_EMPRESA_MODULOS, PERMISO_A_MODULO_EMPRESA, modulosHabilitadosEm
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const MODULOS_LABELS = {
-  empresas: "Empresas",
+  empresas: "Clientes",
   presupuestos: "Presupuestos",
   inventario: "Inventario",
   credenciales: "Credenciales",
@@ -126,7 +126,7 @@ const UsuariosPage = () => {
     const permisoModulo = String(permiso || "").split(".")[0];
     const moduloEmpresa = PERMISO_A_MODULO_EMPRESA[permisoModulo];
     if (!moduloEmpresa || !modulosPermitidosForm.includes(moduloEmpresa)) return false;
-    return currentUser?.role === "admin" || (currentUser?.permisos || []).includes(permiso);
+    return currentUser?.role === "admin" || currentUser?.role === "gerente" || (currentUser?.permisos || []).includes(permiso);
   };
 
   const limpiarPermisosFueraDeModulos = (next) => ({
@@ -135,7 +135,7 @@ const UsuariosPage = () => {
       const permisoModulo = String(permiso || "").split(".")[0];
       const moduloEmpresa = PERMISO_A_MODULO_EMPRESA[permisoModulo];
       const habilitado = !!moduloEmpresa && getModulosPermitidosPorLogos(next.logos_asignados).includes(moduloEmpresa);
-      return habilitado && (currentUser?.role === "admin" || (currentUser?.permisos || []).includes(permiso));
+      return habilitado && (currentUser?.role === "admin" || currentUser?.role === "gerente" || (currentUser?.permisos || []).includes(permiso));
     }),
   });
 
@@ -381,6 +381,14 @@ const UsuariosPage = () => {
     return found.map(e => e.nombre).join(", ");
   };
 
+
+  const ROLE_RANK = { usuario: 1, gerente: 2, admin: 3 };
+  const rankOf = (role) => ROLE_RANK[role] || 1;
+  const canManageUser = (targetUsuario) => {
+    if (!currentUser) return false;
+    if (targetUsuario.id === currentUser.id) return false; // no editarse a sí mismo
+    return rankOf(currentUser.role) > rankOf(targetUsuario.role);
+  };
   const filteredUsuarios = usuarios.filter(usuario => {
     const texto = [
       usuario.name, usuario.email, usuario.role,
@@ -397,7 +405,7 @@ const UsuariosPage = () => {
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
-            <Link to="/admin" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2">
+            <Link to="/sistema" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2">
               <ArrowLeft className="w-4 h-4" />
             </Link>
             <div>
@@ -455,13 +463,17 @@ const UsuariosPage = () => {
                     </div>
 
                     <div>
-                      <label className="text-slate-400 text-sm mb-1 block">Email *</label>
+                      <label className="text-slate-400 text-sm mb-1 block">
+                        Usuario / Email *
+                        <span className="text-slate-600 font-normal ml-1 text-xs">(nombre de usuario o correo completo)</span>
+                      </label>
                       <Input
-                        type="email"
+                        type="text"
                         value={formData.email}
-                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                        onChange={(e) => setFormData({ ...formData, email: e.target.value.trim() })}
                         className="bg-arandu-dark border-white/10 text-white"
-                        placeholder="correo@ejemplo.com"
+                        placeholder="usuario o correo@dominio.com"
+                        autoComplete="off"
                         data-testid="user-email-input"
                       />
                     </div>
@@ -483,7 +495,7 @@ const UsuariosPage = () => {
 
                   <div>
                     <label className="text-slate-400 text-sm mb-2 block">Rol *</label>
-                    <div className="flex gap-3">
+                    <div className="flex gap-3 flex-wrap">
                       {currentUser?.role === "admin" && (
                         <button
                           type="button"
@@ -493,10 +505,26 @@ const UsuariosPage = () => {
                               ? "border-arandu-red bg-arandu-red/10 text-arandu-red"
                               : "border-white/10 bg-arandu-dark text-slate-400 hover:border-white/20"
                           }`}
-                          data-testid="role-admin-btn"
+                          data-testid="role-superadmin-btn"
                         >
                           <Shield className="w-4 h-4" />
-                          Super admin
+                          Super Admin
+                        </button>
+                      )}
+
+                      {currentUser?.role === "admin" && (
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, role: "gerente" })}
+                          className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border transition-all ${
+                            formData.role === "gerente"
+                              ? "border-amber-500 bg-amber-500/10 text-amber-400"
+                              : "border-white/10 bg-arandu-dark text-slate-400 hover:border-white/20"
+                          }`}
+                          data-testid="role-admin-btn"
+                        >
+                          <UserCog className="w-4 h-4" />
+                          Administrador
                         </button>
                       )}
 
@@ -516,7 +544,7 @@ const UsuariosPage = () => {
                     </div>
                   </div>
 
-                  {formData.role === "usuario" && (
+                  {(formData.role === "usuario" || formData.role === "gerente") && (
                     <div className="space-y-4 pt-2">
 
                       {/* ── NUESTRAS EMPRESAS (logos_asignados) ── */}
@@ -575,8 +603,8 @@ const UsuariosPage = () => {
                         </div>
                       )}
 
-                      {/* ── CLIENTES ASIGNADOS (empresas_asignadas) ── */}
-                      {(() => {
+                      {/* ── CLIENTES ASIGNADOS (empresas_asignadas) — solo para usuario ── */}
+                      {formData.role === "usuario" && (() => {
                         const empresasFiltradas = getEmpresasFiltradas(formData.logos_asignados);
                         const selectedIds = (formData.empresas_asignadas || []).map(String);
                         const allFilteredSelected = empresasFiltradas.length > 0 && empresasFiltradas.every(e => selectedIds.includes(String(e.id)));
@@ -644,8 +672,8 @@ const UsuariosPage = () => {
                         );
                       })()}
 
-                      {/* ── PERMISOS ── */}
-                      <div className="border border-white/10 rounded-lg overflow-hidden">
+                      {/* ── PERMISOS — solo para usuario ── */}
+                      {formData.role === "usuario" && <div className="border border-white/10 rounded-lg overflow-hidden">
                         <div className="bg-arandu-dark p-3 flex items-center gap-2">
                           <Shield className="w-4 h-4 text-arandu-blue" />
                           <span className="text-white font-medium text-sm">Permisos por Módulo</span>
@@ -722,7 +750,7 @@ const UsuariosPage = () => {
                             </div>
                           )}
                         </div>
-                      </div>
+                      </div>}
                     </div>
                   )}
 
@@ -730,7 +758,15 @@ const UsuariosPage = () => {
                     <div className="bg-arandu-red/10 border border-arandu-red/20 rounded-lg p-3">
                       <p className="text-arandu-red text-sm flex items-center gap-2">
                         <Shield className="w-4 h-4" />
-                        Los administradores tienen acceso total a todas las funciones y empresas.
+                        Super Admin: acceso total a todas las empresas y funciones.
+                      </p>
+                    </div>
+                  )}
+                  {formData.role === "gerente" && (
+                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                      <p className="text-amber-400 text-sm flex items-center gap-2">
+                        <UserCog className="w-4 h-4" />
+                        Administrador de empresa: puede gestionar usuarios de sus empresas asignadas.
                       </p>
                     </div>
                   )}
@@ -795,11 +831,15 @@ const UsuariosPage = () => {
                   <div className="flex items-center gap-4">
                     <div
                       className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                        usuario.role === "admin" ? "bg-arandu-red/20" : "bg-arandu-blue/20"
+                        usuario.role === "admin" ? "bg-arandu-red/20"
+                        : usuario.role === "gerente" ? "bg-amber-500/20"
+                        : "bg-arandu-blue/20"
                       }`}
                     >
                       {usuario.role === "admin" ? (
                         <Shield className="w-5 h-5 text-arandu-red" />
+                      ) : usuario.role === "gerente" ? (
+                        <UserCog className="w-5 h-5 text-amber-400" />
                       ) : (
                         <Lock className="w-5 h-5 text-arandu-blue" />
                       )}
@@ -816,10 +856,14 @@ const UsuariosPage = () => {
                       className={`px-3 py-1 rounded-full text-xs font-medium ${
                         usuario.role === "admin"
                           ? "bg-arandu-red/20 text-arandu-red border border-arandu-red/30"
+                          : usuario.role === "gerente"
+                          ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
                           : "bg-arandu-blue/20 text-arandu-blue border border-arandu-blue/30"
                       }`}
                     >
-                      {usuario.role === "admin" ? "Administrador" : "Usuario"}
+                      {usuario.role === "admin" ? "Super Admin"
+                       : usuario.role === "gerente" ? "Administrador"
+                       : "Usuario"}
                     </span>
 
                     {usuario.role === "usuario" && (
@@ -837,17 +881,19 @@ const UsuariosPage = () => {
                     )}
 
                     <div className="flex gap-1">
-                      <Button
-                        onClick={() => handleEdit(usuario)}
-                        variant="ghost"
-                        className="text-yellow-400 hover:text-yellow-300 hover:bg-yellow-500/10"
-                        title="Editar"
-                        data-testid={`edit-user-${usuario.id}`}
-                      >
-                        <Edit className="w-4 h-4" />
-                      </Button>
+                      {canManageUser(usuario) && (
+                        <Button
+                          onClick={() => handleEdit(usuario)}
+                          variant="ghost"
+                          className="text-yellow-400 hover:text-yellow-300 hover:bg-yellow-500/10"
+                          title="Editar"
+                          data-testid={`edit-user-${usuario.id}`}
+                        >
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                      )}
 
-                      {usuario.id !== currentUser?.id && (
+                      {canManageUser(usuario) && (
                         <Button
                           onClick={() => handleDelete(usuario.id)}
                           variant="ghost"

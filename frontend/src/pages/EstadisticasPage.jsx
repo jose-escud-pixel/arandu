@@ -85,7 +85,7 @@ const EstadisticasPage = () => {
     if (estado) params.set("estado", estado);
     if (logoFilter !== "todas") params.set("logo_tipo", logoFilter);
     const qs = params.toString();
-    return `/admin/presupuestos${qs ? `?${qs}` : ""}`;
+    return `/sistema/presupuestos${qs ? `?${qs}` : ""}`;
   };
 
   return (
@@ -93,7 +93,7 @@ const EstadisticasPage = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
-          <Link to="/admin/presupuestos" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2">
+          <Link to="/sistema/presupuestos" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2">
             <ArrowLeft className="w-4 h-4" />
             Volver a Presupuestos
           </Link>
@@ -335,7 +335,7 @@ const EstadisticasPage = () => {
                     const data = emp.estados[s.key];
                     if (!data) return null;
                     return (
-                      <Link key={s.key} to={`/admin/presupuestos?empresa=${emp.empresa_id}&estado=${s.key}`}>
+                      <Link key={s.key} to={`/sistema/presupuestos?empresa=${emp.empresa_id}&estado=${s.key}`}>
                         <span className={`${s.color} px-2 py-1 rounded text-xs font-medium cursor-pointer hover:opacity-80`}>
                           {s.label}: {data.count}
                           {data.monto_pyg > 0 && ` (₲${formatNumber(data.monto_pyg)})`}
@@ -457,7 +457,7 @@ const EstadisticasPage = () => {
                       {prov.presupuestos.map((det, dIdx) => (
                         <div key={dIdx} className="flex items-center justify-between text-sm">
                           <div className="flex items-center gap-2">
-                            <Link to={`/admin/presupuestos?empresa=${det.presupuesto_id}`} className="text-arandu-blue hover:underline">
+                            <Link to={`/sistema/presupuestos?empresa=${det.presupuesto_id}`} className="text-arandu-blue hover:underline">
                               {det.numero}
                             </Link>
                             <span className="text-slate-500">{det.empresa}</span>

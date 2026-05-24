@@ -4,7 +4,7 @@ import uuid
 from typing import List, Optional
 
 from config import db
-from auth import require_authenticated, has_permission, log_auditoria, get_logos_acceso
+from auth import require_authenticated, has_permission, log_auditoria, get_logos_acceso, apply_logo_filter, is_forbidden
 from models.schemas import FacturaCreate, FacturaResponse
 from routes.cotizaciones import tipo_cambio_usd_sugerido
 
@@ -17,6 +17,24 @@ router = APIRouter()
 
 def _numero_doc_normalizado(numero: Optional[str]) -> str:
     return "".join((numero or "").strip().lower().split())
+
+
+async def _generar_numero_boleta(logo_tipo: str) -> str:
+    """
+    Genera un número de boleta único y no repetible usando un contador atómico en MongoDB.
+    Formato: BOL-YYYYMM-NNNNNN (ej: BOL-202605-000001)
+    El contador es por (logo_tipo, periodo YYYYMM).
+    """
+    periodo = datetime.now(timezone.utc).strftime("%Y%m")
+    key = f"{logo_tipo}:{periodo}"
+    result = await db.contadores.find_one_and_update(
+        {"_id": f"boleta:{key}"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True,  # motor usa ReturnDocument.AFTER equivalent
+    )
+    seq = result.get("seq", 1)
+    return f"BOL-{periodo}-{str(seq).zfill(6)}"
 
 
 async def _ensure_factura_numero_unico(doc_data: dict, ignore_id: Optional[str] = None):
@@ -71,16 +89,18 @@ async def get_facturas(
     tipo: Optional[str] = None,          # emitida | recibida
     estado: Optional[str] = None,        # pendiente | pagada | anulada
     mes: Optional[str] = None,           # YYYY-MM  → filtra por fecha
+    modo_boleta: Optional[str] = None,   # "con_factura" | "sin_factura" | None=todas
+    incluir_eliminadas: Optional[bool] = False,  # True = mostrar también las eliminadas (para reportes)
     user: dict = Depends(require_authenticated)
 ):
     if not has_permission(user, "facturas.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso para ver facturas")
     query = {}
-    logos_acceso = await get_logos_acceso(user)
-    if logos_acceso is not None:
-        query["logo_tipo"] = {"$in": logos_acceso}
-    elif logo_tipo and logo_tipo != "todas":
-        query["logo_tipo"] = logo_tipo
+    logo_q: dict = {}
+    await apply_logo_filter(logo_q, user, logo_tipo if logo_tipo and logo_tipo != "todas" else None)
+    if is_forbidden(logo_q):
+        return []
+    query.update(logo_q)
     if tipo and tipo != "todas":
         query["tipo"] = tipo
     if estado and estado != "todas":
@@ -88,6 +108,13 @@ async def get_facturas(
     if mes:
         # Filtra facturas cuya fecha empieza con YYYY-MM
         query["fecha"] = {"$regex": f"^{mes}"}
+    if modo_boleta == "con_factura":
+        query["sin_factura"] = {"$ne": True}
+    elif modo_boleta == "sin_factura":
+        query["sin_factura"] = True
+    # Por defecto excluir eliminadas; solo mostrarlas si se pide explícitamente (reportes)
+    if not incluir_eliminadas:
+        query["eliminada"] = {"$ne": True}
     facturas = await db.facturas.find(query, {"_id": 0}).sort("fecha", -1).to_list(1000)
     # Enriquecemos con el nombre actual de la empresa vinculada (apodo) para
     # que cualquier cambio en empresas se refleje sin tocar las facturas.
@@ -210,8 +237,25 @@ async def create_factura(data: FacturaCreate, user: dict = Depends(require_authe
     now = datetime.now(timezone.utc).isoformat()
     doc_data = data.dict()
     doc_data = await _asegurar_tc_fiscal_factura(doc_data)
-    await _ensure_factura_numero_unico(doc_data)
-    doc_data["numero_normalizado"] = _numero_doc_normalizado(doc_data.get("numero"))
+
+    if doc_data.get("sin_factura"):
+        # Boleta: auto-generar número único, no requiere timbrado, no afecta IVA fiscal
+        numero_boleta = await _generar_numero_boleta(doc_data.get("logo_tipo", "arandujar"))
+        doc_data["numero_boleta"] = numero_boleta
+        doc_data["numero"] = numero_boleta  # usar boleta como identificador de display
+        doc_data["numero_normalizado"] = _numero_doc_normalizado(numero_boleta)
+        # Limpiar campos de timbrado si vinieron por error
+        doc_data["nro_timbrado"] = None
+        doc_data["fecha_inicio_timbrado"] = None
+        doc_data["fecha_vigencia_timbrado"] = None
+        doc_data["punto_expedicion"] = None
+    else:
+        # Factura normal: validar número único y timbrado
+        if not doc_data.get("numero"):
+            raise HTTPException(status_code=400, detail="El número de factura es requerido")
+        await _ensure_factura_numero_unico(doc_data)
+        doc_data["numero_normalizado"] = _numero_doc_normalizado(doc_data.get("numero"))
+
     if _tiene_productos_vinculados(doc_data) and not has_permission(user, "facturas.afectar_stock"):
         doc_data["afecta_stock"] = True
     # Si se crea ya pagada y se proveyó cuenta, armamos el array pagos[]
@@ -239,8 +283,10 @@ async def create_factura(data: FacturaCreate, user: dict = Depends(require_authe
     })
     await db.facturas.insert_one(doc)
     await _registrar_stock_factura(doc, "salida", "factura", user)
+    ref = doc.get("numero_boleta") or doc.get("numero") or "-"
+    tipo_label = "Boleta" if doc.get("sin_factura") else "Factura"
     await log_auditoria(user, "facturas", "crear_factura",
-                        f"Factura {data.numero} ({data.tipo}) creada")
+                        f"{tipo_label} {ref} ({data.tipo}) creada")
     return {**doc, "_id": None}
 
 
@@ -253,8 +299,9 @@ async def update_factura(factura_id: str, data: FacturaCreate, user: dict = Depe
         raise HTTPException(status_code=404, detail="Factura no encontrada")
     update_data = data.dict()
     update_data = await _asegurar_tc_fiscal_factura(update_data)
-    await _ensure_factura_numero_unico(update_data, ignore_id=factura_id)
-    update_data["numero_normalizado"] = _numero_doc_normalizado(update_data.get("numero"))
+    if not update_data.get("sin_factura"):
+        await _ensure_factura_numero_unico(update_data, ignore_id=factura_id)
+    update_data["numero_normalizado"] = _numero_doc_normalizado(update_data.get("numero") or fac.get("numero_boleta", ""))
     if (_tiene_productos_vinculados(update_data) or _tiene_productos_vinculados(fac)) and not has_permission(user, "facturas.afectar_stock"):
         update_data["afecta_stock"] = True
     # Si se está marcando como pagada (estaba pendiente o sin pagos) y se dio cuenta,
@@ -599,15 +646,47 @@ async def delete_factura(factura_id: str, user: dict = Depends(require_authentic
     fac = await db.facturas.find_one({"id": factura_id}, {"_id": 0})
     if not fac:
         raise HTTPException(status_code=404, detail="Factura no encontrada")
+
     # Limpiar recibos vinculados a pagos de esta factura
     for pago in (fac.get("pagos") or []):
         if pago.get("recibo_id"):
             await db.recibos.delete_one({"id": pago["recibo_id"]})
+
+    # Revertir stock SIN dejar rastro en historial:
+    # 1. Eliminar los movimientos de salida originales vinculados a esta factura
+    # 2. Ajustar el stock directamente (sin registrar un movimiento nuevo)
     if _debe_afectar_stock(fac):
-        await _registrar_stock_factura(fac, "entrada", "reversion_factura", user)
-    await db.facturas.delete_one({"id": factura_id})
+        for item in (fac.get("conceptos") or []):
+            producto_id = item.get("producto_id")
+            cantidad = float(item.get("cantidad") or 0)
+            if not producto_id or cantidad <= 0:
+                continue
+            # Borrar los movimientos de salida de esta factura
+            await db.movimientos_stock.delete_many({
+                "producto_id": producto_id,
+                "referencia_id": factura_id,
+                "referencia_tipo": "factura",
+            })
+            # Restaurar stock directamente sin generar nuevo movimiento
+            await db.productos.update_one(
+                {"id": producto_id},
+                {"$inc": {"stock_actual": cantidad},
+                 "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
+            )
+
+    # Soft delete: marcar como eliminada, NO borrar el documento
+    now = datetime.now(timezone.utc).isoformat()
+    await db.facturas.update_one(
+        {"id": factura_id},
+        {"$set": {
+            "eliminada": True,
+            "eliminada_at": now,
+            "eliminada_por": user.get("name", user.get("id", "sistema")),
+            "eliminada_por_id": user.get("id"),
+        }}
+    )
     await log_auditoria(user, "facturas", "eliminar_factura",
-                        f"Factura {factura_id} eliminada")
+                        f"Factura {fac.get('numero', factura_id)} eliminada por {user.get('name', '?')}")
     return {"ok": True}
 
 
@@ -625,11 +704,11 @@ async def get_resumen_facturas(
     if not has_permission(user, "facturas.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso")
     query = {}
-    logos_acceso = await get_logos_acceso(user)
-    if logos_acceso is not None:
-        query["logo_tipo"] = {"$in": logos_acceso}
-    elif logo_tipo and logo_tipo != "todas":
-        query["logo_tipo"] = logo_tipo
+    logo_q: dict = {}
+    await apply_logo_filter(logo_q, user, logo_tipo if logo_tipo and logo_tipo != "todas" else None)
+    if is_forbidden(logo_q):
+        return {"emitidas": {"cantidad": 0, "monto_pyg": 0}, "emitidas_pagadas": {"cantidad": 0, "monto_pyg": 0}, "emitidas_pendientes": {"cantidad": 0, "monto_pyg": 0}, "recibidas": {"cantidad": 0, "monto_pyg": 0}, "recibidas_pagadas": {"cantidad": 0, "monto_pyg": 0}, "recibidas_pendientes": {"cantidad": 0, "monto_pyg": 0}}
+    query.update(logo_q)
     if mes:
         query["fecha"] = {"$regex": f"^{mes}"}
 

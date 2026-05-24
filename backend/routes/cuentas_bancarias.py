@@ -16,7 +16,7 @@ from typing import List, Optional
 import uuid
 
 from config import db
-from auth import require_authenticated, has_permission, get_logos_acceso
+from auth import require_authenticated, has_permission, get_logos_acceso, apply_logo_filter, is_forbidden
 
 router = APIRouter()
 
@@ -50,11 +50,11 @@ async def get_cuentas_bancarias(
     user: dict = Depends(require_authenticated),
 ):
     query = {}
-    logos_acceso = await get_logos_acceso(user)
-    if logos_acceso is not None:
-        query["logo_tipo"] = {"$in": logos_acceso}
-    elif logo_tipo and logo_tipo != "todas":
-        query["logo_tipo"] = logo_tipo
+    logo_q: dict = {}
+    await apply_logo_filter(logo_q, user, logo_tipo if logo_tipo and logo_tipo != "todas" else None)
+    if is_forbidden(logo_q):
+        return []
+    query.update(logo_q)
 
     if moneda:
         query["moneda"] = moneda
@@ -77,14 +77,11 @@ async def get_saldos_cuentas(
 ):
     """Saldo real por cuenta = saldo_inicial + movimientos.
     Movimientos sin cuenta_id asignada van a la cuenta predeterminada de esa moneda."""
-    logos_acceso = await get_logos_acceso(user)
-
     # ── Cuentas accesibles ───────────────────────────────────────
     query_cuentas: dict = {}
-    if logos_acceso is not None:
-        query_cuentas["logo_tipo"] = {"$in": logos_acceso}
-    elif logo_tipo and logo_tipo != "todas":
-        query_cuentas["logo_tipo"] = logo_tipo
+    await apply_logo_filter(query_cuentas, user, logo_tipo if logo_tipo and logo_tipo != "todas" else None)
+    if is_forbidden(query_cuentas):
+        return []
 
     cuentas = await db.cuentas_bancarias.find(query_cuentas, {"_id": 0}).sort("nombre", 1).to_list(500)
     if not cuentas:

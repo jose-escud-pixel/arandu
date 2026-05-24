@@ -7,7 +7,7 @@ import {
   AlertTriangle, FileText, DollarSign, Building2, Filter,
   CreditCard, Receipt, ExternalLink, Banknote, Package, ToggleLeft, ToggleRight,
   Wallet, HandCoins, Eye, ChevronRight, ChevronLeft, Loader2,
-  CheckCircle, AlertCircle, Star, UserCheck, UserX, Pencil
+  CheckCircle, AlertCircle, Star, UserCheck, UserX, Pencil, Shield
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -75,6 +75,8 @@ const emptyCompra = () => ({
   tipo_pago: "contado",
   tiene_factura: false,
   numero_factura: "",
+  nro_timbrado: "",
+  fecha_vigencia_timbrado: "",
   solo_iva: false,
   monto_total: "",
   moneda: "PYG",
@@ -512,7 +514,7 @@ const EgresosPage = () => {
   const [editingCostoId, setEditingCostoId] = useState(null);
   const [costoFormData, setCostoFormData] = useState(emptyCostoForm());
   const [showPagoCostoModal, setShowPagoCostoModal] = useState(null);
-  const [pagoCostoForm, setPagoCostoForm] = useState({ monto_pagado: "", fecha_pago: hoy(), notas: "", tiene_factura: false, nro_factura: "", cuenta_id: "", cuenta_nombre: "" });
+  const [pagoCostoForm, setPagoCostoForm] = useState({ monto_pagado: "", fecha_pago: hoy(), notas: "", tiene_factura: false, nro_factura: "", nro_timbrado: "", fecha_vigencia_timbrado: "", cuenta_id: "", cuenta_nombre: "" });
 
   // ── Sueldos state ───────────────────────────────────────────────────────────
   const emptySueldoForm = () => ({ periodo: filtroMes, moneda: "PYG", tipo_cambio: "", fecha_pago: hoy(), descuento_ips: "", notas: "", descuentos_adicionales: [] });
@@ -864,6 +866,14 @@ const EgresosPage = () => {
   const handleRegistrarPagoCosto = async (e) => {
     e.preventDefault();
     const v = showPagoCostoModal;
+    if (pagoCostoForm.tiene_factura && !pagoCostoForm.nro_timbrado) {
+      toast.error("El número de timbrado es obligatorio cuando tiene factura");
+      return;
+    }
+    if (pagoCostoForm.tiene_factura && !pagoCostoForm.fecha_vigencia_timbrado) {
+      toast.error("La vigencia del timbrado es obligatoria cuando tiene factura");
+      return;
+    }
     const payload = {
       periodo: v.periodo || filtroMes,
       monto_pagado: parseFloat(pagoCostoForm.monto_pagado) || v.monto,
@@ -871,6 +881,8 @@ const EgresosPage = () => {
       notas: pagoCostoForm.notas || null,
       tiene_factura: pagoCostoForm.tiene_factura,
       nro_factura: pagoCostoForm.tiene_factura ? (pagoCostoForm.nro_factura || null) : null,
+      nro_timbrado: pagoCostoForm.tiene_factura ? (pagoCostoForm.nro_timbrado || null) : null,
+      fecha_vigencia_timbrado: pagoCostoForm.tiene_factura ? (pagoCostoForm.fecha_vigencia_timbrado || null) : null,
       cuenta_id: pagoCostoForm.cuenta_id || null,
       cuenta_nombre: pagoCostoForm.cuenta_nombre || null,
     };
@@ -1514,6 +1526,8 @@ const EgresosPage = () => {
       tipo_pago: c.tipo_pago || "contado",
       tiene_factura: c.tiene_factura || false,
       numero_factura: c.numero_factura || "",
+      nro_timbrado: c.nro_timbrado || "",
+      fecha_vigencia_timbrado: c.fecha_vigencia_timbrado || "",
       solo_iva: !!c.solo_iva,
       monto_total: c.monto_total ?? "",
       moneda: c.moneda || "PYG",
@@ -1545,6 +1559,14 @@ const EgresosPage = () => {
       toast.error("El monto total debe ser mayor a 0");
       return;
     }
+    if (compraForm.tiene_factura && !compraForm.nro_timbrado) {
+      toast.error("El número de timbrado es obligatorio cuando tiene factura");
+      return;
+    }
+    if (compraForm.tiene_factura && !compraForm.fecha_vigencia_timbrado) {
+      toast.error("La vigencia del timbrado es obligatoria cuando tiene factura");
+      return;
+    }
     const itemsNorm = (compraForm.items || []).map(it => ({
       ...it,
       cantidad: Number(it.cantidad) || 1,
@@ -1564,6 +1586,8 @@ const EgresosPage = () => {
       cuenta_nombre: compraForm.solo_iva ? null : compraForm.cuenta_nombre,
       fecha_pago: compraForm.tipo_pago === "contado" ? (compraForm.fecha_pago || compraForm.fecha) : null,
       tipo_cambio: compraForm.tipo_cambio !== "" ? Number(compraForm.tipo_cambio) : null,
+      nro_timbrado: compraForm.tiene_factura ? (compraForm.nro_timbrado || null) : null,
+      fecha_vigencia_timbrado: compraForm.tiene_factura ? (compraForm.fecha_vigencia_timbrado || null) : null,
     };
     try {
       const url = editingCompra ? `${API}/admin/compras/${editingCompra.id}` : `${API}/admin/compras`;
@@ -1819,7 +1843,7 @@ const EgresosPage = () => {
 
         {/* Header */}
         <div className="mb-6">
-          <Link to="/admin" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-3 text-sm w-fit">
+          <Link to="/sistema" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-3 text-sm w-fit">
             <ArrowLeft className="w-4 h-4" /> Volver al Dashboard
           </Link>
           <div className="flex items-center gap-3">
@@ -2056,12 +2080,7 @@ const EgresosPage = () => {
                                         <Banknote className="w-3.5 h-3.5" /> Pagar
                                       </button>
                                     )}
-                                    {hasPermission("compras.editar") && (
-                                      <button onClick={() => openEditCompra(c)}
-                                        className="text-slate-400 hover:text-yellow-400 transition-colors p-1">
-                                        <Edit className="w-4 h-4" />
-                                      </button>
-                                    )}
+{/* editar compra deshabilitado */}
                                     {hasPermission("compras.eliminar") && (
                                       <button onClick={() => handleDeleteCompra(c.id)}
                                         className="text-slate-400 hover:text-red-400 transition-colors p-1">
@@ -2095,9 +2114,7 @@ const EgresosPage = () => {
                               <td className="px-4 py-3 text-right text-rose-300 font-bold">{fmt(n.monto, n.moneda)}</td>
                               <td className="px-4 py-3 text-right">
                                 <button onClick={(e) => { e.stopPropagation(); setSelectedNotaCompraView(n); }} className="p-1 text-slate-400 hover:text-blue-300" title="Ver nota"><Eye className="w-4 h-4" /></button>
-                                {hasPermission("notas_credito.editar") && (
-                                  <button onClick={(e) => { e.stopPropagation(); openEditNotaCompra(n); }} className="p-1 text-slate-400 hover:text-rose-300"><Edit className="w-4 h-4" /></button>
-                                )}
+                                {/* editar nota crédito deshabilitado — para corregir, eliminar y recrear */}
                                 {hasPermission("notas_credito.eliminar") && (
                                   <button onClick={(e) => { e.stopPropagation(); handleDeleteNotaCompra(n.id); }} className="p-1 text-slate-400 hover:text-red-300"><Trash2 className="w-4 h-4" /></button>
                                 )}
@@ -2208,7 +2225,7 @@ const EgresosPage = () => {
                                   )
                                 ) : (
                                   hasPermission("costos_fijos.editar") && (
-                                    <button onClick={() => { setPagoCostoForm({ monto_pagado: v.monto, fecha_pago: hoy(), notas: "", tiene_factura: false, nro_factura: "", cuenta_id: "", cuenta_nombre: "" }); setShowPagoCostoModal(v); }}
+                                    <button onClick={() => { setPagoCostoForm({ monto_pagado: v.monto, fecha_pago: hoy(), notas: "", tiene_factura: false, nro_factura: "", nro_timbrado: "", fecha_vigencia_timbrado: "", cuenta_id: "", cuenta_nombre: "" }); setShowPagoCostoModal(v); }}
                                       className="flex items-center gap-1 mx-auto px-3 py-1 bg-emerald-600/30 text-emerald-300 rounded-lg hover:bg-emerald-600/50 transition-colors text-xs">
                                       <Check className="w-3.5 h-3.5" /> Pagar
                                     </button>
@@ -2217,10 +2234,7 @@ const EgresosPage = () => {
                               </td>
                               <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                                 <div className="flex items-center justify-center gap-2">
-                                  {hasPermission("costos_fijos.editar") && (
-                                    <button onClick={() => { const src=costos.find(c=>c.id===v.costo_id)||v; if(src){ setEditingCostoId(src.id||src.costo_id); setCostoFormData({logo_tipo:src.logo_tipo||"arandujar",nombre:src.nombre||"",descripcion:src.descripcion||"",categoria:src.categoria||"",monto:v.monto||src.monto||"",moneda:v.moneda||src.moneda||"PYG",tipo_cambio:v.tipo_cambio||src.tipo_cambio||"",frecuencia:src.frecuencia||"mensual",dia_vencimiento:src.dia_vencimiento||1,fecha_inicio:costoFechaVigenciaEdicion(),fecha_fin:src.fecha_fin||"",activo:src.activo!==false,notas:src.notas||""}); setShowCostoForm(true); } }}
-                                      className="text-slate-400 hover:text-blue-400 transition-colors"><Edit className="w-4 h-4" /></button>
-                                  )}
+{/* editar costo fijo deshabilitado */}
                                   {hasPermission("costos_fijos.eliminar") && (
                                     <button onClick={() => { const src=costos.find(c=>c.id===v.costo_id)||v; if(src) handleDeleteCosto({...src, id: src.id||src.costo_id}); }}
                                       className="text-slate-400 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4" /></button>
@@ -2393,7 +2407,7 @@ const EgresosPage = () => {
                   </div>
                   <div className="bg-arandu-dark/40 border border-white/5 rounded-xl p-3 space-y-3">
                     <label className="flex items-center gap-3 cursor-pointer">
-                      <div onClick={() => setPagoCostoForm(f=>({...f, tiene_factura: !f.tiene_factura, nro_factura: ""}))}
+                      <div onClick={() => setPagoCostoForm(f=>({...f, tiene_factura: !f.tiene_factura, nro_factura: "", nro_timbrado: "", fecha_vigencia_timbrado: ""}))}
                         className={`w-10 h-6 rounded-full transition-colors flex-shrink-0 flex items-center ${pagoCostoForm.tiene_factura ? "bg-emerald-500" : "bg-slate-600"}`}>
                         <div className={`w-4 h-4 bg-white rounded-full shadow transition-transform mx-1 ${pagoCostoForm.tiene_factura ? "translate-x-4" : "translate-x-0"}`}/>
                       </div>
@@ -2403,11 +2417,26 @@ const EgresosPage = () => {
                       </div>
                     </label>
                     {pagoCostoForm.tiene_factura && (
-                      <div>
-                        <label className="text-slate-400 text-xs mb-1 block">Número de factura *</label>
-                        <input required type="text" value={pagoCostoForm.nro_factura} onChange={e=>setPagoCostoForm(f=>({...f,nro_factura:e.target.value}))}
-                          placeholder="Ej: 001-001-0000123"
-                          className="w-full bg-arandu-dark border border-emerald-500/30 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/60"/>
+                      <div className="space-y-2">
+                        <div>
+                          <label className="text-slate-400 text-xs mb-1 block">Número de factura *</label>
+                          <input required type="text" value={pagoCostoForm.nro_factura} onChange={e=>setPagoCostoForm(f=>({...f,nro_factura:e.target.value}))}
+                            placeholder="Ej: 001-001-0000123"
+                            className="w-full bg-arandu-dark border border-emerald-500/30 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/60"/>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-slate-400 text-xs mb-1 block">Nro. Timbrado</label>
+                            <input type="text" value={pagoCostoForm.nro_timbrado} onChange={e=>setPagoCostoForm(f=>({...f,nro_timbrado:e.target.value}))}
+                              placeholder="Ej: 12345678"
+                              className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/40"/>
+                          </div>
+                          <div>
+                            <label className="text-slate-400 text-xs mb-1 block">Vigencia timbrado</label>
+                            <input type="date" value={pagoCostoForm.fecha_vigencia_timbrado} onChange={e=>setPagoCostoForm(f=>({...f,fecha_vigencia_timbrado:e.target.value}))}
+                              className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/40"/>
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -3041,9 +3070,7 @@ const EgresosPage = () => {
                             </div>
                             {hasPermission("balance.editar") && (
                               <div className="flex gap-1">
-                                <button onClick={() => openEditPagoIva(pago)} className="p-1.5 text-slate-400 hover:text-amber-300" title="Editar pago IVA">
-                                  <Edit className="w-4 h-4" />
-                                </button>
+                                {/* editar pago IVA deshabilitado — para corregir, eliminar y recrear */}
                                 <button onClick={() => handleDeletePagoIva(pago.id)} className="p-1.5 text-slate-400 hover:text-red-300" title="Eliminar pago IVA">
                                   <Trash2 className="w-4 h-4" />
                                 </button>
@@ -3239,15 +3266,7 @@ const EgresosPage = () => {
                               </span>
                             </div>
                             <div className="flex flex-col gap-1" onClick={e => e.stopPropagation()}>
-                              {hasPermission("pagos_proveedores.editar") && (
-                                <button
-                                  onClick={() => openEditPagoProv(pago)}
-                                  className="text-slate-500 hover:text-yellow-400 transition-colors"
-                                  title="Editar pago"
-                                >
-                                  <Edit className="w-4 h-4" />
-                                </button>
-                              )}
+{/* editar pago proveedor deshabilitado */}
                               {hasPermission("pagos_proveedores.eliminar") && (
                                 <button
                                   onClick={() => handleDeletePagoProv(pago.id)}
@@ -3555,6 +3574,9 @@ const EgresosPage = () => {
                                   className="w-full bg-transparent border border-white/10 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-orange-500/50"
                                   placeholder="Descripción..."
                                 />
+                                {item.producto_sku && (
+                                  <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">SKU: {item.producto_sku}</span>
+                                )}
                               </td>
                               <td className="px-1 py-1.5">
                                 <input
@@ -3768,7 +3790,22 @@ const EgresosPage = () => {
                       <Input value={compraForm.numero_factura}
                         onChange={e => setCompraForm(p => ({ ...p, numero_factura: e.target.value }))}
                         className="bg-arandu-dark border-white/10 text-white"
-                        placeholder="Número de factura" />
+                        placeholder="Número de factura (Ej: 001-001-0000123)" />
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-slate-400 text-xs mb-1 block">Nro. Timbrado</label>
+                          <Input value={compraForm.nro_timbrado}
+                            onChange={e => setCompraForm(p => ({ ...p, nro_timbrado: e.target.value }))}
+                            className="bg-arandu-dark border-white/10 text-white"
+                            placeholder="Ej: 12345678" />
+                        </div>
+                        <div>
+                          <label className="text-slate-400 text-xs mb-1 block">Vigencia timbrado</label>
+                          <Input type="date" value={compraForm.fecha_vigencia_timbrado}
+                            onChange={e => setCompraForm(p => ({ ...p, fecha_vigencia_timbrado: e.target.value }))}
+                            className="bg-arandu-dark border-white/10 text-white" />
+                        </div>
+                      </div>
                       <label className="flex items-start gap-3 cursor-pointer rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
                         <input type="checkbox" checked={compraForm.solo_iva}
                           onChange={e => setCompraForm(p => ({
@@ -3849,12 +3886,15 @@ const EgresosPage = () => {
                   .map(prod => (
                     <button key={prod.id} type="button"
                       onClick={() => {
+                        const ivaFromTipo = prod.iva_tipo === "exenta" ? 0 : prod.iva_tipo === "5" ? 5 : 10;
                         const newItem = {
                           descripcion: prod.nombre,
                           cantidad: 1,
                           precio_unitario: prod.precio_costo || prod.precio_venta || "",
                           subtotal: prod.precio_costo || prod.precio_venta || 0,
                           producto_id: prod.id,
+                          producto_sku: prod.sku || "",
+                          iva: ivaFromTipo,
                         };
                         setCompraForm(p => ({ ...p, items: [...(p.items || []), newItem] }));
                         setShowProductoBrowser(false);
@@ -4332,14 +4372,7 @@ const EgresosPage = () => {
 
               {/* Editar / Eliminar */}
               <div className="flex gap-2 mb-2">
-                {hasPermission("pagos_proveedores.editar") && (
-                  <button
-                    onClick={() => openEditPagoProv(selectedPagoView)}
-                    className="flex-1 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm hover:bg-yellow-500/20 transition-all flex items-center justify-center gap-2"
-                  >
-                    <Edit className="w-4 h-4" /> Editar
-                  </button>
-                )}
+{/* editar pago proveedor deshabilitado */}
                 {hasPermission("pagos_proveedores.eliminar") && (
                   <button
                     onClick={() => handleDeletePagoProv(selectedPagoView.id)}
@@ -4431,14 +4464,7 @@ const EgresosPage = () => {
               )}
 
               <div className="flex gap-2 mb-2">
-                {hasPermission("notas_credito.editar") && (
-                  <button
-                    onClick={() => { openEditNotaCompra(selectedNotaCompraView); setSelectedNotaCompraView(null); }}
-                    className="flex-1 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm hover:bg-yellow-500/20 transition-all flex items-center justify-center gap-2"
-                  >
-                    <Edit className="w-4 h-4" /> Editar
-                  </button>
-                )}
+                {/* editar nota crédito deshabilitado — para corregir, eliminar y recrear */}
                 {hasPermission("notas_credito.eliminar") && (
                   <button
                     onClick={() => { handleDeleteNotaCompra(selectedNotaCompraView.id); setSelectedNotaCompraView(null); }}
@@ -4544,6 +4570,17 @@ const EgresosPage = () => {
                     <p className="text-white text-sm font-medium">{selectedCompraView.numero_factura}</p>
                   </div>
                 )}
+                {selectedCompraView.nro_timbrado && (
+                  <div className="bg-arandu-dark/60 rounded-xl p-3">
+                    <p className="text-slate-500 text-xs mb-0.5 flex items-center gap-1">
+                      <Shield className="w-3 h-3" /> Timbrado
+                    </p>
+                    <p className="text-white text-sm font-medium">{selectedCompraView.nro_timbrado}</p>
+                    {selectedCompraView.fecha_vigencia_timbrado && (
+                      <p className="text-slate-500 text-xs mt-0.5">Vigencia: {selectedCompraView.fecha_vigencia_timbrado}</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Monto destacado */}
@@ -4591,7 +4628,10 @@ const EgresosPage = () => {
                   <div className="space-y-1.5 max-h-32 overflow-y-auto">
                     {selectedCompraView.items.map((it, idx) => (
                       <div key={idx} className="flex justify-between gap-2 text-xs border-b border-white/5 last:border-0 pb-1.5 last:pb-0">
-                        <span className="text-slate-300 flex-1 truncate">{it.descripcion}</span>
+                        <span className="text-slate-300 flex-1 min-w-0">
+                          <span className="truncate block">{it.descripcion}</span>
+                          {it.producto_sku && <span className="text-[10px] text-slate-500 font-mono">SKU: {it.producto_sku}</span>}
+                        </span>
                         <span className="text-slate-500 whitespace-nowrap">×{it.cantidad}</span>
                         <span className="text-slate-200 whitespace-nowrap font-medium">{fmt(it.subtotal || (it.cantidad * it.precio_unitario), selectedCompraView.moneda)}</span>
                       </div>
@@ -4625,14 +4665,7 @@ const EgresosPage = () => {
               )}
 
               <div className="flex gap-2 mb-2">
-                {hasPermission("compras.editar") && (
-                  <button
-                    onClick={() => { openEditCompra(selectedCompraView); setSelectedCompraView(null); }}
-                    className="flex-1 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm hover:bg-yellow-500/20 transition-all flex items-center justify-center gap-2"
-                  >
-                    <Edit className="w-4 h-4" /> Editar
-                  </button>
-                )}
+{/* editar compra deshabilitado */}
                 {hasPermission("compras.eliminar") && (
                   <button
                     onClick={() => { handleDeleteCompra(selectedCompraView.id); setSelectedCompraView(null); }}
@@ -4853,36 +4886,7 @@ const EgresosPage = () => {
               )}
 
               <div className="flex gap-2 mb-2">
-                {hasPermission("costos_fijos.editar") && (
-                  <button
-                    onClick={() => {
-                      const src = costos.find(c => c.id === selectedCostoView.costo_id) || selectedCostoView;
-                      if (src) {
-                        setEditingCostoId(src.id || src.costo_id);
-                        setCostoFormData({
-                          logo_tipo: src.logo_tipo || "arandujar",
-                          nombre: src.nombre || "",
-                          descripcion: src.descripcion || "",
-                          categoria: src.categoria || "",
-                          monto: src.monto || "",
-                          moneda: src.moneda || "PYG",
-                          tipo_cambio: src.tipo_cambio || "",
-                          frecuencia: src.frecuencia || "mensual",
-                          dia_vencimiento: src.dia_vencimiento || 1,
-                          fecha_inicio: costoFechaVigenciaEdicion(),
-                          fecha_fin: src.fecha_fin || "",
-                          activo: src.activo !== false,
-                          notas: src.notas || "",
-                        });
-                        setShowCostoForm(true);
-                        setSelectedCostoView(null);
-                      }
-                    }}
-                    className="flex-1 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm hover:bg-yellow-500/20 transition-all flex items-center justify-center gap-2"
-                  >
-                    <Edit className="w-4 h-4" /> Editar
-                  </button>
-                )}
+{/* editar costo fijo deshabilitado */}
                 {hasPermission("costos_fijos.eliminar") && (
                   <button
                     onClick={() => {

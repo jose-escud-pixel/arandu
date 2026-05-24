@@ -102,7 +102,7 @@ const AuditoriaPage = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
-          <Link to="/admin" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2">
+          <Link to="/sistema" className="text-slate-400 hover:text-arandu-blue flex items-center gap-2 mb-2">
             <ArrowLeft className="w-4 h-4" />
             Volver al Dashboard
           </Link>

@@ -53,7 +53,7 @@ export default function StockHistorialPage() {
   return (
     <div className="min-h-screen bg-arandu-dark text-white">
       <div className="border-b border-white/10 px-6 py-4">
-        <Link to="/admin" className="text-slate-400 hover:text-white flex items-center gap-2 text-sm w-fit mb-3">
+        <Link to="/sistema" className="text-slate-400 hover:text-white flex items-center gap-2 text-sm w-fit mb-3">
           <ArrowLeft className="w-4 h-4" /> Volver al Dashboard
         </Link>
         <h1 className="font-heading text-2xl text-white flex items-center gap-2">

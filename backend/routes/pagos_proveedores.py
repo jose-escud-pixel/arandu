@@ -5,7 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 
 from config import db
-from auth import require_authenticated, has_permission, log_auditoria, get_logos_acceso
+from auth import require_authenticated, has_permission, log_auditoria, get_logos_acceso, apply_logo_filter, is_forbidden
 
 router = APIRouter()
 
@@ -196,11 +196,11 @@ async def get_pagos_proveedores(
         raise HTTPException(status_code=403, detail="Sin permiso")
 
     query = {}
-    logos_acceso = await get_logos_acceso(user)
-    if logos_acceso is not None:
-        query["logo_tipo"] = {"$in": logos_acceso}
-    elif logo_tipo and logo_tipo != "todas":
-        query["logo_tipo"] = logo_tipo
+    logo_q: dict = {}
+    await apply_logo_filter(logo_q, user, logo_tipo if logo_tipo and logo_tipo != "todas" else None)
+    if is_forbidden(logo_q):
+        return []
+    query.update(logo_q)
     if proveedor_id:
         query["proveedor_id"] = proveedor_id
     # Filtro por período (sobre fecha_pago para pagados, fecha_vencimiento para pendientes)
