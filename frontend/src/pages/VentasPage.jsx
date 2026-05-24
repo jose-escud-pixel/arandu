@@ -1683,6 +1683,8 @@ export default function VentasPage() {
                 </table>
 	          </div>
 	        )}
+          </div>
+        )}
 
 	        {/* ── Tab: Notas de crédito ────────────────────────────── */}
 	        {tab === "notas" && (
@@ -1744,8 +1746,6 @@ export default function VentasPage() {
 	            )}
 	          </div>
 	        )}
-	      </div>
-        )}
       </div>
 
       {/* Carga de documento presupuesto */}

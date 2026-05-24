@@ -13,7 +13,13 @@ router = APIRouter()
 def es_due_en_periodo(costo: dict, periodo: str) -> bool:
     try:
         year, month = int(periodo[:4]), int(periodo[5:7])
-        fecha_inicio = costo.get("fecha_inicio", "")
+        # Usar la fecha_inicio más antigua del historial como inicio real de la suscripción.
+        # Si se editó el costo y se cambió fecha_inicio, el documento queda con la nueva fecha,
+        # pero el historial_montos conserva la original. Así los meses anteriores al cambio
+        # de monto siguen apareciendo en la lista de vencimientos.
+        historial = costo.get("historial_montos") or []
+        fechas_historial = [h.get("fecha_inicio") for h in historial if h.get("fecha_inicio")]
+        fecha_inicio = min(fechas_historial) if fechas_historial else costo.get("fecha_inicio", "")
         if not fecha_inicio:
             return False
         fi_year, fi_month = int(fecha_inicio[:4]), int(fecha_inicio[5:7])

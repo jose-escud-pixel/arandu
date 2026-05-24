@@ -10,6 +10,68 @@ from models.schemas import PresupuestoCreate, PresupuestoResponse, CostosReales
 router = APIRouter()
 
 
+def _to_float_or_none(value):
+    """Convierte un valor a float o None. Maneja strings vacíos y None."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_presupuesto(doc: dict) -> dict:
+    """
+    Normaliza presupuestos viejos para que cumplan con el schema actual de Pydantic.
+    Agrega valores por defecto en campos que pueden faltar en documentos históricos
+    y convierte strings vacíos en campos numéricos opcionales a None.
+    """
+    # Campos requeridos sin default: asegurar valores mínimos
+    if not doc.get("logo_tipo"):
+        doc["logo_tipo"] = "arandujar"
+    if not doc.get("numero"):
+        doc["numero"] = f"S/N-{str(doc.get('id', ''))[:8].upper()}"
+    if not doc.get("estado"):
+        doc["estado"] = "borrador"
+    if doc.get("validez_dias") is None:
+        doc["validez_dias"] = 15
+    if doc.get("subtotal") is None:
+        doc["subtotal"] = 0.0
+    if doc.get("iva") is None:
+        doc["iva"] = 0.0
+    if doc.get("total") is None:
+        doc["total"] = 0.0
+    if not doc.get("created_at"):
+        doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    if "forma_pago" not in doc:
+        doc["forma_pago"] = "contado"
+    if "modo" not in doc:
+        doc["modo"] = "libre"
+
+    # tipo_cambio del documento: string vacío → None
+    if doc.get("tipo_cambio") == "" or doc.get("tipo_cambio") is None:
+        tc_val = _to_float_or_none(doc.get("tipo_cambio"))
+        doc["tipo_cambio"] = tc_val
+
+    # Normalizar items
+    for item in doc.get("items") or []:
+        if not item.get("descripcion"):
+            item["descripcion"] = ""
+        if item.get("costo") is None:
+            item["costo"] = 0.0
+        if item.get("precio_unitario") is None:
+            item["precio_unitario"] = 0.0
+        if item.get("subtotal") is None:
+            item["subtotal"] = 0.0
+        # Campos float opcionales: strings vacíos → None
+        for fld in ("tipo_cambio_item",):
+            raw = item.get(fld)
+            if raw == "" or (raw is not None and not isinstance(raw, (int, float))):
+                item[fld] = _to_float_or_none(raw)
+
+    return doc
+
+
 async def get_next_presupuesto_number():
     year = datetime.now().year
     # Busca el mayor contador ya usado este año y devuelve el siguiente disponible.
@@ -133,8 +195,8 @@ async def get_presupuestos(empresa_id: Optional[str] = None, estado: Optional[st
         emp = empresa_map.get(p["empresa_id"], {})
         p["empresa_nombre"] = emp.get("nombre", "Desconocida")
         p["empresa_ruc"] = emp.get("ruc")
-        if "forma_pago" not in p:
-            p["forma_pago"] = "contado"
+        # Normalizar campos para que documentos viejos no fallen la validación de Pydantic
+        _normalize_presupuesto(p)
         p["facturas_count"] = facturas_count_map.get(p["id"], 0)
     return presupuestos
 
@@ -145,13 +207,14 @@ async def get_presupuesto(presupuesto_id: str, user: dict = Depends(require_auth
     presupuesto = await db.presupuestos.find_one({"id": presupuesto_id}, {"_id": 0})
     if not presupuesto:
         raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
-    if not can_access_empresa(user, presupuesto["empresa_id"]):
+    # Admin ve todos los presupuestos (igual que el endpoint de lista); otros roles se verifican
+    if user.get("role") != "admin" and not can_access_empresa(user, presupuesto["empresa_id"]):
         raise HTTPException(status_code=403, detail="No tiene acceso a esta empresa")
     empresa = await db.empresas.find_one({"id": presupuesto["empresa_id"]}, {"_id": 0})
     presupuesto["empresa_nombre"] = empresa["nombre"] if empresa else "Desconocida"
     presupuesto["empresa_ruc"] = empresa.get("ruc") if empresa else None
-    if "forma_pago" not in presupuesto:
-        presupuesto["forma_pago"] = "contado"
+    # Normalizar campos para que documentos viejos no fallen la validación de Pydantic
+    _normalize_presupuesto(presupuesto)
     return presupuesto
 
 @router.put("/admin/presupuestos/{presupuesto_id}/estado")
