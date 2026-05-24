@@ -34,7 +34,7 @@ PERMISOS_DISPONIBLES = {
     "compras": ["ver", "crear", "editar", "eliminar", "afectar_stock"],
     "recibos": ["ver", "crear", "editar", "eliminar"],
     "notas_credito": ["ver", "crear", "editar", "eliminar"],
-    "inventario_productos": ["ver", "crear", "editar", "eliminar", "crear_servicio", "stock_inicial"],
+    "inventario_productos": ["ver", "crear", "editar", "eliminar", "crear_servicio", "stock_inicial", "ajustar_stock"],
     "historial_stock": ["ver"],
     "bancos": ["ver", "crear", "editar", "eliminar"],
     "usuarios": ["ver", "crear", "editar", "eliminar"],

@@ -62,6 +62,72 @@ def _iva_incluido(monto: float, tasa: Optional[int] = 10) -> float:
     return 0.0
 
 
+def _iva_factura_emitida(doc: dict) -> float:
+    """Calcula IVA fiscal de una factura usando los ítems cuando existen."""
+    if doc.get("sin_factura"):
+        return 0.0
+    conceptos = doc.get("conceptos") or []
+    if not conceptos:
+        if doc.get("iva") is not None:
+            return float(doc.get("iva") or 0)
+        return _iva_incluido(doc.get("monto") or 0, doc.get("tasa_iva", 10))
+
+    total_iva = 0.0
+    for item in conceptos:
+        subtotal = item.get("subtotal")
+        if subtotal is None:
+            subtotal = (float(item.get("precio_unitario") or 0) * float(item.get("cantidad") or 1))
+        subtotal = float(subtotal or 0)
+        iva_tipo = str(item.get("iva_tipo") or "10").lower()
+        if iva_tipo in ("exenta", "exento", "0"):
+            continue
+        if iva_tipo == "5":
+            total_iva += subtotal / 21.0
+        else:
+            total_iva += subtotal / 11.0
+    return total_iva
+
+
+def _tasa_label_factura(doc: dict) -> str:
+    if doc.get("sin_factura"):
+        return "Exenta"
+    conceptos = doc.get("conceptos") or []
+    if not conceptos:
+        tasa = doc.get("tasa_iva", 10)
+        return "Exenta" if tasa in (0, "0", "exenta") else f"{tasa}%"
+    tasas = set()
+    for item in conceptos:
+        iva_tipo = str(item.get("iva_tipo") or "10").lower()
+        if iva_tipo in ("exenta", "exento", "0"):
+            tasas.add("Exenta")
+        elif iva_tipo == "5":
+            tasas.add("5%")
+        else:
+            tasas.add("10%")
+    if len(tasas) == 1:
+        return next(iter(tasas))
+    return "Mixta"
+
+
+def _tasa_label_compra(doc: dict) -> str:
+    items = doc.get("items") or []
+    if not items:
+        tasa = doc.get("tasa_iva", 10)
+        return "Exenta" if tasa in (0, "0", None) else f"{tasa}%"
+    tasas = set()
+    for item in items:
+        tasa = item.get("iva", 10)
+        if tasa in (0, "0", None):
+            tasas.add("Exenta")
+        elif str(tasa) == "5":
+            tasas.add("5%")
+        else:
+            tasas.add("10%")
+    if len(tasas) == 1:
+        return next(iter(tasas))
+    return "Mixta"
+
+
 def _norm_text(valor: Optional[str]) -> str:
     return " ".join((valor or "").strip().lower().split())
 
@@ -236,7 +302,7 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
         if moneda_fac == "USD":
             ingresos_usd.append({"fuente": fuente, "monto_usd": monto_efectivo})
         if pct_retencion and monto_base:
-            iva = _iva_incluido(monto_base, fac.get("tasa_iva", 10))
+            iva = _iva_factura_emitida(fac)
             retencion = iva * (pct_retencion / 100.0)
             retencion_pyg = to_pyg(retencion, moneda_fac, fac.get("tipo_cambio"))
             if retencion_pyg > 0:
@@ -251,6 +317,7 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
     # Rama 1: facturas que tienen al menos un pago del período en el array pagos[]
     fac_con_pagos = await db.facturas.find(
         {**lt_query, "tipo": "emitida", "estado": {"$in": ["pagada", "parcial"]},
+         "eliminada": {"$ne": True},
          "pagos": {"$elemMatch": {"fecha": {"$regex": mes_range(periodo)}}}},
         {"_id": 0}
     ).to_list(1000)
@@ -266,6 +333,7 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
     # Si NO tiene fecha_pago (datos viejos) → usar fecha de emisión como proxy.
     fac_legacy = await db.facturas.find(
         {**lt_query, "tipo": "emitida", "estado": {"$in": ["pagada", "parcial"]},
+         "eliminada": {"$ne": True},
          "$and": [
              # Sin array pagos[] (o vacío)
              {"$or": [
@@ -733,9 +801,10 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
 
     facturas = await db.facturas.find(
         {**lt_query, "tipo": "emitida", "estado": {"$ne": "anulada"},
+         "eliminada": {"$ne": True},
          "fecha": {"$regex": f"^{periodo}"}},
         {"_id": 0, "numero": 1, "razon_social": 1, "ruc": 1, "empresa_id": 1,
-         "monto": 1, "iva": 1, "moneda": 1, "tipo_cambio": 1, "tasa_iva": 1, "logo_tipo": 1}
+         "monto": 1, "iva": 1, "conceptos": 1, "sin_factura": 1, "moneda": 1, "tipo_cambio": 1, "tasa_iva": 1, "logo_tipo": 1}
     ).to_list(1000)
 
     debito_detalle = []
@@ -743,10 +812,7 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
         moneda = f.get("moneda", "PYG")
         monto = f.get("monto", 0) or 0
         monto_pyg = to_pyg(monto, moneda, f.get("tipo_cambio"))
-        iva_fac = f.get("iva")
-        if iva_fac is None:
-            tasa = f.get("tasa_iva", 10) or 10
-            iva_fac = _iva_incluido(monto, tasa)
+        iva_fac = _iva_factura_emitida(f)
         iva_pyg = to_pyg(iva_fac, moneda, f.get("tipo_cambio"))
         debito_detalle.append({
             "numero": f.get("numero", ""), "razon_social": f.get("razon_social", ""),
@@ -755,7 +821,7 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
             "monto_factura": monto, "monto": monto_pyg, "iva": iva_pyg,
             "iva_original": iva_fac, "iva_pyg": iva_pyg,
             "moneda": moneda, "tipo_cambio": f.get("tipo_cambio"),
-            "tasa": f.get("tasa_iva", 10), "logo_tipo": f.get("logo_tipo", ""),
+            "tasa": _tasa_label_factura(f), "logo_tipo": f.get("logo_tipo", ""),
             "tipo_documento": "factura",
         })
 
@@ -775,12 +841,13 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
             "descripcion": f"NC {n.get('numero', '')}", "empresa_nombre": n.get("razon_social", ""),
             "monto_factura": -(monto_pyg or 0), "monto": -(monto_pyg or 0), "iva": -iva_pyg,
             "iva_pyg": -iva_pyg, "moneda": "PYG", "logo_tipo": n.get("logo_tipo", ""),
-            "tasa": 10, "tipo_documento": "nota_credito", "efecto": "resta_debito",
+            "tasa": "10%", "tipo_documento": "nota_credito", "efecto": "resta_debito",
         })
 
     compras_f = await db.compras.find(
         {**lt_query, "tiene_factura": True, "fecha": {"$regex": f"^{periodo}"}},
         {"_id": 0, "numero_factura": 1, "proveedor_nombre": 1, "monto_total": 1,
+         "items": 1,
          "monto_iva": 1, "tasa_iva": 1, "moneda": 1, "tipo_cambio": 1, "logo_tipo": 1}
     ).to_list(1000)
 
@@ -800,7 +867,7 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
             "monto_compra": monto, "monto": monto_pyg, "iva": iva_pyg,
             "iva_original": iva_comp, "iva_pyg": iva_pyg,
             "moneda": moneda, "tipo_cambio": c.get("tipo_cambio"),
-            "tasa": c.get("tasa_iva", 10), "logo_tipo": c.get("logo_tipo", ""),
+            "tasa": _tasa_label_compra(c), "logo_tipo": c.get("logo_tipo", ""),
             "tipo_documento": "compra",
         })
 
@@ -819,7 +886,7 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
             "descripcion": f"NC {n.get('numero', '')}", "proveedor_nombre": n.get("proveedor_nombre", ""),
             "monto_compra": -(monto_pyg or 0), "monto": -(monto_pyg or 0), "iva": -iva_pyg,
             "iva_pyg": -iva_pyg, "moneda": "PYG", "logo_tipo": n.get("logo_tipo", ""),
-            "tasa": 10, "tipo_documento": "nota_credito_compra", "efecto": "resta_credito",
+            "tasa": "10%", "tipo_documento": "nota_credito_compra", "efecto": "resta_credito",
         })
 
     empresas_ret = await db.empresas.find(
@@ -985,7 +1052,7 @@ async def get_iva_resumen(
             lt_query["logo_tipo"] = logo_tipo
         fechas = []
         for collection, field, query_extra in [
-            (db.facturas, "fecha", {"tipo": "emitida", "estado": {"$ne": "anulada"}}),
+            (db.facturas, "fecha", {"tipo": "emitida", "estado": {"$ne": "anulada"}, "eliminada": {"$ne": True}}),
             (db.compras, "fecha", {"tiene_factura": True}),
             (db.pagos_iva, "periodo_iva", {}),
             (db.ingresos_varios, "fecha", {"categoria": "Pago IVA"}),

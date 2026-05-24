@@ -45,6 +45,9 @@ const ACCIONES_LABELS = {
   eliminar: "Eliminar",
   exportar: "Exportar",
   afectar_stock: "Cambiar afectación stock",
+  ajustar_stock: "Ajustar stock",
+  crear_servicio: "Crear servicios",
+  stock_inicial: "Stock inicial",
   modo_libre: "Modo libre",
 };
 

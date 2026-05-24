@@ -49,6 +49,18 @@ class MovimientoManualCreate(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+async def generar_numero_ajuste_stock() -> str:
+    periodo = datetime.now(timezone.utc).strftime("%Y%m")
+    result = await db.contadores.find_one_and_update(
+        {"_id": f"ajuste_stock:{periodo}"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True,
+    )
+    seq = result.get("seq", 1)
+    return f"AJS-{periodo}-{str(seq).zfill(6)}"
+
+
 async def registrar_movimiento(
     producto_id: str,
     tipo: str,         # entrada | salida | ajuste
@@ -69,11 +81,22 @@ async def registrar_movimiento(
     if not producto:
         return {}
 
+    if tipo not in ("entrada", "salida", "ajuste"):
+        raise HTTPException(status_code=400, detail="Tipo de movimiento inválido")
+
     stock_anterior = producto.get("stock_actual", 0)
+    if tipo == "ajuste":
+        if cantidad < 0:
+            raise HTTPException(status_code=400, detail="El ajuste no puede dejar el stock por debajo de 0")
+    elif cantidad <= 0:
+        raise HTTPException(status_code=400, detail="La cantidad debe ser mayor a 0")
+
     if tipo == "entrada":
         stock_nuevo = stock_anterior + cantidad
     elif tipo == "salida":
-        stock_nuevo = max(0, stock_anterior - cantidad)
+        if cantidad > stock_anterior:
+            raise HTTPException(status_code=400, detail="El movimiento no puede dejar el stock por debajo de 0")
+        stock_nuevo = stock_anterior - cantidad
     else:  # ajuste: fija el valor absoluto
         stock_nuevo = cantidad
 
@@ -86,6 +109,8 @@ async def registrar_movimiento(
         "id": str(uuid.uuid4()),
         "producto_id": producto_id,
         "producto_nombre": producto.get("nombre", ""),
+        "sku": producto.get("sku", ""),
+        "unidad": producto.get("unidad", "unidad"),
         "tipo": tipo,
         "cantidad": cantidad,
         "stock_anterior": stock_anterior,
@@ -175,7 +200,7 @@ async def create_producto(data: ProductoCreate, user: dict = Depends(require_aut
 
     data_dict = data.dict()
     data_dict["sku"] = sku_trimmed
-    data_dict["stock_actual"] = stock_actual
+    data_dict["stock_actual"] = 0
     data_dict["stock_minimo"] = stock_minimo
 
     doc = {
@@ -197,6 +222,7 @@ async def create_producto(data: ProductoCreate, user: dict = Depends(require_aut
             usuario_id=user.get("id"),
             usuario_nombre=user.get("name"),
         )
+        doc["stock_actual"] = stock_actual
 
     await log_auditoria(user, "inventario_productos", "crear", f"Producto creado: {data.nombre}", doc["id"])
     return {k: v for k, v in doc.items() if k != "_id"}
@@ -262,6 +288,21 @@ async def update_producto(
 async def delete_producto(producto_id: str, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "inventario_productos.eliminar"):
         raise HTTPException(status_code=403, detail="Sin permiso")
+    venta = await db.facturas.find_one(
+        {
+            "conceptos.producto_id": producto_id,
+            "tipo": "emitida",
+            "eliminada": {"$ne": True},
+        },
+        {"_id": 0, "id": 1, "numero": 1, "numero_boleta": 1, "sin_factura": 1},
+    )
+    if venta:
+        tipo_doc = "boleta" if venta.get("sin_factura") else "factura"
+        numero = venta.get("numero_boleta") or venta.get("numero") or venta.get("id")
+        raise HTTPException(
+            status_code=400,
+            detail=f"No se puede eliminar este producto porque ya fue vendido en la {tipo_doc} {numero}.",
+        )
     result = await db.productos.delete_one({"id": producto_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
@@ -290,7 +331,7 @@ async def add_movimiento_manual(
     data: MovimientoManualCreate,
     user: dict = Depends(require_authenticated),
 ):
-    if not has_permission(user, "inventario_productos.editar"):
+    if not has_permission(user, "inventario_productos.ajustar_stock"):
         raise HTTPException(status_code=403, detail="Sin permiso")
     producto = await db.productos.find_one({"id": producto_id}, {"_id": 0})
     if not producto:
@@ -301,11 +342,22 @@ async def add_movimiento_manual(
         tipo=data.tipo,
         cantidad=data.cantidad,
         motivo=data.motivo,
-        precio_unitario=data.precio_unitario,
+        precio_unitario=data.precio_unitario if data.precio_unitario is not None else producto.get("precio_costo"),
         notas=data.notas,
         usuario_id=user.get("id"),
         usuario_nombre=user.get("name"),
     )
+    numero_comprobante = await generar_numero_ajuste_stock()
+    await db.movimientos_stock.update_one(
+        {"id": mov["id"]},
+        {"$set": {
+            "numero_comprobante": numero_comprobante,
+            "comprobante_tipo": "ajuste_stock",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }}
+    )
+    mov["numero_comprobante"] = numero_comprobante
+    mov["comprobante_tipo"] = "ajuste_stock"
     await log_auditoria(user, "historial_stock", "movimiento_manual", f"Movimiento {data.tipo} de stock", mov.get("id", ""))
     return mov
 

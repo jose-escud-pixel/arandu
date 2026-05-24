@@ -652,7 +652,7 @@ const EgresosPage = () => {
     fetchProveedores(activeEmpresaPropia?.slug);
     fetchProductos();
     fetchCuentasDisp();
-  }, []);
+  }, [activeEmpresaPropia?.slug]); // eslint-disable-line
 
   useEffect(() => {
     if (tab === "compras") { fetchCompras(); fetchNotasCompra(); }
@@ -727,7 +727,9 @@ const EgresosPage = () => {
       return;
     }
     try {
-      const res = await fetch(`${API}/admin/productos?limit=500`, { headers: { Authorization: `Bearer ${token}` } });
+      const params = new URLSearchParams({ limit: "500" });
+      if (activeEmpresaPropia?.slug) params.set("logo_tipo", activeEmpresaPropia.slug);
+      const res = await fetch(`${API}/admin/productos?${params}`, { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) { const d = await res.json(); setProductos(d.productos || d || []); }
     } catch (e) {}
   };
@@ -1559,6 +1561,10 @@ const EgresosPage = () => {
       toast.error("El monto total debe ser mayor a 0");
       return;
     }
+    if (compraForm.tiene_factura && !String(compraForm.numero_factura || "").trim()) {
+      toast.error("El número de factura es obligatorio cuando tiene factura");
+      return;
+    }
     if (compraForm.tiene_factura && !compraForm.nro_timbrado) {
       toast.error("El número de timbrado es obligatorio cuando tiene factura");
       return;
@@ -1586,6 +1592,7 @@ const EgresosPage = () => {
       cuenta_nombre: compraForm.solo_iva ? null : compraForm.cuenta_nombre,
       fecha_pago: compraForm.tipo_pago === "contado" ? (compraForm.fecha_pago || compraForm.fecha) : null,
       tipo_cambio: compraForm.tipo_cambio !== "" ? Number(compraForm.tipo_cambio) : null,
+      numero_factura: compraForm.tiene_factura ? String(compraForm.numero_factura || "").trim() : null,
       nro_timbrado: compraForm.tiene_factura ? (compraForm.nro_timbrado || null) : null,
       fecha_vigencia_timbrado: compraForm.tiene_factura ? (compraForm.fecha_vigencia_timbrado || null) : null,
     };
@@ -3790,7 +3797,7 @@ const EgresosPage = () => {
                       <Input value={compraForm.numero_factura}
                         onChange={e => setCompraForm(p => ({ ...p, numero_factura: e.target.value }))}
                         className="bg-arandu-dark border-white/10 text-white"
-                        placeholder="Número de factura (Ej: 001-001-0000123)" />
+                        placeholder="Número de factura (Ej: 001-001-0000123)" required />
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-slate-400 text-xs mb-1 block">Nro. Timbrado</label>
@@ -3881,7 +3888,8 @@ const EgresosPage = () => {
               </div>
               <div className="max-h-72 overflow-y-auto space-y-1">
                 {productos
-                  .filter(p => !productoSearch || p.nombre?.toLowerCase().includes(productoSearch.toLowerCase()) || p.codigo?.toLowerCase().includes(productoSearch.toLowerCase()))
+                  .filter(p => !activeEmpresaPropia?.slug || p.logo_tipo === activeEmpresaPropia.slug)
+                  .filter(p => !productoSearch || p.nombre?.toLowerCase().includes(productoSearch.toLowerCase()) || p.sku?.toLowerCase().includes(productoSearch.toLowerCase()) || p.codigo?.toLowerCase().includes(productoSearch.toLowerCase()))
                   .slice(0, 40)
                   .map(prod => (
                     <button key={prod.id} type="button"
@@ -3904,7 +3912,7 @@ const EgresosPage = () => {
                     >
                       <div>
                         <p className="text-white text-sm font-medium">{prod.nombre}</p>
-                        <p className="text-slate-500 text-xs">{prod.codigo || "Sin código"} · Stock: {prod.stock ?? "−"}</p>
+                        <p className="text-slate-500 text-xs">{prod.sku || prod.codigo || "Sin código"} · Stock: {prod.stock_actual ?? prod.stock ?? "−"}</p>
                       </div>
                       <div className="text-right">
                         {prod.precio_costo ? (
@@ -3919,7 +3927,10 @@ const EgresosPage = () => {
                       </div>
                     </button>
                   ))}
-                {productos.filter(p => !productoSearch || p.nombre?.toLowerCase().includes(productoSearch.toLowerCase())).length === 0 && (
+                {productos
+                  .filter(p => !activeEmpresaPropia?.slug || p.logo_tipo === activeEmpresaPropia.slug)
+                  .filter(p => !productoSearch || p.nombre?.toLowerCase().includes(productoSearch.toLowerCase()) || p.sku?.toLowerCase().includes(productoSearch.toLowerCase()) || p.codigo?.toLowerCase().includes(productoSearch.toLowerCase()))
+                  .length === 0 && (
                   <div className="text-center py-8 text-slate-500 text-sm">No se encontraron productos</div>
                 )}
               </div>

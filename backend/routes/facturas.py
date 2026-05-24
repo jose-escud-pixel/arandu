@@ -83,6 +83,62 @@ async def _ensure_recibo_numero_unico(numero: Optional[str], logo_tipo: str, ign
     if existente:
         raise HTTPException(status_code=400, detail=f"Ya existe un recibo con el número {numero}.")
 
+
+async def _reservar_numero_timbrado_si_corresponde(doc_data: dict):
+    if doc_data.get("sin_factura"):
+        return
+    logo_tipo = doc_data.get("logo_tipo") or "arandujar"
+    punto = doc_data.get("punto_expedicion")
+    numero = (doc_data.get("numero") or "").strip()
+    if not punto or not numero:
+        return
+
+    from routes.timbrado import _ahora, _fmt_numero, _vigente
+
+    config = await db.configuracion_timbrado.find_one({"logo_tipo": logo_tipo}, {"_id": 0})
+    if not config or config.get("modo_numeracion") != "automatico":
+        return
+    timbrado = config.get("timbrado_activo") or {}
+    if not _vigente(timbrado.get("fecha_vigencia")):
+        raise HTTPException(status_code=400, detail=f"Timbrado vencido (vigencia: {timbrado.get('fecha_vigencia')}).")
+    pto_data = next((p for p in timbrado.get("puntos_expedicion", []) if p.get("codigo") == punto), None)
+    if not pto_data:
+        raise HTTPException(status_code=400, detail=f"Punto de expedición '{punto}' no configurado")
+
+    ultimo = int(pto_data.get("ultimo_numero") or 0)
+    numero_desde = int(pto_data.get("numero_desde") or 1)
+    numero_hasta = int(pto_data.get("numero_hasta") or 9999999)
+    siguiente = max(ultimo + 1, numero_desde)
+    esperado = _fmt_numero(timbrado.get("establecimiento", "001"), punto, siguiente)
+
+    if siguiente > numero_hasta:
+        raise HTTPException(status_code=400, detail=f"Rango agotado para el punto {punto}.")
+    if numero != esperado:
+        raise HTTPException(
+            status_code=409,
+            detail=f"El número {numero} ya no está disponible. Actualizá el número sugerido e intentá de nuevo.",
+        )
+
+    result = await db.configuracion_timbrado.update_one(
+        {
+            "logo_tipo": logo_tipo,
+            "timbrado_activo.puntos_expedicion.codigo": punto,
+            "timbrado_activo.puntos_expedicion.ultimo_numero": ultimo,
+        },
+        {
+            "$set": {
+                "timbrado_activo.puntos_expedicion.$[pto].ultimo_numero": siguiente,
+                "updated_at": _ahora(),
+            }
+        },
+        array_filters=[{"pto.codigo": punto}],
+    )
+    if result.modified_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="No se pudo reservar el número por concurrencia. Actualizá el número sugerido e intentá de nuevo.",
+        )
+
 @router.get("/admin/facturas", response_model=List[FacturaResponse])
 async def get_facturas(
     logo_tipo: Optional[str] = None,
@@ -207,6 +263,86 @@ def _tiene_productos_vinculados(doc: dict) -> bool:
     return any(item.get("producto_id") for item in (doc.get("conceptos") or []))
 
 
+def _iva_incluido_por_conceptos(doc: dict) -> float:
+    if doc.get("sin_factura"):
+        return 0.0
+    conceptos = doc.get("conceptos") or []
+    if not conceptos:
+        return float(doc.get("iva") or 0)
+    total_iva = 0.0
+    for item in conceptos:
+        subtotal = item.get("subtotal")
+        if subtotal is None:
+            subtotal = (float(item.get("precio_unitario") or 0) * float(item.get("cantidad") or 1))
+        subtotal = float(subtotal or 0)
+        iva_tipo = str(item.get("iva_tipo") or "10").lower()
+        if iva_tipo in ("exenta", "exento", "0"):
+            continue
+        if iva_tipo == "5":
+            total_iva += subtotal / 21.0
+        else:
+            total_iva += subtotal / 11.0
+    if (doc.get("moneda") or "PYG") == "PYG":
+        return round(total_iva)
+    return round(total_iva, 2)
+
+
+async def _validar_productos_conceptos_logo(doc: dict):
+    producto_ids = list({item.get("producto_id") for item in (doc.get("conceptos") or []) if item.get("producto_id")})
+    if not producto_ids:
+        return
+    logo_tipo = doc.get("logo_tipo") or "arandujar"
+    productos = await db.productos.find(
+        {"id": {"$in": producto_ids}},
+        {"_id": 0, "id": 1, "nombre": 1, "logo_tipo": 1},
+    ).to_list(500)
+    prod_map = {p["id"]: p for p in productos}
+    for pid in producto_ids:
+        prod = prod_map.get(pid)
+        if not prod:
+            raise HTTPException(status_code=400, detail="Uno de los productos seleccionados no existe.")
+        if prod.get("logo_tipo") != logo_tipo:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El producto '{prod.get('nombre', pid)}' pertenece a otra empresa y no puede usarse en este comprobante.",
+            )
+
+
+def _cantidades_productos_factura(doc: dict) -> dict:
+    cantidades = {}
+    for item in doc.get("conceptos") or []:
+        producto_id = item.get("producto_id")
+        cantidad = float(item.get("cantidad") or 0)
+        if producto_id and cantidad > 0:
+            cantidades[producto_id] = cantidades.get(producto_id, 0) + cantidad
+    return cantidades
+
+
+async def _validar_stock_factura(doc: dict, doc_actual: Optional[dict] = None):
+    if not _debe_afectar_stock(doc):
+        return
+    requeridos = _cantidades_productos_factura(doc)
+    if not requeridos:
+        return
+    reservas_actuales = _cantidades_productos_factura(doc_actual) if doc_actual and _debe_afectar_stock(doc_actual) else {}
+    productos = await db.productos.find(
+        {"id": {"$in": list(requeridos.keys())}},
+        {"_id": 0, "id": 1, "nombre": 1, "stock_actual": 1},
+    ).to_list(500)
+    prod_map = {p["id"]: p for p in productos}
+    for producto_id, cantidad in requeridos.items():
+        prod = prod_map.get(producto_id)
+        if not prod:
+            raise HTTPException(status_code=400, detail="Uno de los productos seleccionados no existe.")
+        disponible = float(prod.get("stock_actual") or 0) + float(reservas_actuales.get(producto_id) or 0)
+        if cantidad > disponible:
+            nombre = prod.get("nombre") or producto_id
+            raise HTTPException(
+                status_code=400,
+                detail=f"Stock insuficiente para '{nombre}'. Disponible: {disponible:g}, solicitado: {cantidad:g}.",
+            )
+
+
 async def _registrar_stock_factura(doc: dict, tipo_mov: str, motivo: str, user: dict):
     if not _debe_afectar_stock(doc):
         return
@@ -228,6 +364,30 @@ async def _registrar_stock_factura(doc: dict, tipo_mov: str, motivo: str, user: 
             usuario_id=user.get("id"),
             usuario_nombre=user.get("name", ""),
         )
+
+
+async def _revertir_stock_factura_fallida(factura_id: str):
+    movs = await db.movimientos_stock.find(
+        {"referencia_id": factura_id, "referencia_tipo": "factura"},
+        {"_id": 0, "producto_id": 1, "tipo": 1, "cantidad": 1},
+    ).to_list(500)
+    for mov in movs:
+        producto_id = mov.get("producto_id")
+        cantidad = float(mov.get("cantidad") or 0)
+        if not producto_id or cantidad <= 0:
+            continue
+        if mov.get("tipo") == "salida":
+            await db.productos.update_one(
+                {"id": producto_id},
+                {"$inc": {"stock_actual": cantidad}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}},
+            )
+        elif mov.get("tipo") == "entrada":
+            await db.productos.update_one(
+                {"id": producto_id},
+                {"$inc": {"stock_actual": -cantidad}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}},
+            )
+    if movs:
+        await db.movimientos_stock.delete_many({"referencia_id": factura_id, "referencia_tipo": "factura"})
 
 
 @router.post("/admin/facturas", response_model=FacturaResponse)
@@ -258,6 +418,10 @@ async def create_factura(data: FacturaCreate, user: dict = Depends(require_authe
 
     if _tiene_productos_vinculados(doc_data) and not has_permission(user, "facturas.afectar_stock"):
         doc_data["afecta_stock"] = True
+    await _validar_productos_conceptos_logo(doc_data)
+    doc_data["iva"] = _iva_incluido_por_conceptos(doc_data)
+    await _validar_stock_factura(doc_data)
+    await _reservar_numero_timbrado_si_corresponde(doc_data)
     # Si se crea ya pagada y se proveyó cuenta, armamos el array pagos[]
     # para que el balance / saldo de cuentas lo registre correctamente.
     if doc_data.get("estado") == "pagada" and doc_data.get("cuenta_id"):
@@ -282,11 +446,19 @@ async def create_factura(data: FacturaCreate, user: dict = Depends(require_authe
         "created_at": now,
     })
     await db.facturas.insert_one(doc)
-    await _registrar_stock_factura(doc, "salida", "factura", user)
+    try:
+        await _registrar_stock_factura(doc, "salida", "factura", user)
+    except Exception:
+        await _revertir_stock_factura_fallida(doc["id"])
+        await db.facturas.delete_one({"id": doc["id"]})
+        raise
     ref = doc.get("numero_boleta") or doc.get("numero") or "-"
     tipo_label = "Boleta" if doc.get("sin_factura") else "Factura"
-    await log_auditoria(user, "facturas", "crear_factura",
-                        f"{tipo_label} {ref} ({data.tipo}) creada")
+    try:
+        await log_auditoria(user, "facturas", "crear_factura",
+                            f"{tipo_label} {ref} ({data.tipo}) creada")
+    except Exception:
+        pass
     return {**doc, "_id": None}
 
 
@@ -304,6 +476,9 @@ async def update_factura(factura_id: str, data: FacturaCreate, user: dict = Depe
     update_data["numero_normalizado"] = _numero_doc_normalizado(update_data.get("numero") or fac.get("numero_boleta", ""))
     if (_tiene_productos_vinculados(update_data) or _tiene_productos_vinculados(fac)) and not has_permission(user, "facturas.afectar_stock"):
         update_data["afecta_stock"] = True
+    await _validar_productos_conceptos_logo(update_data)
+    update_data["iva"] = _iva_incluido_por_conceptos(update_data)
+    await _validar_stock_factura(update_data, fac)
     # Si se está marcando como pagada (estaba pendiente o sin pagos) y se dio cuenta,
     # registramos el pago como entrada en pagos[].
     if update_data.get("estado") == "pagada" and update_data.get("cuenta_id"):
@@ -711,9 +886,10 @@ async def get_resumen_facturas(
     query.update(logo_q)
     if mes:
         query["fecha"] = {"$regex": f"^{mes}"}
+    query["eliminada"] = {"$ne": True}
 
     facturas = await db.facturas.find(query, {"_id": 0,
-        "tipo": 1, "estado": 1, "monto": 1, "moneda": 1}).to_list(5000)
+        "tipo": 1, "estado": 1, "monto": 1, "moneda": 1, "tipo_cambio": 1}).to_list(5000)
 
     def totales(lst):
         return {

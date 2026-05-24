@@ -115,7 +115,11 @@ async def get_dashboard_resumen(
         estado = p.get("estado") or "borrador"
         pres_estados[estado] = pres_estados.get(estado, 0) + 1
 
-    facturas = await _docs(db.facturas, {**logo_q, **per_fecha, "tipo": "emitida", "estado": {"$ne": "anulada"}}, {"_id": 0, "estado": 1, "monto": 1, "monto_pagado": 1, "moneda": 1, "tipo_cambio": 1, "pagos": 1})
+    facturas = await _docs(
+        db.facturas,
+        {**logo_q, **per_fecha, "tipo": "emitida", "estado": {"$ne": "anulada"}, "eliminada": {"$ne": True}},
+        {"_id": 0, "estado": 1, "monto": 1, "monto_pagado": 1, "iva": 1, "conceptos": 1, "sin_factura": 1, "moneda": 1, "tipo_cambio": 1, "pagos": 1},
+    )
     fact_pagado = 0
     fact_pagado_usd = 0
     fact_pendiente = 0
@@ -187,7 +191,8 @@ async def get_dashboard_resumen(
     notas_total = round(sum(n.get("monto_pyg") if n.get("monto_pyg") is not None else _to_pyg(n.get("monto"), n.get("moneda", "PYG"), n.get("tipo_cambio")) for n in notas))
     notas_total_usd = _sum_usd(notas, "monto")
 
-    iva_debito_usd = sum(_iva_incluido(f.get("monto")) for f in facturas if (f.get("moneda") or "PYG") == "USD")
+    from routes.balance import _iva_factura_emitida
+    iva_debito_usd = sum(_iva_factura_emitida(f) for f in facturas if (f.get("moneda") or "PYG") == "USD")
     iva_debito_usd -= sum(_iva_incluido(n.get("monto")) for n in notas_venta if (n.get("moneda") or "PYG") == "USD")
     iva_credito_usd = 0
     for c in compras:
@@ -229,7 +234,7 @@ async def get_dashboard_resumen(
     elif periodo_tipo == "todos":
         periods = set()
         for col, field, extra in [
-            (db.facturas, "fecha", {"tipo": "emitida", "estado": {"$ne": "anulada"}}),
+            (db.facturas, "fecha", {"tipo": "emitida", "estado": {"$ne": "anulada"}, "eliminada": {"$ne": True}}),
             (db.compras, "fecha", {"tiene_factura": True}),
             (db.pagos_iva, "periodo_iva", {}),
             (db.notas_credito, "fecha", {"estado": {"$ne": "anulada"}}),

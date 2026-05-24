@@ -962,7 +962,7 @@ export default function BalancePage() {
                                     </td>
                                     <td className={`px-4 py-2 text-right ${d.monto < 0 ? "text-rose-300" : "text-slate-300"}`}>{fmtPYG(d.monto)}</td>
                                     <td className={`px-4 py-2 text-right font-medium ${d.iva < 0 ? "text-rose-300" : "text-cyan-300"}`}>{fmtPYG(d.iva)}</td>
-                                    <td className="px-4 py-2 text-right text-slate-400 text-xs">{d.tasa ? `${d.tasa}%` : "—"}</td>
+                                    <td className="px-4 py-2 text-right text-slate-400 text-xs">{d.tasa ? (typeof d.tasa === "number" ? `${d.tasa}%` : d.tasa) : "—"}</td>
                                   </tr>
                                 ))}
                               </tbody>
@@ -1003,7 +1003,7 @@ export default function BalancePage() {
                                     </td>
                                     <td className={`px-4 py-2 text-right ${d.monto < 0 ? "text-rose-300" : "text-slate-300"}`}>{fmtPYG(d.monto)}</td>
                                     <td className={`px-4 py-2 text-right font-medium ${d.iva < 0 ? "text-rose-300" : "text-violet-300"}`}>{fmtPYG(d.iva)}</td>
-                                    <td className="px-4 py-2 text-right text-slate-400 text-xs">{d.tasa ? `${d.tasa}%` : "—"}</td>
+                                    <td className="px-4 py-2 text-right text-slate-400 text-xs">{d.tasa ? (typeof d.tasa === "number" ? `${d.tasa}%` : d.tasa) : "—"}</td>
                                   </tr>
                                 ))}
                               </tbody>

@@ -189,6 +189,7 @@ const ReportesPage = () => {
   const [reportMonth, setReportMonth] = useState(mesActual());
   const [reportYear, setReportYear] = useState(String(new Date().getFullYear()));
   const [reportCurrency, setReportCurrency] = useState("PYG");
+  const [reportClienteId, setReportClienteId] = useState("");
   const [genericReport, setGenericReport] = useState(null);
   const [genericReportLoading, setGenericReportLoading] = useState(false);
 
@@ -319,10 +320,10 @@ const ReportesPage = () => {
         return `${API}${path}${qs ? `?${qs}` : ""}`;
       };
       const [empRes, alertRes, proxRes, actRes] = await Promise.all([
-        fetch(buildUrl("/sistema/empresas"), { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(buildUrl("/sistema/alertas", { empresa_id: empresaFromUrl }), { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(buildUrl("/sistema/alertas/proximas"), { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(buildUrl("/sistema/activos"), { headers: { Authorization: `Bearer ${token}` } })
+        fetch(buildUrl("/admin/empresas"), { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(buildUrl("/admin/alertas", { empresa_id: empresaFromUrl }), { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(buildUrl("/admin/alertas/proximas"), { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(buildUrl("/admin/activos"), { headers: { Authorization: `Bearer ${token}` } })
       ]);
       if (empRes.ok) setEmpresas(await empRes.json());
       if (alertRes.ok) setAlertas(await alertRes.json());
@@ -545,15 +546,30 @@ const ReportesPage = () => {
     try {
       let report = null;
       const periodoSub = `Empresa activa: ${activeEmpresaPropia?.nombre || "Todas"} · Generado: ${nowFull}`;
-      const cuentasReporte = await fetchJson("/sistema/cuentas-bancarias").catch(() => []);
+      const cuentasReporte = await fetchJson("/admin/cuentas-bancarias").catch(() => []);
       const cuentaResolver = buildCuentaResolver(cuentasReporte);
-      const fetchSaldosCuentas = (hasta) => fetchJson("/sistema/cuentas-bancarias/saldos", { hasta }).catch(() => cuentasReporte);
+      const fetchSaldosCuentas = (hasta) => fetchJson("/admin/cuentas-bancarias/saldos", { hasta }).catch(() => cuentasReporte);
       const currencyLabel = reportCurrency === "USD" ? "Dolares" : reportCurrency === "AMBOS" ? "Guaranies y dolares" : "Guaranies";
       const showPYG = reportCurrency === "PYG" || reportCurrency === "AMBOS";
       const showUSD = reportCurrency === "USD" || reportCurrency === "AMBOS";
+      const selectedCliente = empresas.find(e => e.id === reportClienteId);
+      const clienteMatches = (row) => {
+        if (!selectedCliente) return false;
+        const nombre = (selectedCliente.razon_social || selectedCliente.nombre || "").trim().toLowerCase();
+        return row.empresa_id === selectedCliente.id
+          || String(row.razon_social || "").trim().toLowerCase() === nombre
+          || String(row.empresa_nombre || "").trim().toLowerCase() === nombre
+          || (selectedCliente.ruc && String(row.ruc || "").trim() === String(selectedCliente.ruc).trim());
+      };
+      const cobradoFactura = (f) => {
+        const pagos = (f.pagos || []).reduce((s, p) => s + Number(p.monto || p.monto_pagado || 0), 0);
+        if (pagos > 0) return pagos;
+        if (Number(f.monto_pagado || 0) > 0) return Number(f.monto_pagado || 0);
+        return f.estado === "pagada" ? Number(f.monto || 0) : 0;
+      };
       if (tipo === "balance_mensual") {
         const [b, saldosCuentas] = await Promise.all([
-          fetchJson("/sistema/balance", { periodo: reportMonth }),
+          fetchJson("/admin/balance", { periodo: reportMonth }),
           fetchSaldosCuentas(endOfMonthDate(reportMonth)),
         ]);
         const summary = [];
@@ -591,9 +607,9 @@ const ReportesPage = () => {
         };
       } else if (tipo === "balance_anual") {
         const [b, mesesBalance, saldosCuentas] = await Promise.all([
-          fetchJson("/sistema/balance/anual", { anio: reportYear }),
+          fetchJson("/admin/balance/anual", { anio: reportYear }),
           showUSD
-            ? Promise.all(Array.from({ length: 12 }, (_, idx) => fetchJson("/sistema/balance", { periodo: `${reportYear}-${String(idx + 1).padStart(2, "0")}` }).catch(() => null)))
+            ? Promise.all(Array.from({ length: 12 }, (_, idx) => fetchJson("/admin/balance", { periodo: `${reportYear}-${String(idx + 1).padStart(2, "0")}` }).catch(() => null)))
             : Promise.resolve([]),
           fetchSaldosCuentas(`${reportYear}-12-31`),
         ]);
@@ -623,16 +639,16 @@ const ReportesPage = () => {
         };
       } else if (tipo === "balance_detallado") {
         const [b, facturas, ingresosVarios, recibos, notasCredito, compras, pagos, gastos, sueldos, iva, saldosCuentas] = await Promise.all([
-          fetchJson("/sistema/balance", { periodo: reportMonth }),
-          fetchJson("/sistema/facturas", { mes: reportMonth }),
-          fetchJson("/sistema/ingresos-varios", { mes: reportMonth }).catch(() => []),
-          fetchJson("/sistema/recibos", { mes: reportMonth }).catch(() => []),
-          fetchJson("/sistema/notas-credito", { mes: reportMonth }).catch(() => []),
-          fetchJson("/sistema/compras", { mes: reportMonth }),
-          fetchJson("/sistema/pagos-proveedores", { mes: reportMonth }),
-          fetchJson("/sistema/costos-fijos-pagos", { mes: reportMonth }).catch(() => []),
-          fetchJson("/sistema/empleados/sueldos", { periodo: reportMonth }).catch(() => []),
-          fetchJson("/sistema/balance/iva", { periodo: reportMonth }).catch(() => ({ pagos_iva_detalle: [] })),
+          fetchJson("/admin/balance", { periodo: reportMonth }),
+          fetchJson("/admin/facturas", { mes: reportMonth }),
+          fetchJson("/admin/ingresos-varios", { mes: reportMonth }).catch(() => []),
+          fetchJson("/admin/recibos", { mes: reportMonth }).catch(() => []),
+          fetchJson("/admin/notas-credito", { mes: reportMonth }).catch(() => []),
+          fetchJson("/admin/compras", { mes: reportMonth }),
+          fetchJson("/admin/pagos-proveedores", { mes: reportMonth }),
+          fetchJson("/admin/costos-fijos-pagos", { mes: reportMonth }).catch(() => []),
+          fetchJson("/admin/empleados/sueldos", { periodo: reportMonth }).catch(() => []),
+          fetchJson("/admin/balance/iva", { periodo: reportMonth }).catch(() => ({ pagos_iva_detalle: [] })),
           fetchSaldosCuentas(endOfMonthDate(reportMonth)),
         ]);
         const sueldosPagados = (sueldos || []).filter(s => s.sueldo_registrado);
@@ -676,8 +692,48 @@ const ReportesPage = () => {
             { group: "Egresos", title: "Notas de credito compras", totalLabel: "Total notas compra", total: fmtPYG(sectionTotal(notasCompra, r => montoReportePYG(r, ["monto"]))), columns: ["Fecha", "Proveedor", "Factura compra", "Motivo", "Monto"], rows: rowsOf(notasCompra, [{value:"fecha"}, {value: r => r.proveedor_nombre || r.razon_social}, {value: r => r.compra_numero_factura || r.factura_numero || r.compra_id || r.factura_id}, {value:"motivo"}, {value: r => fmtPYG(montoReportePYG(r, ["monto"]))}]) },
           ],
         };
+      } else if (tipo === "cliente_detallado" || tipo === "cliente_estado") {
+        if (!selectedCliente) {
+          toast.error("Seleccioná un cliente para generar este reporte");
+          setGenericReportLoading(false);
+          return;
+        }
+        const paramsCliente = tipo === "cliente_detallado" ? { mes: reportMonth } : {};
+        const [facturasAll, recibosAll, notasAll] = await Promise.all([
+          fetchJson("/admin/facturas", paramsCliente),
+          fetchJson("/admin/recibos", paramsCliente).catch(() => []),
+          fetchJson("/admin/notas-credito", { ...paramsCliente, tipo: "venta" }).catch(() => []),
+        ]);
+        const facturasCliente = (facturasAll || []).filter(clienteMatches).filter(f => f.tipo === "emitida" && f.estado !== "anulada");
+        const recibosCliente = (recibosAll || []).filter(clienteMatches);
+        const notasCliente = (notasAll || []).filter(clienteMatches);
+        const totalFacturado = sectionTotal(facturasCliente, f => montoReportePYG(f, ["monto"]));
+        const totalCobrado = sectionTotal(facturasCliente, cobradoFactura);
+        const totalNotas = sectionTotal(notasCliente, n => montoReportePYG(n, ["monto"]));
+        const saldo = Math.max(0, totalFacturado - totalCobrado - totalNotas);
+        const clienteLabel = selectedCliente.razon_social || selectedCliente.nombre || "Cliente";
+        report = tipo === "cliente_detallado"
+          ? {
+              title: `Ventas por cliente - ${clienteLabel}`,
+              subtitle: `${mesLabel(reportMonth)} · ${periodoSub}`,
+              summary: [["Facturas", facturasCliente.length], ["Facturado", fmtPYG(totalFacturado)], ["Cobrado", fmtPYG(totalCobrado)], ["Notas credito", fmtPYG(totalNotas)], ["Saldo", fmtPYG(saldo)]],
+              sections: [
+                { title: "Ventas detalladas", totalLabel: "Total facturado", total: fmtPYG(totalFacturado), columns: ["Fecha", "Nro", "Tipo", "Estado", "Concepto", "Monto", "Cobrado", "Saldo"], rows: rowsOf(facturasCliente, [{value:"fecha"}, {value: r => r.numero_boleta || r.numero}, {value: r => r.sin_factura ? "Boleta" : "Factura"}, {value:"estado"}, {value:"concepto"}, {value: r => fmtPYG(montoReportePYG(r, ["monto"]))}, {value: r => fmtPYG(cobradoFactura(r))}, {value: r => fmtPYG(Math.max(0, montoReportePYG(r, ["monto"]) - cobradoFactura(r)))}]) },
+                { title: "Cobros / recibos", totalLabel: "Total recibos", total: fmtPYG(sectionTotal(recibosCliente, r => montoReportePYG(r, ["monto"]))), columns: ["Fecha", "Recibo", "Factura", "Metodo", "Monto"], rows: rowsOf(recibosCliente, [{value: r => r.fecha_pago || r.fecha}, {value:"numero"}, {value: r => r.factura_numero || r.factura_id}, {value:"metodo_pago"}, {value: r => fmtPYG(montoReportePYG(r, ["monto"]))}]) },
+                { title: "Notas de credito", totalLabel: "Total notas", total: fmtPYG(totalNotas), columns: ["Fecha", "Nro", "Factura", "Motivo", "Monto"], rows: rowsOf(notasCliente, [{value:"fecha"}, {value:"numero"}, {value: r => r.factura_numero || r.factura_id}, {value:"motivo"}, {value: r => fmtPYG(montoReportePYG(r, ["monto"]))}]) },
+              ],
+            }
+          : {
+              title: `Estado de cuenta - ${clienteLabel}`,
+              subtitle: `Resumen general · ${periodoSub}`,
+              summary: [["Facturas abiertas", facturasCliente.filter(f => f.estado !== "pagada").length], ["Total facturado", fmtPYG(totalFacturado)], ["Total cobrado", fmtPYG(totalCobrado)], ["Notas credito", fmtPYG(totalNotas)], ["Saldo cliente", fmtPYG(saldo)]],
+              sections: [
+                { title: "Estado de cuenta", totalLabel: "Saldo", total: fmtPYG(saldo), columns: ["Cliente", "RUC", "Facturado", "Cobrado", "Notas credito", "Saldo"], rows: [[clienteLabel, selectedCliente.ruc || "-", fmtPYG(totalFacturado), fmtPYG(totalCobrado), fmtPYG(totalNotas), fmtPYG(saldo)]] },
+                { title: "Comprobantes con saldo", columns: ["Fecha", "Nro", "Estado", "Total", "Cobrado", "Saldo"], rows: rowsOf(facturasCliente.filter(f => Math.max(0, montoReportePYG(f, ["monto"]) - cobradoFactura(f)) > 0), [{value:"fecha"}, {value: r => r.numero_boleta || r.numero}, {value:"estado"}, {value: r => fmtPYG(montoReportePYG(r, ["monto"]))}, {value: r => fmtPYG(cobradoFactura(r))}, {value: r => fmtPYG(Math.max(0, montoReportePYG(r, ["monto"]) - cobradoFactura(r)))}]) },
+              ],
+            };
       } else if (tipo === "facturas") {
-        const data = await fetchJson("/sistema/facturas", { mes: reportMonth });
+        const data = await fetchJson("/admin/facturas", { mes: reportMonth });
         const total = sectionTotal(data, x => montoReportePYG(x, ["monto"]));
         const cobrado = sectionTotal(data, x => {
           const pagado = Number(x.monto_pagado ?? 0);
@@ -709,24 +765,24 @@ const ReportesPage = () => {
           }, r => montoCuenta(r, ["monto"])),
         };
       } else if (tipo === "ingresos") {
-        const data = await fetchJson("/sistema/ingresos-varios", { mes: reportMonth });
+        const data = await fetchJson("/admin/ingresos-varios", { mes: reportMonth });
         const total = data.reduce((s, x) => s + Number(x.monto || 0), 0);
         report = { title: `Ingresos varios - ${mesLabel(reportMonth)}`, subtitle: periodoSub, summary: [["Registros", data.length], ["Total", fmtPYG(total)], ["Categorias", new Set(data.map(x => x.categoria).filter(Boolean)).size], ["Clientes", new Set(data.map(x => x.empresa_id).filter(Boolean)).size]], accountSummary: resumenCuentasDesdeItems(data, cuentaResolver, r => montoCuenta(r, ["monto"]), "Ingresos por banco/cuenta"), sections: sectionsPorCuenta(data, { title: "Ingresos por cuenta", totalLabel: "Total", columns: ["Fecha", "Cliente", "Categoria", "Concepto", "Monto"] }, cuentaResolver, (r, cuenta) => [r.fecha || "-", r.empresa_nombre || r.razon_social || "-", r.categoria || "-", r.descripcion || r.concepto || "-", fmtCuentaMonto(montoCuenta(r, ["monto"]), cuenta)], r => montoCuenta(r, ["monto"])) };
       } else if (tipo === "recibos") {
-        const data = await fetchJson("/sistema/recibos", { mes: reportMonth });
+        const data = await fetchJson("/admin/recibos", { mes: reportMonth });
         const total = data.reduce((s, x) => s + Number(x.monto || 0), 0);
         report = { title: `Recibos - ${mesLabel(reportMonth)}`, subtitle: periodoSub, summary: [["Recibos", data.length], ["Total", fmtPYG(total)], ["Facturas", new Set(data.map(x => x.factura_id).filter(Boolean)).size], ["Clientes", new Set(data.map(x => x.empresa_id).filter(Boolean)).size]], accountSummary: resumenCuentasDesdeItems(data, cuentaResolver, r => montoCuenta(r, ["monto"]), "Recibos por banco/cuenta"), sections: sectionsPorCuenta(data, { title: "Recibos por cuenta", totalLabel: "Total", columns: ["Fecha", "Cliente", "Factura", "Metodo", "Monto"] }, cuentaResolver, (r, cuenta) => [r.fecha_pago || "-", r.empresa_nombre || r.cliente_nombre || "-", r.factura_numero || r.factura_id || "-", r.metodo_pago || "-", fmtCuentaMonto(montoCuenta(r, ["monto"]), cuenta)], r => montoCuenta(r, ["monto"])) };
       } else if (tipo === "notas_credito") {
-        const data = await fetchJson("/sistema/notas-credito", { mes: reportMonth });
+        const data = await fetchJson("/admin/notas-credito", { mes: reportMonth });
         const total = data.reduce((s, x) => s + montoReportePYG(x, ["monto"]), 0);
         const ventas = data.filter(x => (x.tipo || "venta") === "venta");
         const comprasNc = data.filter(x => x.tipo === "compra");
         report = { title: `Notas de credito - ${mesLabel(reportMonth)}`, subtitle: periodoSub, summary: [["Notas", data.length], ["Total Gs", fmtPYG(total)], ["Ventas", ventas.length], ["Compras", comprasNc.length]], sections: [{ title: "Detalle", columns: ["Fecha", "Tipo", "Cliente/Proveedor", "Factura/Compra", "Motivo", "Monto Gs"], rows: rowsOf(data, [{value:"fecha"}, {value: r => (r.tipo || "venta") === "compra" ? "Compra" : "Venta"}, {value: r => r.empresa_nombre || r.proveedor_nombre || r.razon_social}, {value: r => r.factura_numero || r.compra_numero_factura || r.factura_id || r.compra_id}, {value:"motivo"}, {value: r => fmtPYG(montoReportePYG(r, ["monto"]))}]) }] };
       } else if (tipo === "presupuestos") {
-        const data = await fetchJson("/sistema/presupuestos");
+        const data = await fetchJson("/admin/presupuestos");
         report = { title: "Presupuestos", subtitle: periodoSub, summary: [["Total", data.length], ["Aprobados", data.filter(x => x.estado === "aprobado").length], ["Rechazados", data.filter(x => x.estado === "rechazado").length], ["Facturados", data.filter(x => x.facturado).length]], sections: [{ title: "Detalle", columns: ["Fecha", "Cliente", "Estado", "Total", "Facturas"], rows: rowsOf(data, [{value: r => (r.created_at || "").slice(0,10)}, {value:"empresa_nombre"}, {value:"estado"}, {value: r => fmtPYG(r.total)}, {value:"facturas_count"}]) }] };
       } else if (tipo === "compras") {
-        const data = await fetchJson("/sistema/compras", { mes: reportMonth });
+        const data = await fetchJson("/admin/compras", { mes: reportMonth });
         const movimientos = movimientosDeCompras(data);
         const totalMovPYG = sectionTotal(movimientos.filter(x => (x.cuenta_moneda || x.moneda) !== "USD"), x => x.monto_movimiento);
         const totalMovUSD = sectionTotal(movimientos.filter(x => (x.cuenta_moneda || x.moneda) === "USD"), x => x.monto_movimiento);
@@ -752,13 +808,13 @@ const ReportesPage = () => {
           ],
         };
       } else if (tipo === "gastos") {
-        const data = await fetchJson("/sistema/costos-fijos-pagos", { mes: reportMonth });
+        const data = await fetchJson("/admin/costos-fijos-pagos", { mes: reportMonth });
         const total = data.reduce((s, x) => s + Number(x.monto_pagado || x.monto || 0), 0);
         report = { title: `Gastos - ${mesLabel(reportMonth)}`, subtitle: periodoSub, summary: [["Pagos", data.length], ["Total", fmtPYG(total)], ["Categorias", new Set(data.map(x => x.categoria).filter(Boolean)).size], ["Pendientes", data.filter(x => x.estado && x.estado !== "pagado").length]], accountSummary: resumenCuentasDesdeItems(data, cuentaResolver, r => montoCuenta(r, ["monto_pagado", "monto"]), "Gastos por banco/cuenta"), sections: sectionsPorCuenta(data, { title: "Gastos por cuenta", totalLabel: "Total", columns: ["Periodo", "Gasto", "Categoria", "Estado", "Monto"] }, cuentaResolver, (r, cuenta) => [r.periodo || r.fecha_pago || r.fecha || "-", r.costo_nombre || r.nombre || "-", r.categoria || "-", r.estado || "-", fmtCuentaMonto(montoCuenta(r, ["monto_pagado", "monto"]), cuenta)], r => montoCuenta(r, ["monto_pagado", "monto"])) };
       } else if (tipo === "proveedores") {
         const [proveedores, resumenProveedores] = await Promise.all([
-          fetchJson("/sistema/proveedores"),
-          fetchJson("/sistema/compras/resumen/por-proveedor", { anio: reportYear }),
+          fetchJson("/admin/proveedores"),
+          fetchJson("/admin/compras/resumen/por-proveedor", { anio: reportYear }),
         ]);
         const resumenMap = {};
         (resumenProveedores || []).forEach(r => {
@@ -818,7 +874,7 @@ const ReportesPage = () => {
           ],
         };
       } else if (tipo === "iva") {
-        const data = await fetchJson("/sistema/balance/iva", { periodo: reportMonth });
+        const data = await fetchJson("/admin/balance/iva", { periodo: reportMonth });
         report = {
           title: `IVA fiscal - ${mesLabel(reportMonth)}`,
           subtitle: periodoSub,
@@ -832,10 +888,10 @@ const ReportesPage = () => {
           ],
         };
       } else if (tipo === "stock_historial") {
-        const data = await fetchJson("/sistema/stock-movimientos");
+        const data = await fetchJson("/admin/stock-movimientos");
         report = { title: "Historial de stock", subtitle: periodoSub, summary: [["Movimientos", data.length], ["Entradas", data.filter(x => x.tipo === "entrada").length], ["Salidas", data.filter(x => x.tipo === "salida").length], ["Ajustes", data.filter(x => x.tipo === "ajuste").length]], sections: [{ title: "Movimientos", columns: ["Fecha", "Producto", "SKU", "Tipo", "Cantidad", "Stock", "Motivo", "Usuario"], rows: rowsOf(data, [{value:"fecha"}, {value:"producto_nombre"}, {value:"sku"}, {value:"tipo"}, {value:"cantidad"}, {value: r => `${r.stock_anterior ?? "-"} -> ${r.stock_nuevo ?? "-"}`}, {value:"motivo"}, {value:"usuario_nombre"}]) }] };
       } else if (tipo === "productos_stock") {
-        const data = await fetchJson("/sistema/productos");
+        const data = await fetchJson("/admin/productos");
         const valor = data.reduce((s, p) => s + Number(p.stock_actual || 0) * Number(p.precio_costo || 0), 0);
         report = {
           title: "Productos y stock",
@@ -1733,12 +1789,32 @@ const ReportesPage = () => {
                   ))}
                 </div>
               </div>
+              <div className="mb-5 bg-arandu-dark border border-white/10 rounded-xl p-3 flex flex-col md:flex-row md:items-center gap-3">
+                <div className="flex items-center gap-2 text-slate-400 text-sm">
+                  <Search className="w-4 h-4" />
+                  <span>Cliente para reportes financieros</span>
+                </div>
+                <select
+                  value={reportClienteId}
+                  onChange={e => setReportClienteId(e.target.value)}
+                  className="bg-arandu-dark-lighter border border-white/10 text-white rounded-lg px-3 py-2 text-sm flex-1"
+                >
+                  <option value="">Seleccionar cliente...</option>
+                  {empresas.map(emp => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.nombre || emp.razon_social}{emp.ruc ? ` - ${emp.ruc}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                 {[
                   { visible: hasPermission?.("balance.ver"), title: "Balance mensual", desc: `Resumen de ${mesLabel(reportMonth)} con ingresos, egresos y saldo`, tipo: "balance_mensual", color: "text-emerald-400", icon: TrendingUp },
                   { visible: hasPermission?.("balance.ver"), title: "Balance anual", desc: `Resumen por meses del año ${reportYear}`, tipo: "balance_anual", color: "text-lime-400", icon: BarChart3 },
                   { visible: hasPermission?.("balance.ver") || hasPermission?.("facturas.ver") || hasPermission?.("compras.ver") || hasPermission?.("costos_fijos.ver") || hasPermission?.("empleados.ver"), title: "Balance detallado", desc: "Facturas, compras, pagos proveedores, gastos y sueldos del mes", tipo: "balance_detallado", color: "text-teal-400", icon: FileText },
                   { visible: hasPermission?.("facturas.ver"), title: "Facturas", desc: "Facturas emitidas, cobradas y pendientes del periodo mensual", tipo: "facturas", color: "text-cyan-400", icon: Receipt },
+                  { visible: hasPermission?.("facturas.ver"), title: "Ventas por cliente", desc: "Detalle de facturas, boletas, cobros y notas del cliente elegido", tipo: "cliente_detallado", color: "text-sky-400", icon: FileText },
+                  { visible: hasPermission?.("facturas.ver"), title: "Estado de cuenta cliente", desc: "Resumen compacto de facturado, cobrado, notas y saldo pendiente", tipo: "cliente_estado", color: "text-teal-400", icon: DollarSign },
                   { visible: hasPermission?.("ingresos_varios.ver"), title: "Ingresos varios", desc: "Ingresos directos del periodo, categorias y clientes", tipo: "ingresos", color: "text-green-400", icon: TrendingUp },
                   { visible: hasPermission?.("recibos.ver"), title: "Recibos", desc: "Cobros registrados contra facturas en el periodo", tipo: "recibos", color: "text-lime-400", icon: Receipt },
                   { visible: hasPermission?.("notas_credito.ver"), title: "Notas de credito", desc: "Notas de ventas y compras, con motivo y monto", tipo: "notas_credito", color: "text-rose-400", icon: AlertTriangle },

@@ -320,7 +320,7 @@ async def _ensure_numero_factura_compra_unico(
 ):
     normalizado = _numero_doc_normalizado(numero)
     if not normalizado:
-        return
+        raise HTTPException(status_code=400, detail="El número de factura es obligatorio cuando la compra tiene factura.")
     query: dict = {
         "logo_tipo": logo_tipo or "arandujar",
         "tiene_factura": True,
@@ -350,6 +350,26 @@ def _tiene_productos_vinculados_items(items: List[dict]) -> bool:
     return any(item.get("producto_id") for item in (items or []))
 
 
+async def _validar_productos_items_logo(items: List[dict], logo_tipo: str):
+    producto_ids = list({item.get("producto_id") for item in (items or []) if item.get("producto_id")})
+    if not producto_ids:
+        return
+    productos = await db.productos.find(
+        {"id": {"$in": producto_ids}},
+        {"_id": 0, "id": 1, "nombre": 1, "logo_tipo": 1},
+    ).to_list(500)
+    prod_map = {p["id"]: p for p in productos}
+    for pid in producto_ids:
+        prod = prod_map.get(pid)
+        if not prod:
+            raise HTTPException(status_code=400, detail="Uno de los productos seleccionados no existe.")
+        if prod.get("logo_tipo") != logo_tipo:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El producto '{prod.get('nombre', pid)}' pertenece a otra empresa y no puede usarse en esta compra.",
+            )
+
+
 @router.post("/admin/compras")
 async def create_compra(data: CompraCreate, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "compras.crear"):
@@ -371,6 +391,7 @@ async def create_compra(data: CompraCreate, user: dict = Depends(require_authent
     for item in data.items:
         subtotal = item.cantidad * item.precio_unitario
         items.append({**item.dict(), "subtotal": subtotal})
+    await _validar_productos_items_logo(items, data.logo_tipo)
     afecta_stock = data.afecta_stock
     if _tiene_productos_vinculados_items(items) and not has_permission(user, "compras.afectar_stock"):
         afecta_stock = True
@@ -384,7 +405,7 @@ async def create_compra(data: CompraCreate, user: dict = Depends(require_authent
         "fecha": data.fecha,
         "tipo_pago": data.tipo_pago,
         "tiene_factura": data.tiene_factura,
-        "numero_factura": data.numero_factura,
+        "numero_factura": data.numero_factura.strip() if data.numero_factura else None,
         "nro_timbrado": data.nro_timbrado if data.tiene_factura else None,
         "fecha_vigencia_timbrado": data.fecha_vigencia_timbrado if data.tiene_factura else None,
         "monto_total": data.monto_total,
@@ -496,8 +517,10 @@ async def update_compra(compra_id: str, data: CompraUpdate, user: dict = Depends
         await _ensure_numero_factura_compra_unico(
             numero_final, proveedor_id_final, proveedor_nombre_final, logo_final, ignore_id=compra_id
         )
+        update_data["numero_factura"] = numero_final.strip() if isinstance(numero_final, str) else numero_final
         update_data["numero_factura_normalizado"] = _numero_doc_normalizado(numero_final)
     else:
+        update_data["numero_factura"] = None
         update_data["numero_factura_normalizado"] = None
         update_data["nro_timbrado"] = None
         update_data["fecha_vigencia_timbrado"] = None
@@ -512,6 +535,8 @@ async def update_compra(compra_id: str, data: CompraUpdate, user: dict = Depends
     if not update_data.get("solo_iva") and "items" in update_data and "afecta_stock" in update_data and not has_permission(user, "compras.afectar_stock"):
         if _tiene_productos_vinculados_items(update_data.get("items") or []):
             update_data["afecta_stock"] = True
+    if "items" in update_data:
+        await _validar_productos_items_logo(update_data.get("items") or [], logo_final)
 
     result = await db.compras.update_one({"id": compra_id}, {"$set": update_data})
     if result.matched_count == 0:

@@ -37,6 +37,17 @@ def _normalizar_modulos(modulos: Optional[List[str]]) -> List[str]:
     return list(dict.fromkeys(normalizados))
 
 
+async def _require_manage_empresa_propia(empresa_id: str, user: dict) -> dict:
+    empresa = await db.empresas_propias.find_one({"id": empresa_id}, {"_id": 0})
+    if not empresa:
+        raise HTTPException(status_code=404, detail="Empresa propia no encontrada")
+    if user.get("role") == "admin":
+        return empresa
+    if user.get("role") == "gerente" and str(empresa_id) in set(map(str, user.get("logos_asignados", []) or [])):
+        return empresa
+    raise HTTPException(status_code=403, detail="No tenés permiso para administrar esta empresa")
+
+
 # ================== CONTACT ==================
 
 @router.post("/contact", response_model=ContactMessageResponse)
@@ -149,10 +160,8 @@ async def create_empresa_propia(data: EmpresaPropiaCreate, admin: dict = Depends
     return {k: v for k, v in doc.items() if k != "_id"}
 
 @router.put("/admin/empresas-propias/{empresa_id}", response_model=EmpresaPropiaResponse)
-async def update_empresa_propia(empresa_id: str, data: EmpresaPropiaCreate, admin: dict = Depends(require_admin)):
-    current = await db.empresas_propias.find_one({"id": empresa_id}, {"_id": 0})
-    if not current:
-        raise HTTPException(status_code=404, detail="Empresa propia no encontrada")
+async def update_empresa_propia(empresa_id: str, data: EmpresaPropiaCreate, admin: dict = Depends(require_authenticated)):
+    await _require_manage_empresa_propia(empresa_id, admin)
     slug = data.slug or data.nombre.lower().replace(" ", "-")
     existing = await db.empresas_propias.find_one({"slug": slug, "id": {"$ne": empresa_id}})
     if existing:
@@ -173,16 +182,19 @@ async def update_empresa_propia(empresa_id: str, data: EmpresaPropiaCreate, admi
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Empresa propia no encontrada")
     doc = await db.empresas_propias.find_one({"id": empresa_id}, {"_id": 0})
+    await log_auditoria(admin, "empresas_propias", "editar", f"Empresa propia actualizada: {doc.get('nombre', empresa_id)}", empresa_id)
     return doc
 
 @router.post("/admin/empresas-propias/{empresa_id}/logo")
-async def upload_logo_empresa_propia(empresa_id: str, file: UploadFile = File(...), admin: dict = Depends(require_admin)):
+async def upload_logo_empresa_propia(empresa_id: str, file: UploadFile = File(...), admin: dict = Depends(require_authenticated)):
+    await _require_manage_empresa_propia(empresa_id, admin)
     content = await file.read()
     b64 = base64.b64encode(content).decode()
     logo_url = f"data:{file.content_type};base64,{b64}"
     result = await db.empresas_propias.update_one({"id": empresa_id}, {"$set": {"logo_url": logo_url}})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Empresa propia no encontrada")
+    await log_auditoria(admin, "empresas_propias", "subir_logo", f"Logo actualizado para empresa propia: {empresa_id}", empresa_id)
     return {"logo_url": logo_url}
 
 @router.delete("/admin/empresas-propias/{empresa_id}")

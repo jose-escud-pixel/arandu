@@ -681,6 +681,7 @@ class FacturaCreate(BaseModel):
     modo: str = "libre"                     # libre | productos
     afecta_stock: bool = False              # descuenta inventario si hay producto_id
     monto: float
+    iva: Optional[float] = None
     moneda: str = "PYG"
     tipo_cambio: Optional[float] = None
     estado: str = "pendiente"             # pendiente | pagada | parcial | anulada
@@ -734,6 +735,7 @@ class FacturaResponse(BaseModel):
     modo: str = "libre"
     afecta_stock: bool = False
     monto: float
+    iva: Optional[float] = None
     moneda: str
     tipo_cambio: Optional[float] = None
     estado: str

@@ -416,13 +416,10 @@ const FacturaFormModal = ({
       toast.error("Agregá al menos un ítem con descripción, cantidad y precio");
       return;
     }
-    if (form.estado === "pagada" && !form.cuenta_id) {
-      toast.error("Si la factura está pagada, indicá en qué cuenta entró la plata");
-      return;
-    }
     const cuentaSeleccionada = cuentasDisp.find(c => String(c.id) === String(form.cuenta_id));
     const monedaCuenta = cuentaSeleccionada?.moneda || form.moneda || "PYG";
-    const requiereConversion = form.estado === "pagada" && form.cuenta_id && monedaCuenta !== form.moneda;
+    const estadoOut = isEdit ? (factura?.estado || "pendiente") : "pendiente";
+    const requiereConversion = estadoOut === "pagada" && form.cuenta_id && monedaCuenta !== form.moneda;
     if (requiereConversion && (!form.tipo_cambio || parseFloat(form.tipo_cambio) <= 0)) {
       toast.error("Falta el tipo de cambio porque la cuenta seleccionada usa otra moneda");
       return;
@@ -460,11 +457,11 @@ const FacturaFormModal = ({
       monto: montoTotal,
       moneda: form.moneda || "PYG",
       tipo_cambio: form.tipo_cambio !== "" && form.tipo_cambio != null ? Number(form.tipo_cambio) : null,
-      estado: form.estado || "pendiente",
+      estado: estadoOut,
       fecha_vencimiento: form.fecha_vencimiento || null,
-      fecha_pago: form.estado === "pagada" ? (form.fecha_pago || form.fecha) : null,
-      cuenta_id: form.estado === "pagada" ? (form.cuenta_id || null) : null,
-      cuenta_nombre: form.estado === "pagada" ? (form.cuenta_nombre || null) : null,
+      fecha_pago: estadoOut === "pagada" ? (form.fecha_pago || form.fecha) : null,
+      cuenta_id: estadoOut === "pagada" ? (form.cuenta_id || null) : null,
+      cuenta_nombre: estadoOut === "pagada" ? (form.cuenta_nombre || null) : null,
       presupuesto_ids: form.presupuesto_ids || [],
       notas: form.notas || null,
       // Timbrado — solo si hay config activa y NO es boleta
@@ -650,8 +647,8 @@ const FacturaFormModal = ({
             </div>
           </div>
 
-          {/* Row 2: Forma pago, Estado, Vencimiento */}
-          <div className="grid grid-cols-3 gap-4">
+          {/* Row 2: Forma pago, Vencimiento */}
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Forma de Pago</label>
               <select
@@ -664,18 +661,6 @@ const FacturaFormModal = ({
               </select>
             </div>
             <div>
-              <label className={labelCls}>Estado</label>
-              <select
-                className={inputCls}
-                value={form.estado}
-                onChange={(e) => set("estado", e.target.value)}
-              >
-                <option value="pendiente">Pendiente</option>
-                <option value="pagada">Pagada</option>
-                <option value="anulada">Anulada</option>
-              </select>
-            </div>
-            <div>
               <label className={labelCls}>Fecha de Vencimiento</label>
               <input
                 type="date"
@@ -685,45 +670,6 @@ const FacturaFormModal = ({
               />
             </div>
           </div>
-
-          {/* Row 2.5: Datos de cobro — solo si estado=pagada */}
-          {form.estado === "pagada" && (
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
-              <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wider flex items-center gap-1.5">
-                💰 Datos de cobro
-              </p>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className={labelCls}>Cuenta donde entró la plata *</label>
-                  <select
-                    className={inputCls}
-                    value={form.cuenta_id}
-                    onChange={(e) => {
-                      const c = (cuentasDisp || []).find(c => c.id === e.target.value);
-                      setForm(prev => ({ ...prev, cuenta_id: e.target.value, cuenta_nombre: c?.nombre || "" }));
-                    }}
-                  >
-                    <option value="">Seleccionar cuenta...</option>
-                    {(cuentasDisp || []).map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.nombre} ({c.moneda}){c.es_predeterminada ? " ★" : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className={labelCls}>Fecha de cobro</label>
-                  <input
-                    type="date"
-                    className={inputCls}
-                    value={form.fecha_pago || form.fecha}
-                    onChange={(e) => set("fecha_pago", e.target.value)}
-                  />
-                  <p className="text-[11px] text-emerald-700 mt-1">Si lo dejás vacío usamos la fecha de la factura.</p>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Row 3: Moneda, Tipo de Cambio */}
           <div className="grid grid-cols-2 gap-4">

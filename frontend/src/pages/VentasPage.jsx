@@ -477,7 +477,7 @@ export default function VentasPage() {
 	        fetch(`${API}/admin/cuentas-bancarias${logoQc}`, { headers }),
 	        fetch(`${API}/admin/recibos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
 	        hasPermission("notas_credito.ver")
-	          ? fetch(`${API}/admin/notas-credito${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers })
+	          ? fetch(`${API}/admin/notas-credito${buildQ({ tipo: "venta", mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers })
 	          : Promise.resolve({ ok: false }),
 	      ]);
       if (rPres.ok) setPresupuestos(await rPres.json());
@@ -2754,7 +2754,7 @@ function FacturaPreview({ f }) {
       <PreviewRow label="Forma pago" value={f.forma_pago} />
       <PreviewRow label="Moneda"   value={f.moneda} />
       <PreviewRow label="Monto"    value={fmtMonto(f.monto || 0, f.moneda)} />
-      <PreviewRow label="IVA"      value={f.iva ? fmtMonto(f.iva, f.moneda) : "—"} />
+      <PreviewRow label="IVA"      value={f.iva != null ? fmtMonto(f.iva, f.moneda) : "—"} />
       <PreviewRow label="Estado"   value={<StateBadge estado={f.estado} />} />
       {f.notas && <PreviewRow label="Notas" value={f.notas} />}
     </>
@@ -3055,7 +3055,10 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
     const i10 = Math.round(grav10 / 11);
     return { exenta, grav5, grav10, i5, i10, totalIva: i5 + i10 };
   })();
-  const iva = f.moneda === "PYG" ? ivaDetailBreakdown.totalIva || Math.round(total / 11) : Math.round((total / 11) * 100) / 100;
+  const tieneConceptos = (f.conceptos || []).length > 0;
+  const iva = tieneConceptos
+    ? ivaDetailBreakdown.totalIva
+    : (f.iva ?? (f.moneda === "PYG" ? Math.round(total / 11) : Math.round((total / 11) * 100) / 100));
   const base = total - iva;
 
   const ESTADO_STYLE = {

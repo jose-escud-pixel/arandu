@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import {
   ArrowLeft, Plus, Edit2, Trash2, Search, X, Save,
   Package, AlertTriangle, ChevronDown, ChevronRight,
-  TrendingUp, TrendingDown, RotateCcw, BarChart3, Tag
+  TrendingUp, TrendingDown, RotateCcw, BarChart3, Tag, FileText, Printer
 } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -37,7 +37,7 @@ const IVA_OPCIONES = [
 const emptyForm = {
   nombre: "", descripcion: "", sku: "", categoria: "",
   precio_costo: "", ganancia_pct: "", precio_venta: "",
-  stock_actual: "0", stock_minimo: "0",
+  stock_actual: "0", stock_inicial_view: "", stock_minimo: "0",
   unidad: "unidad", logo_tipo: "arandujar", activo: true,
   iva_tipo: "10",
 };
@@ -55,6 +55,15 @@ function calcSugerido(costo, pct) {
   const p = parseFloat(pct);
   if (!c || isNaN(c) || c <= 0 || isNaN(p) || p < 0) return null;
   return Math.round(c * (1 + p / 100));
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 export default function ProductosPage() {
@@ -77,6 +86,7 @@ export default function ProductosPage() {
   const [movForm, setMovForm]           = useState(emptyMov);
   const [savingMov, setSavingMov]       = useState(false);
   const [loadingMov, setLoadingMov]     = useState(false);
+  const [selectedMovimiento, setSelectedMovimiento] = useState(null);
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -95,6 +105,7 @@ export default function ProductosPage() {
   const esServicio = formData.categoria === "Servicios";
   const puedeCrearServicio = hasPermission("inventario_productos.crear_servicio");
   const puedeStockInicial = hasPermission("inventario_productos.stock_inicial");
+  const puedeAjustarStock = hasPermission("inventario_productos.ajustar_stock");
 
   const precioSugerido = calcSugerido(formData.precio_costo, formData.ganancia_pct);
 
@@ -150,6 +161,7 @@ export default function ProductosPage() {
       ganancia_pct: "",
       precio_venta: String(p.precio_venta || ""),
       stock_actual: String(p.stock_actual || 0),
+      stock_inicial_view: "",
       stock_minimo: String(p.stock_minimo || 0),
       unidad: p.unidad || "unidad",
       logo_tipo: p.logo_tipo || "arandujar",
@@ -157,6 +169,18 @@ export default function ProductosPage() {
       iva_tipo: p.iva_tipo || "10",
     });
     setShowForm(true);
+    fetch(`${API}/admin/productos/${p.id}/movimientos`, { headers })
+      .then(res => res.ok ? res.json() : [])
+      .then(movs => {
+        const inicial = (movs || [])
+          .filter(m => m.motivo === "stock_inicial")
+          .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")))[0];
+        setFormData(f => ({
+          ...f,
+          stock_inicial_view: inicial ? String(inicial.cantidad || 0) : "0",
+        }));
+      })
+      .catch(() => setFormData(f => ({ ...f, stock_inicial_view: "0" })));
   };
 
   const handleSave = async (e) => {
@@ -207,7 +231,10 @@ export default function ProductosPage() {
     if (!window.confirm(`¿Eliminar producto "${p.nombre}"? Se eliminarán sus movimientos de stock.`)) return;
     const res = await fetch(`${API}/admin/productos/${p.id}`, { method: "DELETE", headers });
     if (res.ok) { toast.success("Producto eliminado"); fetchProductos(); }
-    else toast.error("Error al eliminar");
+    else {
+      const err = await res.json().catch(() => ({}));
+      toast.error(err.detail || "Error al eliminar");
+    }
   };
 
   // ── Movimientos ───────────────────────────────────────────────
@@ -215,21 +242,39 @@ export default function ProductosPage() {
     setSelectedProducto(p);
     setShowMovModal(true);
     setShowMovForm(false);
+    setMovForm({ ...emptyMov, precio_unitario: p.precio_costo ? String(p.precio_costo) : "" });
     setLoadingMov(true);
     const res = await fetch(`${API}/admin/productos/${p.id}/movimientos`, { headers });
     if (res.ok) setMovimientos(await res.json());
     setLoadingMov(false);
   };
 
+  const toggleMovForm = () => {
+    setShowMovForm(v => {
+      const next = !v;
+      if (next) {
+        setMovForm(f => ({
+          ...f,
+          precio_unitario: f.precio_unitario || (selectedProducto?.precio_costo ? String(selectedProducto.precio_costo) : ""),
+        }));
+      }
+      return next;
+    });
+  };
+
   const handleSaveMov = async (e) => {
     e.preventDefault();
-    if (!movForm.cantidad || parseFloat(movForm.cantidad) <= 0) {
+    const cantidad = parseFloat(movForm.cantidad);
+    if (Number.isNaN(cantidad) || cantidad < 0 || (movForm.tipo !== "ajuste" && cantidad <= 0)) {
       toast.error("Ingresá una cantidad válida"); return;
+    }
+    if (movForm.tipo === "salida" && cantidad > Number(selectedProducto.stock_actual || 0)) {
+      toast.error("La salida no puede dejar el stock por debajo de 0"); return;
     }
     setSavingMov(true);
     const payload = {
       tipo: movForm.tipo,
-      cantidad: parseFloat(movForm.cantidad),
+      cantidad,
       motivo: movForm.motivo,
       precio_unitario: movForm.precio_unitario ? parseFloat(movForm.precio_unitario) : null,
       notas: movForm.notas || null,
@@ -240,7 +285,7 @@ export default function ProductosPage() {
     if (res.ok) {
       toast.success("Movimiento registrado");
       setShowMovForm(false);
-      setMovForm(emptyMov);
+      setMovForm({ ...emptyMov, precio_unitario: selectedProducto?.precio_costo ? String(selectedProducto.precio_costo) : "" });
       const logoParam = activeEmpresaPropia?.slug ? `logo_tipo=${activeEmpresaPropia.slug}` : "";
       const [rP, rM] = await Promise.all([
         fetch(`${API}/admin/productos?${logoParam}`, { headers }),
@@ -259,6 +304,70 @@ export default function ProductosPage() {
       toast.error(err.detail || "Error al registrar movimiento");
     }
     setSavingMov(false);
+  };
+
+  const comprobanteNumero = (m) => m?.numero_comprobante || `MOV-${String(m?.id || "").slice(0, 8).toUpperCase()}`;
+  const productoComprobanteNombre = (mov) => mov?.producto_nombre || selectedProducto?.nombre || "Producto";
+  const productoComprobanteSku = (mov) => mov?.sku || selectedProducto?.sku || "-";
+
+  const printComprobante = (mov) => {
+    const numero = comprobanteNumero(mov);
+    const win = window.open("", "_blank", "width=820,height=900");
+    if (!win) return;
+    const motivo = (mov.motivo || "").replace(/_/g, " ");
+    const productoNombre = productoComprobanteNombre(mov);
+    const productoSku = productoComprobanteSku(mov);
+    win.document.write(`
+      <html>
+        <head>
+          <title>${escapeHtml(numero)}</title>
+          <style>
+            * { box-sizing: border-box; }
+            body { font-family: Arial, sans-serif; color: #111827; margin: 0; padding: 32px; }
+            .sheet { max-width: 760px; margin: 0 auto; border: 1px solid #d1d5db; padding: 28px; }
+            .top { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #111827; padding-bottom: 18px; }
+            h1 { margin: 0; font-size: 22px; }
+            .muted { color: #6b7280; font-size: 12px; }
+            .num { text-align: right; font-weight: 700; font-size: 18px; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 22px; }
+            .box { border: 1px solid #e5e7eb; padding: 12px; min-height: 62px; }
+            .label { color: #6b7280; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+            .value { margin-top: 5px; font-size: 15px; font-weight: 700; }
+            table { width: 100%; border-collapse: collapse; margin-top: 24px; }
+            th, td { border: 1px solid #e5e7eb; padding: 10px; text-align: left; font-size: 13px; }
+            th { background: #f3f4f6; color: #374151; }
+            .footer { margin-top: 36px; display: flex; justify-content: space-between; gap: 28px; }
+            .sign { flex: 1; border-top: 1px solid #9ca3af; padding-top: 8px; text-align: center; color: #6b7280; font-size: 12px; }
+            @media print { body { padding: 0; } .sheet { border: 0; } }
+          </style>
+        </head>
+        <body>
+          <div class="sheet">
+            <div class="top">
+              <div>
+                <h1>Comprobante de Ajuste de Stock</h1>
+                <div class="muted">Inventario Productos</div>
+              </div>
+              <div class="num">${escapeHtml(numero)}<div class="muted">${escapeHtml(mov.fecha || "")}</div></div>
+            </div>
+            <div class="grid">
+              <div class="box"><div class="label">Producto</div><div class="value">${escapeHtml(productoNombre)}</div></div>
+              <div class="box"><div class="label">SKU</div><div class="value">${escapeHtml(productoSku)}</div></div>
+              <div class="box"><div class="label">Tipo</div><div class="value">${escapeHtml(mov.tipo)}</div></div>
+              <div class="box"><div class="label">Usuario</div><div class="value">${escapeHtml(mov.usuario_nombre || "-")}</div></div>
+            </div>
+            <table>
+              <thead><tr><th>Cantidad</th><th>Stock anterior</th><th>Stock nuevo</th><th>Motivo</th></tr></thead>
+              <tbody><tr><td>${escapeHtml(mov.cantidad)} ${escapeHtml(selectedProducto.unidad)}</td><td>${escapeHtml(mov.stock_anterior)}</td><td>${escapeHtml(mov.stock_nuevo)}</td><td>${escapeHtml(motivo)}</td></tr></tbody>
+            </table>
+            <div class="box" style="margin-top: 18px;"><div class="label">Notas</div><div class="value">${escapeHtml(mov.notas || "-")}</div></div>
+            <div class="footer"><div class="sign">Entregado por</div><div class="sign">Recibido / verificado por</div></div>
+          </div>
+          <script>window.print();</script>
+        </body>
+      </html>
+    `);
+    win.document.close();
   };
 
   // ── Derived ───────────────────────────────────────────────────
@@ -600,6 +709,13 @@ export default function ProductosPage() {
                         className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm font-body focus:outline-none focus:border-cyan-500" />
                     </div>
                   )}
+                  {editingId && (
+                    <div>
+                      <label className="block text-slate-400 text-xs mb-1 font-body">Stock inicial cargado</label>
+                      <input type="text" readOnly value={formData.stock_inicial_view || "0"}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-slate-300 text-sm font-body cursor-not-allowed" />
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -657,8 +773,8 @@ export default function ProductosPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {hasPermission("inventario_productos.editar") && (
-                  <button onClick={() => setShowMovForm(v => !v)}
+                {puedeAjustarStock && (
+                  <button onClick={toggleMovForm}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors font-body text-xs">
                     <Plus className="w-3.5 h-3.5" /> Ajuste manual
                   </button>
@@ -686,12 +802,12 @@ export default function ProductosPage() {
                     </div>
                     <div>
                       <label className="block text-slate-400 text-xs mb-1 font-body">Cantidad *</label>
-                      <input required type="number" min="0.01" step="0.01" value={movForm.cantidad}
+                      <input required type="number" min={movForm.tipo === "ajuste" ? "0" : "0.01"} step="0.01" value={movForm.cantidad}
                         onChange={e => setMovForm(f => ({ ...f, cantidad: e.target.value }))}
                         className="w-full bg-arandu-dark border border-white/10 rounded-lg px-2 py-2 text-white text-sm font-body focus:outline-none" />
                     </div>
                     <div>
-                      <label className="block text-slate-400 text-xs mb-1 font-body">Precio unit. (₲)</label>
+                      <label className="block text-slate-400 text-xs mb-1 font-body">Precio medio sugerido (₲)</label>
                       <input type="number" min="0" value={movForm.precio_unitario}
                         onChange={e => setMovForm(f => ({ ...f, precio_unitario: e.target.value }))}
                         className="w-full bg-arandu-dark border border-white/10 rounded-lg px-2 py-2 text-white text-sm font-body focus:outline-none" />
@@ -726,7 +842,8 @@ export default function ProductosPage() {
                 ) : (
                   <div className="space-y-1.5 max-h-80 overflow-y-auto">
                     {movimientos.map(m => (
-                      <div key={m.id} className="flex items-center justify-between bg-white/5 border border-white/10 rounded-lg px-3 py-2">
+                      <button key={m.id} type="button" onClick={() => setSelectedMovimiento(m)}
+                        className="w-full flex items-center justify-between text-left bg-white/5 border border-white/10 rounded-lg px-3 py-2 hover:bg-white/10 hover:border-cyan-500/30 transition-colors">
                         <div className="flex items-center gap-3">
                           <div className={`p-1.5 rounded-lg ${
                             m.tipo === "entrada" ? "bg-emerald-500/20" : m.tipo === "salida" ? "bg-red-500/20" : "bg-blue-500/20"
@@ -739,6 +856,9 @@ export default function ProductosPage() {
                             }
                           </div>
                           <div>
+                            <p className="text-cyan-300 text-[10px] font-mono mb-0.5 flex items-center gap-1">
+                              <FileText className="w-3 h-3" /> {comprobanteNumero(m)}
+                            </p>
                             <p className="text-white text-xs font-body">
                               <span className={`font-semibold ${
                                 m.tipo === "entrada" ? "text-emerald-300" : m.tipo === "salida" ? "text-red-300" : "text-blue-300"
@@ -755,10 +875,85 @@ export default function ProductosPage() {
                           <p className="text-slate-400 text-xs">{m.stock_anterior} → <span className="text-white font-semibold">{m.stock_nuevo}</span></p>
                           <p className="text-slate-600 text-[10px]">{m.fecha} · {m.usuario_nombre || ""}</p>
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Comprobante de movimiento ─────────────────────────── */}
+      {selectedMovimiento && selectedProducto && (
+        <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4">
+          <div className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-xl overflow-hidden">
+            <div className="px-6 py-5 border-b border-white/10 bg-white/5 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-cyan-300 text-xs font-mono">{comprobanteNumero(selectedMovimiento)}</p>
+                <h2 className="font-heading text-lg text-white mt-1">Comprobante de Ajuste de Stock</h2>
+                <p className="text-slate-400 text-xs mt-1">{selectedMovimiento.fecha} · {selectedMovimiento.usuario_nombre || "Usuario no registrado"}</p>
+              </div>
+              <button onClick={() => setSelectedMovimiento(null)} className="text-slate-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="border border-white/10 rounded-xl p-3 bg-white/5">
+                  <p className="text-slate-500 text-[10px] uppercase tracking-wide">Producto</p>
+                  <p className="text-white text-sm font-semibold mt-1">{productoComprobanteNombre(selectedMovimiento)}</p>
+                  <p className="text-slate-500 text-xs mt-0.5">Producto del inventario</p>
+                </div>
+                <div className="border border-white/10 rounded-xl p-3 bg-white/5">
+                  <p className="text-slate-500 text-[10px] uppercase tracking-wide">SKU</p>
+                  <p className="text-white text-sm font-semibold mt-1">{productoComprobanteSku(selectedMovimiento)}</p>
+                  <p className="text-slate-500 text-xs mt-0.5">Código interno</p>
+                </div>
+                <div className="border border-white/10 rounded-xl p-3 bg-white/5">
+                  <p className="text-slate-500 text-[10px] uppercase tracking-wide">Tipo de movimiento</p>
+                  <p className={`text-sm font-semibold mt-1 ${
+                    selectedMovimiento.tipo === "entrada" ? "text-emerald-300"
+                    : selectedMovimiento.tipo === "salida" ? "text-red-300"
+                    : "text-blue-300"
+                  }`}>
+                    {selectedMovimiento.tipo === "entrada" ? "Entrada" : selectedMovimiento.tipo === "salida" ? "Salida" : "Ajuste absoluto"}
+                  </p>
+                  <p className="text-slate-500 text-xs mt-0.5">{(selectedMovimiento.motivo || "").replace(/_/g, " ")}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-xl p-3 bg-slate-500/10 border border-slate-500/20">
+                  <p className="text-slate-500 text-[10px] uppercase tracking-wide">Cantidad</p>
+                  <p className="text-white text-lg font-semibold mt-1">{selectedMovimiento.cantidad}</p>
+                </div>
+                <div className="rounded-xl p-3 bg-amber-500/10 border border-amber-500/20">
+                  <p className="text-amber-300/80 text-[10px] uppercase tracking-wide">Stock anterior</p>
+                  <p className="text-amber-200 text-lg font-semibold mt-1">{selectedMovimiento.stock_anterior}</p>
+                </div>
+                <div className="rounded-xl p-3 bg-emerald-500/10 border border-emerald-500/20">
+                  <p className="text-emerald-300/80 text-[10px] uppercase tracking-wide">Stock nuevo</p>
+                  <p className="text-emerald-200 text-lg font-semibold mt-1">{selectedMovimiento.stock_nuevo}</p>
+                </div>
+              </div>
+
+              <div className="border border-white/10 rounded-xl p-3 bg-white/5 min-h-[70px]">
+                <p className="text-slate-500 text-[10px] uppercase tracking-wide">Notas</p>
+                <p className="text-slate-300 text-sm mt-1">{selectedMovimiento.notas || "Sin notas"}</p>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button onClick={() => printComprobante(selectedMovimiento)}
+                  className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors text-sm">
+                  <Printer className="w-4 h-4" /> Imprimir
+                </button>
+                <button onClick={() => setSelectedMovimiento(null)}
+                  className="px-4 py-2 bg-white/10 text-slate-300 rounded-lg hover:bg-white/20 transition-colors text-sm">
+                  Cerrar
+                </button>
               </div>
             </div>
           </div>

@@ -297,7 +297,8 @@ async def siguiente_numero_factura(
     user: dict = Depends(require_authenticated),
 ):
     """
-    Genera y reserva el siguiente número de factura para un punto de expedición.
+    Sugiere el siguiente número de factura para un punto de expedición.
+    La reserva real se hace al guardar la factura, cuando ya pasaron sus validaciones.
     Solo aplica en modo automático.
     Valida: timbrado vigente + número dentro del rango asignado por SET.
     """
@@ -336,29 +337,6 @@ async def siguiente_numero_factura(
         raise HTTPException(
             status_code=400,
             detail=f"Rango agotado para el punto {punto}. El rango asignado era {numero_desde}-{numero_hasta}. Configurá un nuevo timbrado."
-        )
-
-    # Actualización atómica del contador usando arrayFilters
-    result = await db.configuracion_timbrado.update_one(
-        {
-            "logo_tipo": logo_tipo,
-            "timbrado_activo.puntos_expedicion.codigo": punto,
-            "timbrado_activo.puntos_expedicion.ultimo_numero": {"$lt": numero_hasta},
-        },
-        {
-            "$set": {
-                "timbrado_activo.puntos_expedicion.$[pto].ultimo_numero": siguiente,
-                "updated_at": _ahora(),
-            }
-        },
-        array_filters=[{"pto.codigo": punto}],
-    )
-
-    if result.modified_count == 0:
-        # Rango agotado por concurrencia
-        raise HTTPException(
-            status_code=409,
-            detail="No se pudo reservar el número (rango agotado o concurrencia). Intentá de nuevo."
         )
 
     numero_formateado = _fmt_numero(t.get("establecimiento", "001"), punto, siguiente)
