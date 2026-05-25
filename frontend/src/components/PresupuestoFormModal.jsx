@@ -57,7 +57,7 @@ const PresupuestoFormModal = ({
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (mode === "new") {
+    if (mode === "new" || mode === "create") {
       setFormData(getDefaultFormData());
       setEditingId(null);
     } else if (mode === "edit" && presupuesto) {
@@ -257,6 +257,10 @@ const PresupuestoFormModal = ({
     } catch (e) { console.error("Error al cargar imagen", e); }
   };
 
+  const productosCatalogo = productos.filter(
+    p => p.activo !== false && (!p.logo_tipo || p.logo_tipo === formData.logo_tipo)
+  );
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -275,12 +279,31 @@ const PresupuestoFormModal = ({
 
       const toFloat = v => (v === "" || v === null || v === undefined) ? null : parseFloat(v) || null;
       const payload = {
-        ...formData,
-        ...totals,
-        tipo_cambio: toFloat(formData.tipo_cambio),
+        empresa_id: formData.empresa_id,
+        logo_tipo: activeEmpresaPropia?.slug || formData.logo_tipo,
+        moneda: formData.moneda,
+        forma_pago: formData.forma_pago,
         numero: formData.numero || null,
+        nombre_archivo: formData.nombre_archivo || null,
+        fecha: formData.fecha,
+        validez_dias: parseInt(formData.validez_dias, 10) || 15,
+        tipo_cambio: toFloat(formData.tipo_cambio),
+        modo: formData.modo || "libre",
+        observaciones: formData.observaciones || null,
+        condiciones: formData.condiciones || null,
+        ...totals,
         items: formData.items.map(item => ({
-          ...item,
+          descripcion: (item.descripcion || "").trim() || "Sin descripción",
+          cantidad: Math.max(1, parseInt(item.cantidad, 10) || 1),
+          costo: parseFloat(item.costo) || 0,
+          margen: parseFloat(item.margen) || 0,
+          precio_unitario: parseFloat(item.precio_unitario) || 0,
+          subtotal: parseFloat(item.subtotal) || 0,
+          producto_id: item.producto_id || null,
+          observacion: item.observacion || null,
+          observacion_oculta: item.observacion_oculta || null,
+          imagen: item.imagen || null,
+          imagen_comentario: item.imagen_comentario || null,
           moneda_item: item.moneda_item || null,
           tipo_cambio_item: toFloat(item.tipo_cambio_item),
           proveedor_id: item.proveedor_id || null,
@@ -302,7 +325,14 @@ const PresupuestoFormModal = ({
         toast.success(editingId ? "Presupuesto actualizado" : "Presupuesto creado");
         onSaved(savedPresupuesto);
       } else {
-        throw new Error("Error al guardar");
+        let detail = "Error al guardar";
+        try {
+          const err = await response.json();
+          detail = err.detail
+            ? (Array.isArray(err.detail) ? err.detail.map(d => d.msg || d).join("; ") : String(err.detail))
+            : detail;
+        } catch (_) { /* ignore */ }
+        toast.error(detail);
       }
     } catch (error) {
       toast.error("Error al guardar el presupuesto");
@@ -342,7 +372,14 @@ const PresupuestoFormModal = ({
               <label className="block text-slate-400 text-sm mb-2">Empresa *</label>
               <select
                 value={formData.empresa_id}
-                onChange={(e) => setFormData({ ...formData, empresa_id: e.target.value })}
+                onChange={(e) => {
+                  const emp = empresas.find(em => em.id === e.target.value);
+                  setFormData({
+                    ...formData,
+                    empresa_id: e.target.value,
+                    logo_tipo: activeEmpresaPropia?.slug || emp?.logo_tipo || formData.logo_tipo,
+                  });
+                }}
                 className="w-full bg-arandu-dark border border-white/10 text-white rounded-md px-4 py-3"
                 required
               >
@@ -555,11 +592,11 @@ const PresupuestoFormModal = ({
                           <select
                             value={item.producto_id || ""}
                             onChange={e => selectProductoForItem(index, e.target.value)}
-                            className="w-full mb-1 bg-arandu-panel border border-white/10 rounded text-sm text-white px-2 py-1.5 focus:outline-none focus:border-emerald-500"
+                            className="w-full mb-1 bg-slate-900 border border-white/20 rounded text-sm text-slate-100 px-2 py-1.5 focus:outline-none focus:border-emerald-500 [color-scheme:dark]"
                           >
-                            <option value="">— Seleccionar del catálogo —</option>
-                            {productos.filter(p => p.activo !== false).map(p => (
-                              <option key={p.id} value={p.id}>
+                            <option value="" className="bg-slate-900 text-slate-100">— Seleccionar del catálogo —</option>
+                            {productosCatalogo.map(p => (
+                              <option key={p.id} value={p.id} className="bg-slate-900 text-slate-100">
                                 {p.nombre}{p.sku ? ` (${p.sku})` : ""} — stock: {p.stock_actual ?? 0}
                               </option>
                             ))}

@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from datetime import datetime, timezone
 import uuid
+import re
 from typing import List, Optional
 import base64
 
 from config import db, DEFAULT_EMPRESA_MODULOS, EMPRESA_MODULOS_DISPONIBLES, EMPRESA_MODULOS_OBLIGATORIOS
-from auth import require_admin, require_authenticated, has_permission, can_access_empresa, get_logos_acceso, log_auditoria
+from auth import require_admin, require_authenticated, has_permission, can_access_empresa, get_logos_acceso, log_auditoria, apply_empresa_cliente_filter
+from routes.cuentas_bancarias import ensure_cuenta_predeterminada
 from models.schemas import (
     ContactMessage, ContactMessageResponse,
     EmpresaCreate, EmpresaResponse,
@@ -156,6 +158,7 @@ async def create_empresa_propia(data: EmpresaPropiaCreate, admin: dict = Depends
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.empresas_propias.insert_one(doc)
+    await ensure_cuenta_predeterminada(slug, data.nombre, "PYG")
     await log_auditoria(admin, "empresas_propias", "crear", f"Empresa propia creada: {data.nombre}", doc["id"])
     return {k: v for k, v in doc.items() if k != "_id"}
 
@@ -208,21 +211,121 @@ async def delete_empresa_propia(empresa_id: str, admin: dict = Depends(require_a
 
 # ================== EMPRESAS ==================
 
+def _norm_texto(val: Optional[str]) -> Optional[str]:
+    if val is None:
+        return None
+    s = str(val).strip()
+    return s if s else None
+
+
+def _norm_ruc(val: Optional[str]) -> Optional[str]:
+    s = _norm_texto(val)
+    if not s:
+        return None
+    return re.sub(r"[\s.\-]", "", s).upper()
+
+
+async def _validar_empresa_sin_duplicados(
+    data: EmpresaCreate,
+    ignore_id: Optional[str] = None,
+) -> None:
+    """Evita clientes duplicados por nombre, razón social o RUC/cédula."""
+    nombre = _norm_texto(data.nombre)
+    if not nombre:
+        raise HTTPException(status_code=400, detail="El nombre comercial es obligatorio")
+
+    def _base_query():
+        q = {}
+        if ignore_id:
+            q["id"] = {"$ne": ignore_id}
+        return q
+
+    existente = await db.empresas.find_one(
+        {**_base_query(), "nombre": {"$regex": f"^{re.escape(nombre)}$", "$options": "i"}},
+        {"_id": 0, "id": 1, "nombre": 1},
+    )
+    if existente:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Ya existe un cliente con el nombre comercial «{existente.get('nombre', nombre)}»",
+        )
+
+    razon = _norm_texto(data.razon_social)
+    if razon:
+        cursor = db.empresas.find({**_base_query(), "razon_social": {"$exists": True, "$nin": [None, ""]}}, {"_id": 0, "razon_social": 1})
+        async for doc in cursor:
+            if doc.get("razon_social") and doc["razon_social"].strip().lower() == razon.lower():
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Ya existe un cliente con la razón social «{doc['razon_social']}»",
+                )
+
+    ruc_norm = _norm_ruc(data.ruc)
+    if ruc_norm:
+        cursor = db.empresas.find({**_base_query(), "ruc": {"$exists": True, "$nin": [None, ""]}}, {"_id": 0, "ruc": 1})
+        async for doc in cursor:
+            if _norm_ruc(doc.get("ruc")) == ruc_norm:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Ya existe un cliente con el RUC/cédula «{doc.get('ruc')}»",
+                )
+
+
+async def _count_ventas_activas_cliente(empresa_id: str) -> int:
+    """Facturas emitidas no anuladas vinculadas al cliente."""
+    return await db.facturas.count_documents({
+        "empresa_id": empresa_id,
+        "tipo": "emitida",
+        "estado": {"$ne": "anulada"},
+        "eliminada": {"$ne": True},
+    })
+
+
+def _parse_umbral_opcional(val) -> Optional[int]:
+    if val is None or val == "":
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _empresa_fields_from_create(data: EmpresaCreate) -> dict:
+    """Campos persistidos de un cliente (empresa)."""
+    return {
+        "nombre": data.nombre,
+        "razon_social": data.razon_social,
+        "ruc": data.ruc,
+        "direccion": data.direccion,
+        "telefono": data.telefono,
+        "email": data.email,
+        "contacto": data.contacto,
+        "aplica_retencion": data.aplica_retencion,
+        "porcentaje_retencion": data.porcentaje_retencion if data.aplica_retencion else None,
+        "notas": data.notas,
+        "logo_tipo": data.logo_tipo or "arandujar",
+        "personeria": data.personeria or "fisica",
+        "fecha_nacimiento": data.fecha_nacimiento or None,
+        "nacionalidad": data.nacionalidad,
+        "pais": data.pais,
+        "ciudad": data.ciudad,
+        "municipio": data.municipio,
+        "con_inventario_tecnico": data.con_inventario_tecnico,
+        "cumpleanos_amarillo_dias": _parse_umbral_opcional(data.cumpleanos_amarillo_dias),
+        "cumpleanos_urgente_dias": _parse_umbral_opcional(data.cumpleanos_urgente_dias),
+    }
+
+
 @router.post("/admin/empresas", response_model=EmpresaResponse)
 async def create_empresa(data: EmpresaCreate, admin: dict = Depends(require_authenticated)):
     if not has_permission(admin, "empresas.crear"):
         raise HTTPException(status_code=403, detail="No tiene permiso para crear empresas")
+    await _validar_empresa_sin_duplicados(data)
     empresa_id = str(uuid.uuid4())
     empresa_doc = {
-        "id": empresa_id, "nombre": data.nombre,
-        "razon_social": data.razon_social, "ruc": data.ruc,
-        "direccion": data.direccion, "telefono": data.telefono, "email": data.email,
-        "contacto": data.contacto,
-        "aplica_retencion": data.aplica_retencion,
-        "porcentaje_retencion": data.porcentaje_retencion,
-        "notas": data.notas,
-        "logo_tipo": data.logo_tipo or "arandujar",
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "id": empresa_id,
+        **_empresa_fields_from_create(data),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.empresas.insert_one(empresa_doc)
     await log_auditoria(admin, "empresas", "crear", f"Empresa creada: {data.nombre}", empresa_id)
@@ -246,7 +349,12 @@ async def get_empresas(search: Optional[str] = None, logo_tipo: Optional[str] = 
         return []
     if logo_q:
         query = {"$and": [logo_q, query]} if query else logo_q
+    if not apply_empresa_cliente_filter(query, user):
+        return []
     empresas = await db.empresas.find(query, {"_id": 0}).sort("nombre", 1).to_list(500)
+    for e in empresas:
+        if not e.get("created_at"):
+            e["created_at"] = datetime.now(timezone.utc).isoformat()
     return empresas
 
 @router.get("/admin/empresas/{empresa_id}", response_model=EmpresaResponse)
@@ -258,6 +366,9 @@ async def get_empresa(empresa_id: str, user: dict = Depends(require_authenticate
     empresa = await db.empresas.find_one({"id": empresa_id}, {"_id": 0})
     if not empresa:
         raise HTTPException(status_code=404, detail="Empresa no encontrada")
+    if not empresa.get("created_at"):
+        empresa["created_at"] = datetime.now(timezone.utc).isoformat()
+    empresa["ventas_activas_count"] = await _count_ventas_activas_cliente(empresa_id)
     return empresa
 
 @router.put("/admin/empresas/{empresa_id}", response_model=EmpresaResponse)
@@ -266,35 +377,68 @@ async def update_empresa(empresa_id: str, data: EmpresaCreate, user: dict = Depe
         raise HTTPException(status_code=403, detail="No tiene permiso para editar empresas")
     if not can_access_empresa(user, empresa_id):
         raise HTTPException(status_code=403, detail="No tiene acceso a esta empresa")
-    result = await db.empresas.update_one(
-        {"id": empresa_id},
-        {"$set": {"nombre": data.nombre, "razon_social": data.razon_social, "ruc": data.ruc,
-                  "direccion": data.direccion, "telefono": data.telefono, "email": data.email,
-                  "contacto": data.contacto, "aplica_retencion": data.aplica_retencion,
-                  "porcentaje_retencion": data.porcentaje_retencion, "notas": data.notas,
-                  "logo_tipo": data.logo_tipo or "arandujar"}}
-    )
-    if result.matched_count == 0:
+    existing = await db.empresas.find_one({"id": empresa_id}, {"_id": 0})
+    if not existing:
         raise HTTPException(status_code=404, detail="Empresa no encontrada")
-    # Propagar el nuevo nombre/razón social/RUC a todas las facturas Y presupuestos
-    # vinculados, así si alguien usaba un apodo (ej: "Constructora - EDB") y lo
-    # cambia, se actualiza en toda la app sin tocar registros uno por uno.
-    await db.facturas.update_many(
-        {"empresa_id": empresa_id},
-        {"$set": {
-            "empresa_nombre": data.nombre,
-            "razon_social": data.razon_social,
-            "ruc": data.ruc,
-        }}
-    )
+
+    ventas_activas = await _count_ventas_activas_cliente(empresa_id)
+    # Sin ventas activas (anuladas no cuentan): se puede completar o corregir razón social y RUC
+    if ventas_activas > 0:
+        razon_social = existing.get("razon_social")
+        ruc = existing.get("ruc")
+    else:
+        razon_social = (data.razon_social or "").strip() or None
+        ruc = (data.ruc or "").strip() or None
+
+    check_payload = data.model_copy(update={"razon_social": razon_social, "ruc": ruc})
+    await _validar_empresa_sin_duplicados(check_payload, ignore_id=empresa_id)
+
+    update_fields = {
+        "nombre": data.nombre,
+        "razon_social": razon_social,
+        "ruc": ruc,
+        "direccion": data.direccion,
+        "telefono": data.telefono,
+        "email": data.email,
+        "contacto": data.contacto,
+        "aplica_retencion": data.aplica_retencion,
+        "porcentaje_retencion": data.porcentaje_retencion if data.aplica_retencion else None,
+        "notas": data.notas,
+        "logo_tipo": data.logo_tipo or "arandujar",
+        "personeria": data.personeria or "fisica",
+        "fecha_nacimiento": data.fecha_nacimiento or None,
+        "nacionalidad": data.nacionalidad,
+        "pais": data.pais,
+        "ciudad": data.ciudad,
+        "municipio": data.municipio,
+        "con_inventario_tecnico": data.con_inventario_tecnico,
+        "cumpleanos_amarillo_dias": _parse_umbral_opcional(data.cumpleanos_amarillo_dias),
+        "cumpleanos_urgente_dias": _parse_umbral_opcional(data.cumpleanos_urgente_dias),
+    }
+    if not existing.get("created_at"):
+        update_fields["created_at"] = datetime.now(timezone.utc).isoformat()
+
+    await db.empresas.update_one({"id": empresa_id}, {"$set": update_fields})
+
+    if update_fields.get("fecha_nacimiento"):
+        try:
+            from routes.alertas import sync_alertas_cumpleanos
+            await sync_alertas_cumpleanos(update_fields.get("logo_tipo"))
+        except Exception:
+            pass
+
+    # Solo propagar nombre comercial; razón social y RUC quedan fijos en facturas históricas
+    fac_set = {"empresa_nombre": data.nombre}
+    if ventas_activas == 0:
+        fac_set["razon_social"] = razon_social
+        fac_set["ruc"] = ruc
+    await db.facturas.update_many({"empresa_id": empresa_id}, {"$set": fac_set})
     await db.presupuestos.update_many(
         {"empresa_id": empresa_id},
-        {"$set": {
-            "empresa_nombre": data.nombre,
-            "empresa_ruc": data.ruc,
-        }}
+        {"$set": {"empresa_nombre": data.nombre, "empresa_ruc": ruc}},
     )
     empresa = await db.empresas.find_one({"id": empresa_id}, {"_id": 0})
+    empresa["ventas_activas_count"] = ventas_activas
     return empresa
 
 @router.delete("/admin/empresas/{empresa_id}")
@@ -303,6 +447,33 @@ async def delete_empresa(empresa_id: str, user: dict = Depends(require_authentic
         raise HTTPException(status_code=403, detail="No tiene permiso para eliminar empresas")
     if not can_access_empresa(user, empresa_id):
         raise HTTPException(status_code=403, detail="No tiene acceso a esta empresa")
+
+    facturas_activas = await db.facturas.find(
+        {
+            "empresa_id": empresa_id,
+            "tipo": "emitida",
+            "estado": {"$ne": "anulada"},
+            "eliminada": {"$ne": True},
+        },
+        {"_id": 0, "numero": 1, "numero_boleta": 1, "estado": 1},
+    ).to_list(500)
+
+    if facturas_activas:
+        numeros = [
+            f.get("numero") or f.get("numero_boleta") or "(sin número)"
+            for f in facturas_activas
+        ]
+        lista = ", ".join(numeros[:15])
+        extra = f" y {len(numeros) - 15} más" if len(numeros) > 15 else ""
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"No se puede eliminar el cliente: tiene {len(facturas_activas)} venta(s) registrada(s). "
+                f"Facturas: {lista}{extra}. "
+                "Solo puede eliminarse si todas las ventas están anuladas."
+            ),
+        )
+
     empresa = await db.empresas.find_one({"id": empresa_id}, {"_id": 0, "nombre": 1})
     result = await db.empresas.delete_one({"id": empresa_id})
     if result.deleted_count == 0:

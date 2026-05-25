@@ -4,7 +4,7 @@ import uuid
 from typing import List, Optional
 
 from config import db
-from auth import require_admin, require_authenticated, has_permission, can_access_empresa, log_auditoria, get_logos_acceso, apply_logo_filter, is_forbidden
+from auth import require_admin, require_authenticated, has_permission, can_access_empresa, log_auditoria, get_logos_acceso, apply_logo_filter, is_forbidden, apply_empresa_id_filter
 from models.schemas import PresupuestoCreate, PresupuestoResponse, CostosReales
 
 router = APIRouter()
@@ -119,10 +119,12 @@ async def create_presupuesto(data: PresupuestoCreate, user: dict = Depends(requi
     # Evitar duplicados: si el usuario fuerza un número, validamos; si usamos auto, get_next ya lo garantiza
     await _ensure_numero_unico(numero)
     fecha = data.fecha or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Alinear logo con el cliente para que aparezca al filtrar por empresa activa
+    logo_tipo = data.logo_tipo or empresa.get("logo_tipo") or "arandujar"
     moneda_text = "Dolares Americanos" if data.moneda == "USD" else "Guaranies"
     pago_text = "A credito" if (data.forma_pago or "contado") == "credito" else "Al contado"
     presupuesto_doc = {
-        "id": presupuesto_id, "empresa_id": data.empresa_id, "logo_tipo": data.logo_tipo,
+        "id": presupuesto_id, "empresa_id": data.empresa_id, "logo_tipo": logo_tipo,
         "moneda": data.moneda, "forma_pago": data.forma_pago or "contado",
         "numero": numero, "nombre_archivo": data.nombre_archivo or None,
         "fecha": fecha, "tipo_cambio": data.tipo_cambio,
@@ -136,6 +138,7 @@ async def create_presupuesto(data: PresupuestoCreate, user: dict = Depends(requi
     await db.presupuestos.insert_one(presupuesto_doc)
     await log_auditoria(user, "presupuestos", "crear", f"Presupuesto {numero} creado para {empresa['nombre']}", presupuesto_id)
     response = {**{k: v for k, v in presupuesto_doc.items() if k != "_id"}, "empresa_nombre": empresa["nombre"], "empresa_ruc": empresa.get("ruc")}
+    _normalize_presupuesto(response)
     return response
 
 @router.get("/admin/presupuestos", response_model=List[PresupuestoResponse])
@@ -147,10 +150,9 @@ async def get_presupuestos(empresa_id: Optional[str] = None, estado: Optional[st
         if not can_access_empresa(user, empresa_id):
             return []
         query["empresa_id"] = empresa_id
-    elif user.get("role") != "admin" and user.get("empresas_asignadas"):
-        query["empresa_id"] = {"$in": user["empresas_asignadas"]}
-    elif user.get("role") != "admin" and not user.get("empresas_asignadas"):
-        return []
+    elif user.get("role") not in ("admin", "gerente", "super_admin"):
+        if not apply_empresa_id_filter(query, user):
+            return []
     if estado:
         query["estado"] = estado
     # Filtro por período de tiempo
@@ -208,7 +210,7 @@ async def get_presupuesto(presupuesto_id: str, user: dict = Depends(require_auth
     if not presupuesto:
         raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
     # Admin ve todos los presupuestos (igual que el endpoint de lista); otros roles se verifican
-    if user.get("role") != "admin" and not can_access_empresa(user, presupuesto["empresa_id"]):
+    if user.get("role") not in ("admin", "gerente", "super_admin") and not can_access_empresa(user, presupuesto["empresa_id"]):
         raise HTTPException(status_code=403, detail="No tiene acceso a esta empresa")
     empresa = await db.empresas.find_one({"id": presupuesto["empresa_id"]}, {"_id": 0})
     presupuesto["empresa_nombre"] = empresa["nombre"] if empresa else "Desconocida"

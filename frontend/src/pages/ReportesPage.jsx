@@ -158,6 +158,7 @@ const ReportesPage = () => {
   const [searchParams] = useSearchParams();
   const empresaFromUrl = searchParams.get("empresa") || "";
   const nuevoFromUrl = searchParams.get("nuevo") || "";
+  const tabFromUrl = searchParams.get("tab") || "";
 
   const [empresas, setEmpresas] = useState([]);
   const [alertas, setAlertas] = useState([]);
@@ -174,7 +175,7 @@ const ReportesPage = () => {
   const [editingAlert, setEditingAlert] = useState(null);
   const [alertForm, setAlertForm] = useState({
     empresa_id: empresaFromUrl || "", tipo: "dominio", nombre: "", descripcion: "",
-    fecha_vencimiento: "", activo_id: "", notificar_dias: 30
+    fecha_vencimiento: "", activo_id: "", notificar_dias: 30, notificar_dias_urgente: 0,
   });
   const [alertSearch, setAlertSearch] = useState("");
   const [alertSearchChips, setAlertSearchChips] = useState([]);
@@ -192,6 +193,15 @@ const ReportesPage = () => {
   const [reportClienteId, setReportClienteId] = useState("");
   const [genericReport, setGenericReport] = useState(null);
   const [genericReportLoading, setGenericReportLoading] = useState(false);
+  const [cumpleanosConfig, setCumpleanosConfig] = useState({ notificar_dias_amarillo: 10, notificar_dias_urgente: 0 });
+  const [showCajaPicker, setShowCajaPicker] = useState(false);
+  const [cajaCuentasPicker, setCajaCuentasPicker] = useState([]);
+  const hoyIso = new Date().toISOString().slice(0, 10);
+  const [reportCajaDesde, setReportCajaDesde] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+  });
+  const [reportCajaHasta, setReportCajaHasta] = useState(hoyIso);
 
   // Inyectar CSS de impresión una sola vez
   useEffect(() => {
@@ -319,16 +329,22 @@ const ReportesPage = () => {
         const qs = q.toString();
         return `${API}${path}${qs ? `?${qs}` : ""}`;
       };
-      const [empRes, alertRes, proxRes, actRes] = await Promise.all([
+      const alertFetches = hasPermission?.("alertas.ver") ? [
+        fetch(buildUrl("/admin/alertas/sync-cumpleanos"), { method: "POST", headers: { Authorization: `Bearer ${token}` } }),
+        fetch(buildUrl("/admin/alertas/cumpleanos/config"), { headers: { Authorization: `Bearer ${token}` } }),
+      ] : [];
+      const [empRes, alertRes, proxRes, actRes, ...alertExtra] = await Promise.all([
         fetch(buildUrl("/admin/empresas"), { headers: { Authorization: `Bearer ${token}` } }),
         fetch(buildUrl("/admin/alertas", { empresa_id: empresaFromUrl }), { headers: { Authorization: `Bearer ${token}` } }),
         fetch(buildUrl("/admin/alertas/proximas"), { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(buildUrl("/admin/activos"), { headers: { Authorization: `Bearer ${token}` } })
+        fetch(buildUrl("/admin/activos"), { headers: { Authorization: `Bearer ${token}` } }),
+        ...alertFetches,
       ]);
       if (empRes.ok) setEmpresas(await empRes.json());
       if (alertRes.ok) setAlertas(await alertRes.json());
       if (proxRes.ok) setAlertasProximas(await proxRes.json());
       if (actRes.ok) setActivos(await actRes.json());
+      if (alertExtra[1]?.ok) setCumpleanosConfig(await alertExtra[1].json());
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   };
@@ -1077,12 +1093,12 @@ const ReportesPage = () => {
   // ── Alert CRUD ───────────────────────────────────────────────────────────────
   const openNewAlert = () => {
     setEditingAlert(null);
-    setAlertForm({ empresa_id: empresaFromUrl || "", tipo: "dominio", nombre: "", descripcion: "", fecha_vencimiento: "", activo_id: "", notificar_dias: 30 });
+    setAlertForm({ empresa_id: empresaFromUrl || "", tipo: "dominio", nombre: "", descripcion: "", fecha_vencimiento: "", activo_id: "", notificar_dias: 30, notificar_dias_urgente: 0 });
     setShowAlertForm(true);
   };
   const openEditAlert = (alerta) => {
     setEditingAlert(alerta);
-    setAlertForm({ empresa_id: alerta.empresa_id, tipo: alerta.tipo, nombre: alerta.nombre, descripcion: alerta.descripcion || "", fecha_vencimiento: alerta.fecha_vencimiento?.split("T")[0] || "", activo_id: alerta.activo_id || "", notificar_dias: alerta.notificar_dias || 30 });
+    setAlertForm({ empresa_id: alerta.empresa_id, tipo: alerta.tipo, nombre: alerta.nombre, descripcion: alerta.descripcion || "", fecha_vencimiento: alerta.fecha_vencimiento?.split("T")[0] || "", activo_id: alerta.activo_id || "", notificar_dias: alerta.notificar_dias || 30, notificar_dias_urgente: alerta.notificar_dias_urgente ?? 0 });
     setShowAlertForm(true);
   };
   const saveAlert = async () => {
@@ -1100,6 +1116,12 @@ const ReportesPage = () => {
     if (!window.confirm("¿Eliminar?")) return;
     try { await fetch(`${API}/admin/alertas/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }); fetchAll(); } catch {}
   };
+
+  useEffect(() => {
+    if (tabFromUrl === "alertas" && hasPermission?.("alertas.ver")) {
+      setTab("alertas");
+    }
+  }, [tabFromUrl, activeEmpresaPropia?.id]); // eslint-disable-line
 
   useEffect(() => {
     if (handledNuevo || nuevoFromUrl !== "alerta") return;
@@ -1127,11 +1149,110 @@ const ReportesPage = () => {
     return matchesChips(texto, alertSearchChips, alertSearch);
   }), [alertasDeEmpresaActiva, alertSearchChips, alertSearch]);
 
-  const getDaysColor = (dias) => {
+  const getDaysColor = (dias, colorAlerta) => {
+    if (colorAlerta === "rojo") return "text-red-400 bg-red-500/10 border-red-500/20";
+    if (colorAlerta === "amarillo") return "text-amber-400 bg-amber-500/10 border-amber-500/20";
+    if (colorAlerta === "verde") return "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
     if (dias < 0) return "text-red-400 bg-red-500/10 border-red-500/20";
     if (dias <= 7) return "text-orange-400 bg-orange-500/10 border-orange-500/20";
     if (dias <= 30) return "text-amber-400 bg-amber-500/10 border-amber-500/20";
     return "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+  };
+
+  const saveCumpleanosConfig = async () => {
+    try {
+      const res = await fetch(`${API}/admin/alertas/cumpleanos/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(cumpleanosConfig),
+      });
+      if (res.ok) {
+        toast.success("Configuración de cumpleaños guardada");
+        await fetch(`${API}/admin/alertas/sync-cumpleanos${activeEmpresaPropia?.slug ? `?logo_tipo=${activeEmpresaPropia.slug}` : ""}`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+        fetchAll();
+      }
+    } catch {
+      toast.error("No se pudo guardar la configuración");
+    }
+  };
+
+  const ejecutarReporteCajaBanco = async (cuentaId) => {
+    setGenericReportLoading(true);
+    setShowCajaPicker(false);
+    try {
+      const desde = reportCajaDesde;
+      const hasta = reportCajaHasta;
+      if (!desde || !hasta) {
+        toast.error("Indicá fecha desde y hasta");
+        setGenericReportLoading(false);
+        return;
+      }
+      if (desde > hasta) {
+        toast.error("La fecha desde no puede ser posterior a hasta");
+        setGenericReportLoading(false);
+        return;
+      }
+      const q = new URLSearchParams({ cuenta_id: cuentaId, desde, hasta });
+      if (activeEmpresaPropia?.slug) q.set("logo_tipo", activeEmpresaPropia.slug);
+      const res = await fetch(`${API}/admin/reportes/caja-banco?${q}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Error al generar reporte");
+      const data = await res.json();
+      const cuenta = data.cuenta || {};
+      const movs = data.movimientos || [];
+      setGenericReport({
+        title: `Caja / Banco — ${cuenta.nombre || cuentaId}`,
+        subtitle: `${data.desde} → ${data.hasta} · ${activeEmpresaPropia?.nombre || "Todas"}`,
+        summary: [
+          ["Saldo inicial", fmtPYG(data.saldo_inicial)],
+          ["Total ingresos", fmtPYG(data.total_ingresos)],
+          ["Total egresos", fmtPYG(data.total_egresos)],
+          ["Saldo final", fmtPYG(data.saldo_final)],
+        ],
+        sections: [{
+          title: "Movimientos del periodo",
+          columns: ["Fecha", "Tipo", "Concepto", "Monto"],
+          rows: movs.map(m => [m.fecha || "-", m.tipo || "-", m.concepto || "-", fmtPYG(m.monto)]),
+        }],
+        periodLabel: `${desde} → ${hasta}`,
+      });
+    } catch (e) {
+      toast.error(e.message || "Error en reporte caja/banco");
+    } finally {
+      setGenericReportLoading(false);
+    }
+  };
+
+  const abrirReporteCajaBanco = async () => {
+    setGenericReportLoading(true);
+    try {
+      const q = activeEmpresaPropia?.slug ? `?logo_tipo=${activeEmpresaPropia.slug}` : "";
+      const res = await fetch(`${API}/admin/reportes/caja-banco/cuentas${q}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.status === 404) {
+        toast.error("El reporte de caja/banco no está disponible. Reiniciá el servidor backend o contactá soporte.");
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Sin acceso al reporte");
+      }
+      const cuentas = await res.json();
+      if (!cuentas.length) {
+        const resBancos = await fetch(`${API}/admin/cuentas-bancarias${q}`, { headers: { Authorization: `Bearer ${token}` } });
+        const todas = resBancos.ok ? await resBancos.json() : [];
+        if (!todas.length) {
+          toast.error("No hay ninguna cuenta bancaria creada. Andá a Bancos → Nueva cuenta y creá una antes de este reporte.");
+        } else {
+          toast.error("No tenés ninguna cuenta bancaria habilitada para este reporte. Pedí al administrador que te asigne cuentas en Usuarios.");
+        }
+        return;
+      }
+      setCajaCuentasPicker(cuentas);
+      setShowCajaPicker(true);
+    } catch (e) {
+      toast.error(e.message || "No se pudo cargar cuentas");
+    } finally {
+      setGenericReportLoading(false);
+    }
   };
 
   const empresaName = empresaFromUrl ? empresas.find(e => e.id === empresaFromUrl)?.nombre : null;
@@ -1152,7 +1273,7 @@ const ReportesPage = () => {
   }, [tab, activeEmpresaPropia?.id, user?.permisos]); // eslint-disable-line
 
   useEffect(() => {
-    const financieroVisible = hasPermission?.("reportes.balance_mensual") || hasPermission?.("reportes.balance_anual") || hasPermission?.("reportes.balance_detallado") || hasPermission?.("reportes.facturas") || hasPermission?.("reportes.cliente_detallado") || hasPermission?.("reportes.ingresos") || hasPermission?.("reportes.recibos") || hasPermission?.("reportes.notas_credito") || hasPermission?.("reportes.presupuestos") || hasPermission?.("reportes.compras") || hasPermission?.("reportes.gastos") || hasPermission?.("reportes.proveedores") || hasPermission?.("reportes.iva");
+    const financieroVisible = hasPermission?.("reportes.balance_mensual") || hasPermission?.("reportes.balance_anual") || hasPermission?.("reportes.balance_detallado") || hasPermission?.("reportes.facturas") || hasPermission?.("reportes.cliente_detallado") || hasPermission?.("reportes.ingresos") || hasPermission?.("reportes.recibos") || hasPermission?.("reportes.notas_credito") || hasPermission?.("reportes.presupuestos") || hasPermission?.("reportes.compras") || hasPermission?.("reportes.gastos") || hasPermission?.("reportes.proveedores") || hasPermission?.("reportes.iva") || hasPermission?.("reportes.caja_banco");
     const visibles = [
       financieroVisible && "financiero",
       (hasModule?.("productos_stock") && (hasPermission?.("reportes.productos_stock") || hasPermission?.("reportes.stock_historial"))) && "inventario",
@@ -1689,7 +1810,7 @@ const ReportesPage = () => {
           <h3 className="text-red-400 font-semibold text-sm flex items-center gap-2 mb-3"><AlertTriangle className="w-4 h-4" /> Alertas Proximas ({alertasProximasVisibles.length})</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
             {alertasProximasVisibles.map(a => (
-              <div key={a.id} className={`flex items-center justify-between p-2 rounded-lg border ${getDaysColor(a.dias_restantes)}`}>
+              <div key={a.id} className={`flex items-center justify-between p-2 rounded-lg border ${getDaysColor(a.dias_restantes, a.color_alerta)}`}>
                 <div><p className="text-white text-sm font-medium">{a.nombre}</p><p className="text-slate-400 text-xs">{a.empresa_nombre}</p></div>
                 <span className="text-xs font-bold">{a.dias_restantes < 0 ? `Vencido ${Math.abs(a.dias_restantes)}d` : `${a.dias_restantes}d`}</span>
               </div>
@@ -1822,10 +1943,11 @@ const ReportesPage = () => {
                   { visible: hasPermission?.("reportes.gastos"), title: "Gastos", desc: "Pagos de gastos fijos del periodo", tipo: "gastos", color: "text-red-400", icon: Calendar },
                   { visible: hasPermission?.("reportes.proveedores"), title: "Proveedores y deudas", desc: `Proveedores, pagos y pendientes del año ${reportYear}`, tipo: "proveedores", color: "text-amber-400", icon: DollarSign },
                   { visible: hasPermission?.("reportes.iva"), title: "IVA fiscal", desc: "Debito, credito, pagos y saldo actual acumulado", tipo: "iva", color: "text-purple-400", icon: Table },
+                  { visible: hasPermission?.("reportes.caja_banco"), title: "Caja / Banco", desc: "Movimientos por cuenta (mes o día, elige banco)", tipo: "caja_banco", color: "text-cyan-400", icon: DollarSign, onClick: abrirReporteCajaBanco },
                 ].filter(r => r.visible).map(r => {
                   const RIcon = r.icon;
                   return (
-                    <button key={r.title} onClick={() => generarReporte(r.tipo)} disabled={genericReportLoading}
+                    <button key={r.title} onClick={() => (r.onClick ? r.onClick() : generarReporte(r.tipo))} disabled={genericReportLoading}
                       className="flex items-start gap-3 p-4 bg-arandu-dark rounded-xl border border-white/5 hover:border-emerald-500/30 transition-all group"
                     >
                       <div className="w-9 h-9 rounded-lg bg-white/5 flex items-center justify-center flex-shrink-0 group-hover:bg-emerald-500/10 transition-colors">
@@ -1924,6 +2046,28 @@ const ReportesPage = () => {
       )}
 
       {/* ══════════════════ TAB: Alertas ══════════════════ */}
+      {tab === "alertas" && hasPermission?.("alertas.ver") && (
+        <div className="mb-6 bg-arandu-dark-light border border-pink-500/20 rounded-xl p-4">
+          <h3 className="text-pink-300 font-semibold text-sm mb-3 flex items-center gap-2"><Bell className="w-4 h-4" /> Cumpleaños (valores por defecto)</h3>
+          <p className="text-slate-500 text-xs mb-3">Rojo = día del cumpleaños. Amarillo = días antes. Valores globales; en Clientes podés definir umbrales distintos por cliente (dejá vacío para usar estos).</p>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="text-slate-400 text-xs block mb-1">Aviso amarillo (días antes)</label>
+              <Input type="number" min={0} value={cumpleanosConfig.notificar_dias_amarillo ?? 10}
+                onChange={e => setCumpleanosConfig(c => ({ ...c, notificar_dias_amarillo: parseInt(e.target.value, 10) || 0 }))}
+                className="bg-arandu-dark border-white/10 text-white w-28" />
+            </div>
+            <div>
+              <label className="text-slate-400 text-xs block mb-1">Urgente rojo (días: 0 = hoy)</label>
+              <Input type="number" min={0} value={cumpleanosConfig.notificar_dias_urgente ?? 0}
+                onChange={e => setCumpleanosConfig(c => ({ ...c, notificar_dias_urgente: parseInt(e.target.value, 10) || 0 }))}
+                className="bg-arandu-dark border-white/10 text-white w-28" />
+            </div>
+            <Button onClick={saveCumpleanosConfig} className="bg-pink-600 hover:bg-pink-700 text-white text-sm">Guardar y sincronizar</Button>
+          </div>
+        </div>
+      )}
+
       {tab === "alertas" && (
         <div className="space-y-4">
           <div className="flex flex-col lg:flex-row gap-3 mb-4">
@@ -1955,7 +2099,7 @@ const ReportesPage = () => {
                     <div className="flex-1">
                       <div className="flex flex-wrap items-center gap-2 mb-1">
                         <h3 className={`font-semibold text-sm ${isR ? "text-slate-500 line-through" : "text-white"}`}>{alerta.nombre}</h3>
-                        <span className={`text-xs px-2 py-0.5 rounded border ${alerta.tipo === "dominio" ? "text-blue-400 bg-blue-500/10 border-blue-500/20" : alerta.tipo === "nic" ? "text-purple-400 bg-purple-500/10 border-purple-500/20" : "text-slate-400 bg-slate-500/10 border-slate-500/20"}`}>{alerta.tipo}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded border ${alerta.tipo === "cumpleanos" ? "text-pink-400 bg-pink-500/10 border-pink-500/20" : alerta.tipo === "dominio" ? "text-blue-400 bg-blue-500/10 border-blue-500/20" : alerta.tipo === "nic" ? "text-purple-400 bg-purple-500/10 border-purple-500/20" : "text-slate-400 bg-slate-500/10 border-slate-500/20"}`}>{alerta.tipo}{alerta.auto_generada ? " · auto" : ""}</span>
                         <span className="text-slate-500 text-xs">{alerta.empresa_nombre}</span>
                       </div>
                       {alerta.descripcion && <p className="text-slate-400 text-xs">{alerta.descripcion}</p>}
@@ -1966,8 +2110,8 @@ const ReportesPage = () => {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {!isR && <span className={`text-xs font-bold px-2 py-1 rounded border ${getDaysColor(dias)}`}>{dias < 0 ? "Vencido" : `${dias}d`}</span>}
-                    <button onClick={() => openEditAlert(alerta)} className="p-1 text-slate-400 hover:text-amber-400"><Edit className="w-3.5 h-3.5" /></button>
+                    {!isR && <span className={`text-xs font-bold px-2 py-1 rounded border ${getDaysColor(dias, alerta.color_alerta)}`}>{dias < 0 ? "Vencido" : dias === 0 ? "Hoy" : `${dias}d`}</span>}
+                    {!alerta.auto_generada && <button onClick={() => openEditAlert(alerta)} className="p-1 text-slate-400 hover:text-amber-400"><Edit className="w-3.5 h-3.5" /></button>}
                     <button onClick={() => deleteAlert(alerta.id)} className="p-1 text-slate-400 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 </div>
@@ -1991,9 +2135,15 @@ const ReportesPage = () => {
                   <select value={alertForm.empresa_id} onChange={(e) => setAlertForm({...alertForm, empresa_id: e.target.value, activo_id: ""})} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm" data-testid="alert-empresa"><option value="">Seleccionar cliente...</option>{empresas.map(e => <option key={e.id} value={e.id}>{e.nombre}</option>)}</select></div>
                 <div className="grid grid-cols-2 gap-3">
                   <div><label className="text-slate-400 text-xs mb-1 block">Tipo</label>
-                    <select value={alertForm.tipo} onChange={(e) => setAlertForm({...alertForm, tipo: e.target.value})} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm" data-testid="alert-tipo"><option value="dominio">Dominio</option><option value="nic">NIC</option><option value="licencia">Licencia</option><option value="personalizado">Personalizado</option></select></div>
-                  <div><label className="text-slate-400 text-xs mb-1 block">Notificar dias antes</label><Input type="number" value={alertForm.notificar_dias} onChange={(e) => setAlertForm({...alertForm, notificar_dias: parseInt(e.target.value) || 30})} className="bg-arandu-dark border-white/10 text-white" /></div>
+                    <select value={alertForm.tipo} onChange={(e) => setAlertForm({...alertForm, tipo: e.target.value})} className="w-full bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm" data-testid="alert-tipo"><option value="dominio">Dominio</option><option value="nic">NIC</option><option value="licencia">Licencia</option><option value="cumpleanos">Cumpleaños</option><option value="personalizado">Personalizado</option></select></div>
+                  <div><label className="text-slate-400 text-xs mb-1 block">Notificar dias antes (amarillo)</label><Input type="number" value={alertForm.notificar_dias} onChange={(e) => setAlertForm({...alertForm, notificar_dias: parseInt(e.target.value) || 30})} className="bg-arandu-dark border-white/10 text-white" /></div>
                 </div>
+                {alertForm.tipo === "cumpleanos" && (
+                  <div><label className="text-slate-400 text-xs mb-1 block">Urgente rojo (días: 0 = hoy)</label>
+                    <Input type="number" min={0} value={alertForm.notificar_dias_urgente ?? 0}
+                      onChange={(e) => setAlertForm({ ...alertForm, notificar_dias_urgente: parseInt(e.target.value, 10) || 0 })}
+                      className="bg-arandu-dark border-white/10 text-white" /></div>
+                )}
                 <div><label className="text-slate-400 text-xs mb-1 block">Nombre *</label><Input value={alertForm.nombre} onChange={(e) => setAlertForm({...alertForm, nombre: e.target.value})} className="bg-arandu-dark border-white/10 text-white" placeholder="Dominio empresa.com.py" data-testid="alert-nombre" /></div>
                 <div><label className="text-slate-400 text-xs mb-1 block">Vencimiento *</label><Input type="date" value={alertForm.fecha_vencimiento} onChange={(e) => setAlertForm({...alertForm, fecha_vencimiento: e.target.value})} className="bg-arandu-dark border-white/10 text-white" data-testid="alert-fecha" /></div>
                 <div><label className="text-slate-400 text-xs mb-1 block">Activo (opcional)</label>
@@ -2004,6 +2154,41 @@ const ReportesPage = () => {
                   <Button onClick={saveAlert} className="bg-red-600 hover:bg-red-700 text-white" data-testid="save-alert-btn"><Save className="w-4 h-4 mr-2" /> Guardar</Button>
                 </div>
               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showCajaPicker && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
+            onClick={(e) => e.target === e.currentTarget && setShowCajaPicker(false)}>
+            <motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }}
+              className="bg-arandu-dark-light border border-white/10 rounded-xl w-full max-w-md p-5">
+              <h3 className="text-white font-bold mb-2">Elegir cuenta bancaria</h3>
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div>
+                  <label className="text-slate-500 text-xs block mb-1">Desde</label>
+                  <input type="date" value={reportCajaDesde} onChange={e => setReportCajaDesde(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-arandu-dark border border-white/10 text-white text-sm" />
+                </div>
+                <div>
+                  <label className="text-slate-500 text-xs block mb-1">Hasta</label>
+                  <input type="date" value={reportCajaHasta} onChange={e => setReportCajaHasta(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-arandu-dark border border-white/10 text-white text-sm" />
+                </div>
+              </div>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {cajaCuentasPicker.map(c => (
+                  <button key={c.id} type="button" onClick={() => ejecutarReporteCajaBanco(c.id)}
+                    className="w-full text-left px-4 py-3 rounded-lg border border-white/10 hover:border-cyan-500/40 hover:bg-cyan-500/10 transition-all">
+                    <p className="text-white text-sm font-medium">{c.nombre}</p>
+                    <p className="text-slate-500 text-xs">{c.moneda || "PYG"} · {c.banco || c.tipo || "Cuenta"}</p>
+                  </button>
+                ))}
+              </div>
+              <Button onClick={() => setShowCajaPicker(false)} variant="ghost" className="w-full mt-4 text-slate-400">Cancelar</Button>
             </motion.div>
           </motion.div>
         )}

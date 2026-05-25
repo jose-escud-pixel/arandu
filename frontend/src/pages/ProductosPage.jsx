@@ -35,7 +35,7 @@ const IVA_OPCIONES = [
 ];
 
 const emptyForm = {
-  nombre: "", descripcion: "", sku: "", categoria: "",
+  nombre: "", descripcion: "", sku: "", codigo_barras: "", categoria: "",
   precio_costo: "", ganancia_pct: "", precio_venta: "",
   stock_actual: "0", stock_inicial_view: "", stock_minimo: "0",
   unidad: "unidad", logo_tipo: "arandujar", activo: true,
@@ -156,6 +156,7 @@ export default function ProductosPage() {
       nombre: p.nombre,
       descripcion: p.descripcion || "",
       sku: p.sku || "",
+      codigo_barras: p.codigo_barras || "",
       categoria: p.categoria || "",
       precio_costo: String(p.precio_costo || ""),
       ganancia_pct: "",
@@ -208,6 +209,7 @@ export default function ProductosPage() {
       nombre: formData.nombre,
       descripcion: formData.descripcion || null,
       sku: formData.sku.trim(),
+      codigo_barras: (formData.codigo_barras || "").trim() || null,
       categoria: formData.categoria || null,
       precio_costo: parseFloat(formData.precio_costo) || 0,
       precio_venta: parseFloat(formData.precio_venta) || 0,
@@ -382,7 +384,7 @@ export default function ProductosPage() {
   const filteredProductos = productos.filter(p => {
     const active = [...chips, search].filter(Boolean);
     if (active.length === 0) return true;
-    const text = [p.nombre, p.descripcion, p.sku, p.categoria, p.unidad, p.logo_tipo,
+    const text = [p.nombre, p.descripcion, p.sku, p.codigo_barras, p.categoria, p.unidad, p.logo_tipo,
       String(p.stock_actual || ""), String(p.precio_venta || ""),
       p.activo ? "activo" : "inactivo", p.iva_tipo
     ].filter(Boolean).join(" ").toLowerCase();
@@ -598,7 +600,7 @@ export default function ProductosPage() {
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm font-body focus:outline-none focus:border-cyan-500" />
               </div>
 
-              {/* SKU + Categoría */}
+              {/* SKU + código de barras */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-400 text-xs mb-1 font-body">SKU *</label>
@@ -607,6 +609,17 @@ export default function ProductosPage() {
                     placeholder="Código único"
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm font-body focus:outline-none focus:border-cyan-500" />
                 </div>
+                <div>
+                  <label className="block text-slate-400 text-xs mb-1 font-body">Código de barras</label>
+                  <input value={formData.codigo_barras}
+                    onChange={e => setFormData(f => ({ ...f, codigo_barras: e.target.value }))}
+                    placeholder="Opcional — escáner o EAN"
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm font-body focus:outline-none focus:border-cyan-500" />
+                </div>
+              </div>
+
+              {/* Categoría */}
+              <div className="grid grid-cols-1 gap-3">
                 <div>
                   <label className="block text-slate-400 text-xs mb-1 font-body">Categoría <span className="text-red-400">*</span></label>
                   <select value={formData.categoria} onChange={e => handleCategoriaChange(e.target.value)}

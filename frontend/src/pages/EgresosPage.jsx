@@ -459,6 +459,59 @@ const EgresosPage = () => {
   const puedeUsarStockProductos = hasModule?.("productos_stock");
   const puedeCambiarAfectaStockCompra = isAdmin || hasPermission("compras.afectar_stock");
 
+  const addCompraItemFromProduct = (prod, incrementIfExists = true) => {
+    if (!prod) return;
+    const ivaFromTipo = prod.iva_tipo === "exenta" ? 0 : prod.iva_tipo === "5" ? 5 : 10;
+    const pu = prod.precio_costo || prod.precio_venta || 0;
+    setCompraForm(p => {
+      const items = [...(p.items || [])];
+      if (incrementIfExists) {
+        const idx = items.findIndex(it => String(it.producto_id) === String(prod.id));
+        if (idx >= 0) {
+          const cant = (parseFloat(items[idx].cantidad) || 0) + 1;
+          const sub = cant * (parseFloat(items[idx].precio_unitario) || 0);
+          items[idx] = { ...items[idx], cantidad: cant, subtotal: sub };
+          return { ...p, items, afecta_stock: true };
+        }
+      }
+      items.push({
+        descripcion: prod.nombre,
+        cantidad: 1,
+        precio_unitario: pu,
+        subtotal: pu,
+        producto_id: prod.id,
+        producto_sku: prod.sku || "",
+        iva: ivaFromTipo,
+      });
+      return { ...p, items, afecta_stock: true };
+    });
+  };
+
+  const handleCompraBarcodeSubmit = async () => {
+    const code = (compraBarcodeInput || "").trim();
+    if (!code) return;
+    let prod = productos.find(p => (p.codigo_barras || "").trim() === code && p.activo !== false);
+    if (!prod) {
+      try {
+        setCompraBarcodeLoading(true);
+        const q = activeEmpresaPropia?.slug ? `?logo_tipo=${activeEmpresaPropia.slug}` : "";
+        const res = await fetch(`${API}/admin/productos/by-barcode/${encodeURIComponent(code)}${q}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || "Producto no encontrado");
+        prod = await res.json();
+      } catch (e) {
+        toast.error(e.message || "No se encontró el producto");
+        return;
+      } finally {
+        setCompraBarcodeLoading(false);
+      }
+    }
+    addCompraItemFromProduct(prod, true);
+    setCompraBarcodeInput("");
+    toast.success(`${prod.nombre} agregado`);
+  };
+
   // ── Tab activo ──────────────────────────────────────────────────────────────
   const [tab, setTab] = useState("compras");
 
@@ -480,6 +533,8 @@ const EgresosPage = () => {
   const [productos, setProductos] = useState([]);
   const [showProductoBrowser, setShowProductoBrowser] = useState(false);
   const [productoSearch, setProductoSearch] = useState("");
+  const [compraBarcodeInput, setCompraBarcodeInput] = useState("");
+  const [compraBarcodeLoading, setCompraBarcodeLoading] = useState(false);
   const [notasCompra, setNotasCompra] = useState([]);
   const [showNotaCompraForm, setShowNotaCompraForm] = useState(false);
   const [editingNotaCompra, setEditingNotaCompra] = useState(null);
@@ -3534,6 +3589,27 @@ const EgresosPage = () => {
 
                 {/* ── Items / Conceptos ── */}
                 <div>
+                  {puedeUsarStockProductos && (
+                    <div className="mb-3 flex flex-wrap items-end gap-2 p-3 rounded-lg border border-orange-500/25 bg-orange-500/5">
+                      <div className="flex-1 min-w-[200px]">
+                        <label className="text-slate-400 text-xs mb-1 block">Código de barras</label>
+                        <input
+                          value={compraBarcodeInput}
+                          onChange={e => setCompraBarcodeInput(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleCompraBarcodeSubmit(); } }}
+                          placeholder="Escanear o escribir y Enter"
+                          disabled={compraBarcodeLoading}
+                          className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-orange-500/50"
+                        />
+                      </div>
+                      <button type="button" onClick={handleCompraBarcodeSubmit}
+                        disabled={compraBarcodeLoading || !compraBarcodeInput.trim()}
+                        className="px-4 py-2 rounded-lg bg-orange-500 text-white text-sm font-medium hover:bg-orange-600 disabled:opacity-50">
+                        {compraBarcodeLoading ? "..." : "Agregar"}
+                      </button>
+                      <p className="w-full text-slate-500 text-[11px]">Si el producto ya está en la lista, se suma 1 a la cantidad.</p>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-slate-400 text-sm">Ítems de la compra</label>
                     <div className="flex gap-2">
@@ -3889,22 +3965,12 @@ const EgresosPage = () => {
               <div className="max-h-72 overflow-y-auto space-y-1">
                 {productos
                   .filter(p => !activeEmpresaPropia?.slug || p.logo_tipo === activeEmpresaPropia.slug)
-                  .filter(p => !productoSearch || p.nombre?.toLowerCase().includes(productoSearch.toLowerCase()) || p.sku?.toLowerCase().includes(productoSearch.toLowerCase()) || p.codigo?.toLowerCase().includes(productoSearch.toLowerCase()))
+                  .filter(p => !productoSearch || p.nombre?.toLowerCase().includes(productoSearch.toLowerCase()) || p.sku?.toLowerCase().includes(productoSearch.toLowerCase()) || p.codigo_barras?.toLowerCase().includes(productoSearch.toLowerCase()) || p.codigo?.toLowerCase().includes(productoSearch.toLowerCase()))
                   .slice(0, 40)
                   .map(prod => (
                     <button key={prod.id} type="button"
                       onClick={() => {
-                        const ivaFromTipo = prod.iva_tipo === "exenta" ? 0 : prod.iva_tipo === "5" ? 5 : 10;
-                        const newItem = {
-                          descripcion: prod.nombre,
-                          cantidad: 1,
-                          precio_unitario: prod.precio_costo || prod.precio_venta || "",
-                          subtotal: prod.precio_costo || prod.precio_venta || 0,
-                          producto_id: prod.id,
-                          producto_sku: prod.sku || "",
-                          iva: ivaFromTipo,
-                        };
-                        setCompraForm(p => ({ ...p, items: [...(p.items || []), newItem] }));
+                        addCompraItemFromProduct(prod, false);
                         setShowProductoBrowser(false);
                         setProductoSearch("");
                       }}
@@ -3929,7 +3995,7 @@ const EgresosPage = () => {
                   ))}
                 {productos
                   .filter(p => !activeEmpresaPropia?.slug || p.logo_tipo === activeEmpresaPropia.slug)
-                  .filter(p => !productoSearch || p.nombre?.toLowerCase().includes(productoSearch.toLowerCase()) || p.sku?.toLowerCase().includes(productoSearch.toLowerCase()) || p.codigo?.toLowerCase().includes(productoSearch.toLowerCase()))
+                  .filter(p => !productoSearch || p.nombre?.toLowerCase().includes(productoSearch.toLowerCase()) || p.sku?.toLowerCase().includes(productoSearch.toLowerCase()) || p.codigo_barras?.toLowerCase().includes(productoSearch.toLowerCase()) || p.codigo?.toLowerCase().includes(productoSearch.toLowerCase()))
                   .length === 0 && (
                   <div className="text-center py-8 text-slate-500 text-sm">No se encontraron productos</div>
                 )}

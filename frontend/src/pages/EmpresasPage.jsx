@@ -87,7 +87,8 @@ const EmpresasPage = () => {
       setFormData({
         nombre: "", razon_social: "", ruc: "", direccion: "", telefono: "", email: "", contacto: "",
         aplica_retencion: false, porcentaje_retencion: "", notas: "", logo_tipo: activeEmpresaPropia?.slug || "arandujar",
-        personeria: "fisica", fecha_nacimiento: "", nacionalidad: "", pais: "", ciudad: "", municipio: "",
+        personeria: "fisica", fecha_nacimiento: "", cumpleanos_amarillo_dias: "", cumpleanos_urgente_dias: "",
+        nacionalidad: "", pais: "", ciudad: "", municipio: "",
         con_inventario_tecnico: false
       });
       setShowForm(true);
@@ -105,6 +106,7 @@ const EmpresasPage = () => {
   const [selectedEmpresa, setSelectedEmpresa] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editingEmpresa, setEditingEmpresa] = useState(null);
+  const [bloqueaFiscalCliente, setBloqueaFiscalCliente] = useState(false);
   const [formData, setFormData] = useState({
     nombre: "",
     razon_social: "",
@@ -119,6 +121,8 @@ const EmpresasPage = () => {
     logo_tipo: "arandujar",
     personeria: "fisica",
     fecha_nacimiento: "",
+    cumpleanos_amarillo_dias: "",
+    cumpleanos_urgente_dias: "",
     nacionalidad: "",
     pais: "",
     ciudad: "",
@@ -205,6 +209,10 @@ const EmpresasPage = () => {
       } else {
         delete payload.porcentaje_retencion;
       }
+      ["cumpleanos_amarillo_dias", "cumpleanos_urgente_dias"].forEach((k) => {
+        if (payload[k] === "" || payload[k] === null || payload[k] === undefined) payload[k] = null;
+        else payload[k] = Number(payload[k]);
+      });
 
       const response = await fetch(url, {
         method: editingEmpresa ? "PUT" : "POST",
@@ -220,36 +228,57 @@ const EmpresasPage = () => {
         resetForm();
         fetchEmpresas();
       } else {
-        throw new Error("Error al guardar");
+        let detail = "Error al guardar el cliente";
+        try {
+          const err = await response.json();
+          detail = err.detail
+            ? (Array.isArray(err.detail) ? err.detail.map(d => d.msg || d).join("; ") : String(err.detail))
+            : detail;
+        } catch (_) { /* ignore */ }
+        toast.error(detail);
       }
     } catch (error) {
       toast.error("Error al guardar el cliente");
     }
   };
 
-  const handleEdit = (empresa) => {
+  const empresaToForm = (e) => ({
+    nombre: e.nombre || "",
+    razon_social: e.razon_social || "",
+    ruc: e.ruc || "",
+    direccion: e.direccion || "",
+    telefono: e.telefono || "",
+    email: e.email || "",
+    contacto: e.contacto || "",
+    aplica_retencion: e.aplica_retencion || false,
+    porcentaje_retencion: e.porcentaje_retencion ?? "",
+    notas: e.notas || "",
+    logo_tipo: e.logo_tipo || "arandujar",
+    personeria: e.personeria || "fisica",
+    fecha_nacimiento: e.fecha_nacimiento || "",
+    cumpleanos_amarillo_dias: e.cumpleanos_amarillo_dias != null && e.cumpleanos_amarillo_dias !== "" ? String(e.cumpleanos_amarillo_dias) : "",
+    cumpleanos_urgente_dias: e.cumpleanos_urgente_dias != null && e.cumpleanos_urgente_dias !== "" ? String(e.cumpleanos_urgente_dias) : "",
+    nacionalidad: e.nacionalidad || "",
+    pais: e.pais || "",
+    ciudad: e.ciudad || "",
+    municipio: e.municipio || "",
+    con_inventario_tecnico: e.con_inventario_tecnico ?? true,
+  });
+
+  const handleEdit = async (empresa) => {
     setEditingEmpresa(empresa);
-    setFormData({
-      nombre: empresa.nombre || "",
-      razon_social: empresa.razon_social || "",
-      ruc: empresa.ruc || "",
-      direccion: empresa.direccion || "",
-      telefono: empresa.telefono || "",
-      email: empresa.email || "",
-      contacto: empresa.contacto || "",
-      aplica_retencion: empresa.aplica_retencion || false,
-      porcentaje_retencion: empresa.porcentaje_retencion ?? "",
-      notas: empresa.notas || "",
-      logo_tipo: empresa.logo_tipo || "arandujar",
-      personeria: empresa.personeria || "fisica",
-      fecha_nacimiento: empresa.fecha_nacimiento || "",
-      nacionalidad: empresa.nacionalidad || "",
-      pais: empresa.pais || "",
-      ciudad: empresa.ciudad || "",
-      municipio: empresa.municipio || "",
-      // null/undefined → true (retrocompatibilidad: clientes viejos tienen IT habilitado)
-      con_inventario_tecnico: empresa.con_inventario_tecnico ?? true
-    });
+    setBloqueaFiscalCliente(false);
+    let det = empresa;
+    try {
+      const res = await fetch(`${API}/admin/empresas/${empresa.id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        det = await res.json();
+        setBloqueaFiscalCliente((det.ventas_activas_count || 0) > 0);
+      }
+    } catch (_) { /* ignore */ }
+    setFormData(empresaToForm(det));
     setShowForm(true);
   };
 
@@ -263,6 +292,14 @@ const EmpresasPage = () => {
       if (response.ok) {
         toast.success("Cliente eliminado");
         fetchEmpresas();
+        if (selectedEmpresa?.id === empresaId) setSelectedEmpresa(null);
+      } else {
+        let detail = "No se puede eliminar el cliente";
+        try {
+          const err = await response.json();
+          detail = err.detail ? String(err.detail) : detail;
+        } catch (_) { /* ignore */ }
+        toast.error(detail, { duration: 8000 });
       }
     } catch (error) {
       toast.error("Error al eliminar");
@@ -272,6 +309,7 @@ const EmpresasPage = () => {
   const resetForm = () => {
     setShowForm(false);
     setEditingEmpresa(null);
+    setBloqueaFiscalCliente(false);
     setFormData({
       nombre: "",
       razon_social: "",
@@ -286,6 +324,8 @@ const EmpresasPage = () => {
       logo_tipo: activeEmpresaPropia?.slug || "arandujar",
       personeria: "fisica",
       fecha_nacimiento: "",
+      cumpleanos_amarillo_dias: "",
+      cumpleanos_urgente_dias: "",
       nacionalidad: "",
       pais: "",
       ciudad: "",
@@ -462,6 +502,9 @@ const EmpresasPage = () => {
                   </div>
 
                   <form onSubmit={handleSubmit} className="space-y-4">
+                    <a href="#cumpleanos-cliente" className="text-pink-400 text-xs hover:underline">
+                      Ir a umbrales de cumpleaños (por cliente) ↓
+                    </a>
                     {/* Empresa propia a la que pertenece este cliente */}
                     {activeEmpresaPropia ? (
                       <div className="flex items-center gap-3 p-3 rounded-lg border"
@@ -520,10 +563,18 @@ const EmpresasPage = () => {
                         <label className="block text-slate-400 text-sm mb-2">Razón social</label>
                         <Input
                           value={formData.razon_social}
-                          onChange={(e) => setFormData({ ...formData, razon_social: e.target.value })}
-                          className="bg-arandu-dark border-white/10 text-white"
+                          onChange={(e) => !bloqueaFiscalCliente && setFormData({ ...formData, razon_social: e.target.value })}
+                          readOnly={bloqueaFiscalCliente}
+                          disabled={bloqueaFiscalCliente}
+                          className={`border-white/10 text-white ${bloqueaFiscalCliente ? "bg-arandu-dark/50 cursor-not-allowed opacity-70" : "bg-arandu-dark"}`}
                           placeholder="Nombre legal para facturas"
                         />
+                        {bloqueaFiscalCliente && (
+                          <p className="text-slate-500 text-xs mt-1">No editable: el cliente tiene ventas activas. Las facturas anuladas no bloquean.</p>
+                        )}
+                        {editingEmpresa && !bloqueaFiscalCliente && (
+                          <p className="text-emerald-400/80 text-xs mt-1">Podés completar razón social y RUC mientras no tenga ventas activas.</p>
+                        )}
                       </div>
                     </div>
 
@@ -531,8 +582,10 @@ const EmpresasPage = () => {
                       <label className="block text-slate-400 text-sm mb-2">RUC</label>
                       <Input
                         value={formData.ruc}
-                        onChange={(e) => setFormData({ ...formData, ruc: e.target.value })}
-                        className="bg-arandu-dark border-white/10 text-white"
+                        onChange={(e) => !bloqueaFiscalCliente && setFormData({ ...formData, ruc: e.target.value })}
+                        readOnly={bloqueaFiscalCliente}
+                        disabled={bloqueaFiscalCliente}
+                        className={`border-white/10 text-white ${bloqueaFiscalCliente ? "bg-arandu-dark/50 cursor-not-allowed opacity-70" : "bg-arandu-dark"}`}
                         placeholder="RUC / Número fiscal"
                         data-testid="empresa-ruc"
                       />
@@ -652,15 +705,50 @@ const EmpresasPage = () => {
                         </div>
                       </div>
 
-                      {/* Fecha de nacimiento */}
-                      <div>
-                        <label className="block text-slate-400 text-sm mb-2">Fecha de nacimiento</label>
-                        <Input
-                          type="date"
-                          value={formData.fecha_nacimiento}
-                          onChange={(e) => setFormData({ ...formData, fecha_nacimiento: e.target.value })}
-                          className="bg-arandu-dark border-white/10 text-white"
-                        />
+                      {/* Fecha de nacimiento + umbrales cumpleaños por cliente */}
+                      <div id="cumpleanos-cliente" className="p-3 rounded-lg border-2 border-pink-500/40 bg-pink-500/10 space-y-3 scroll-mt-4">
+                        <p className="text-pink-300 text-sm font-semibold">Cumpleaños y alertas (por cliente)</p>
+                        <p className="text-slate-500 text-xs">
+                          Los valores globales están en <strong className="text-slate-400">Reportes → pestaña Alertas</strong>.
+                          Acá podés definir umbrales distintos solo para este cliente.
+                        </p>
+                        <div>
+                          <label className="block text-slate-400 text-sm mb-2">Fecha de nacimiento</label>
+                          <Input
+                            type="date"
+                            value={formData.fecha_nacimiento}
+                            onChange={(e) => setFormData({ ...formData, fecha_nacimiento: e.target.value })}
+                            className="bg-arandu-dark border-white/10 text-white"
+                          />
+                          {!formData.fecha_nacimiento && (
+                            <p className="text-amber-400/90 text-xs mt-1">Sin fecha no se genera la alerta automática de cumpleaños.</p>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-slate-400 text-xs mb-1">Aviso amarillo (días antes)</label>
+                            <Input
+                              type="number"
+                              min={0}
+                              placeholder="Vacío = global"
+                              value={formData.cumpleanos_amarillo_dias}
+                              onChange={(e) => setFormData({ ...formData, cumpleanos_amarillo_dias: e.target.value })}
+                              className="bg-arandu-dark border-white/10 text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-slate-400 text-xs mb-1">Urgente rojo (días antes, 0 = hoy)</label>
+                            <Input
+                              type="number"
+                              min={0}
+                              placeholder="Vacío = global"
+                              value={formData.cumpleanos_urgente_dias}
+                              onChange={(e) => setFormData({ ...formData, cumpleanos_urgente_dias: e.target.value })}
+                              className="bg-arandu-dark border-white/10 text-white"
+                            />
+                          </div>
+                        </div>
+                        <p className="text-slate-500 text-xs">Dejá vacío para usar el global (amarillo / urgente de Reportes → Alertas).</p>
                       </div>
 
                       {/* Nacionalidad */}
@@ -931,9 +1019,22 @@ const EmpresasPage = () => {
                         {selectedEmpresa.nacionalidad && (
                           <p className="text-slate-400 text-xs pl-6">Nacionalidad: {selectedEmpresa.nacionalidad}</p>
                         )}
-                        {selectedEmpresa.fecha_nacimiento && (
-                          <p className="text-slate-400 text-xs pl-6">Fecha nac.: {selectedEmpresa.fecha_nacimiento}</p>
-                        )}
+                        <div className="pl-6 space-y-1 border-l border-pink-500/30 ml-2">
+                          <p className="text-pink-300 text-xs font-medium">Cumpleaños (umbrales por cliente)</p>
+                          <p className="text-slate-400 text-xs">Fecha nac.: {selectedEmpresa.fecha_nacimiento || "—"}</p>
+                          <p className="text-slate-400 text-xs">
+                            Amarillo: {selectedEmpresa.cumpleanos_amarillo_dias != null ? `${selectedEmpresa.cumpleanos_amarillo_dias} d antes` : "global (Reportes → Alertas)"}
+                          </p>
+                          <p className="text-slate-400 text-xs">
+                            Urgente: {selectedEmpresa.cumpleanos_urgente_dias != null ? `${selectedEmpresa.cumpleanos_urgente_dias} d antes` : "global (Reportes → Alertas)"}
+                          </p>
+                          {canEdit && (
+                            <button type="button" onClick={() => handleEdit(selectedEmpresa)}
+                              className="text-pink-400 text-xs hover:underline mt-1">
+                              Editar umbrales en formulario →
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="bg-arandu-dark border border-white/5 rounded-xl p-4 md:col-span-2">

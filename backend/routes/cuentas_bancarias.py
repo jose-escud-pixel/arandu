@@ -30,6 +30,63 @@ def _limpiar_id(doc: dict) -> dict:
     return doc
 
 
+async def ensure_cuenta_predeterminada(
+    logo_tipo: str,
+    nombre_empresa: str = "",
+    moneda: str = "PYG",
+) -> dict:
+    """Crea cuenta predeterminada si no existe para logo+moneda."""
+    logo_tipo = (logo_tipo or "").strip()
+    if not logo_tipo:
+        raise ValueError("logo_tipo requerido")
+    moneda = moneda or "PYG"
+    existente = await db.cuentas_bancarias.find_one(
+        {"logo_tipo": logo_tipo, "moneda": moneda, "es_predeterminada": True, "activa": {"$ne": False}},
+        {"_id": 0},
+    )
+    if existente:
+        return existente
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "nombre": f"Caja principal{' — ' + nombre_empresa if nombre_empresa else ''}",
+        "banco": "Caja",
+        "numero_cuenta": "",
+        "moneda": moneda,
+        "logo_tipo": logo_tipo,
+        "es_predeterminada": True,
+        "activa": True,
+        "descripcion": "Cuenta predeterminada generada automáticamente",
+        "saldo_inicial": 0.0,
+        "saldo_inicial_fecha": now[:10],
+        "notas": "",
+        "usuarios_reporte_ids": [],
+        "created_at": now,
+        "updated_at": now,
+    }
+    await _ensure_solo_una_predeterminada(logo_tipo, moneda)
+    await db.cuentas_bancarias.insert_one(doc)
+    return _limpiar_id(doc)
+
+
+async def resolver_cuenta_id(
+    logo_tipo: str,
+    moneda: str = "PYG",
+    cuenta_id: Optional[str] = None,
+    nombre_empresa: str = "",
+) -> Optional[str]:
+    """Devuelve cuenta_id válido o la predeterminada del logo/moneda."""
+    if cuenta_id:
+        c = await db.cuentas_bancarias.find_one(
+            {"id": cuenta_id, "logo_tipo": logo_tipo, "activa": {"$ne": False}},
+            {"_id": 0, "id": 1},
+        )
+        if c:
+            return cuenta_id
+    pred = await ensure_cuenta_predeterminada(logo_tipo, nombre_empresa, moneda)
+    return pred.get("id")
+
+
 async def _ensure_solo_una_predeterminada(logo_tipo: str, moneda: str, excluir_id: str = None):
     """Si se marca una cuenta como predeterminada, quitar el flag de las demás
     del mismo logo_tipo + moneda."""
@@ -60,6 +117,8 @@ async def get_cuentas_bancarias(
         query["moneda"] = moneda
     if activa is not None:
         query["activa"] = activa
+    else:
+        query["activa"] = {"$ne": False}
 
     cuentas = await db.cuentas_bancarias.find(query, {"_id": 0}).sort("nombre", 1).to_list(500)
     return cuentas
@@ -83,6 +142,7 @@ async def get_saldos_cuentas(
     if is_forbidden(query_cuentas):
         return []
 
+    query_cuentas["activa"] = {"$ne": False}
     cuentas = await db.cuentas_bancarias.find(query_cuentas, {"_id": 0}).sort("nombre", 1).to_list(500)
     if not cuentas:
         return []
@@ -123,6 +183,7 @@ async def get_saldos_cuentas(
         return fp10 <= hasta_date
 
     # Filtro de logo para colecciones de movimientos
+    logos_acceso = await get_logos_acceso(user)
     logo_filter: dict = {}
     if logos_acceso is not None:
         logo_filter["logo_tipo"] = {"$in": logos_acceso}
@@ -321,6 +382,7 @@ async def create_cuenta_bancaria(
         "saldo_inicial": saldo_ini,
         "saldo_inicial_fecha": data.get("saldo_inicial_fecha") or None,
         "notas": data.get("notas") or "",
+        "usuarios_reporte_ids": list(data.get("usuarios_reporte_ids") or []),
         "created_at": now,
         "updated_at": now,
     }
@@ -391,6 +453,9 @@ async def update_cuenta_bancaria(
     if updates["es_predeterminada"]:
         await _ensure_solo_una_predeterminada(updates["logo_tipo"], updates["moneda"], excluir_id=cuenta_id)
 
+    if "usuarios_reporte_ids" in data:
+        updates["usuarios_reporte_ids"] = list(data.get("usuarios_reporte_ids") or [])
+
     result = await db.cuentas_bancarias.update_one({"id": cuenta_id}, {"$set": updates})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="No se encontró la cuenta para actualizar")
@@ -402,6 +467,143 @@ async def update_cuenta_bancaria(
 #  PATCH /admin/cuentas-bancarias/{id}/predeterminada
 #  Marcar como predeterminada para su logo+moneda
 # ─────────────────────────────────────────────
+def _puede_asignar_acceso_reporte(user: dict) -> bool:
+    return (
+        user.get("role") in ("admin", "super_admin", "gerente")
+        or has_permission(user, "bancos.asignar_acceso_reporte")
+        or has_permission(user, "bancos.editar")
+    )
+
+
+async def _mapa_empresas_propias() -> dict:
+    """id -> slug y set de ids/slugs válidos."""
+    propias = await db.empresas_propias.find({}, {"_id": 0, "id": 1, "slug": 1}).to_list(100)
+    id_to_slug = {str(p["id"]): (p.get("slug") or "") for p in propias if p.get("id")}
+    return id_to_slug
+
+
+async def _usuario_acceso_logo(u: dict, logo_tipo: str, id_to_slug: dict = None) -> bool:
+    if not logo_tipo:
+        return True
+    logos = [str(x) for x in (u.get("logos_asignados") or [])]
+    if not logos:
+        return False
+    if id_to_slug is None:
+        id_to_slug = await _mapa_empresas_propias()
+    slug = (logo_tipo or "").strip()
+    ids_del_slug = {i for i, s in id_to_slug.items() if s == slug}
+    if ids_del_slug & set(logos):
+        return True
+    if slug in logos:
+        return True
+    slugs_del_usuario = {id_to_slug.get(l, l) for l in logos}
+    return slug in slugs_del_usuario
+
+
+@router.patch("/admin/cuentas-bancarias/{cuenta_id}/acceso-reporte")
+async def set_acceso_reporte_cuenta(
+    cuenta_id: str,
+    data: dict,
+    user: dict = Depends(require_authenticated),
+):
+    """Usuarios que pueden ver esta cuenta en Reportes → Caja/Banco."""
+    if not _puede_asignar_acceso_reporte(user):
+        raise HTTPException(status_code=403, detail="Sin permiso para asignar acceso al reporte")
+
+    c = await db.cuentas_bancarias.find_one({"id": cuenta_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+
+    ids = [str(x) for x in (data.get("usuarios_reporte_ids") or []) if x]
+    logo_cuenta = c.get("logo_tipo", "")
+    if ids:
+        id_to_slug = await _mapa_empresas_propias()
+        candidatos = await db.users.find(
+            {"id": {"$in": ids}, "role": "usuario"},
+            {"_id": 0, "id": 1, "permisos": 1, "logos_asignados": 1},
+        ).to_list(500)
+        for u in candidatos:
+            if "reportes.caja_banco" not in (u.get("permisos") or []):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El usuario {u.get('id')} no tiene permiso reportes.caja_banco",
+                )
+            if logo_cuenta and not await _usuario_acceso_logo(u, logo_cuenta, id_to_slug):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El usuario no tiene asignada la empresa de esta cuenta",
+                )
+
+    await db.cuentas_bancarias.update_one(
+        {"id": cuenta_id},
+        {"$set": {
+            "usuarios_reporte_ids": ids,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    updated = await db.cuentas_bancarias.find_one({"id": cuenta_id}, {"_id": 0})
+    return updated
+
+
+@router.get("/admin/cuentas-bancarias/usuarios-acceso-reporte")
+async def listar_usuarios_acceso_reporte(
+    logo_tipo: Optional[str] = None,
+    cuenta_id: Optional[str] = None,
+    user: dict = Depends(require_authenticated),
+):
+    """Usuarios con permiso reportes.caja_banco (candidatos para asignar acceso por cuenta)."""
+    if not _puede_asignar_acceso_reporte(user):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+
+    slug = (logo_tipo or "").strip()
+    if cuenta_id:
+        c = await db.cuentas_bancarias.find_one({"id": cuenta_id}, {"_id": 0, "logo_tipo": 1})
+        if c and c.get("logo_tipo"):
+            slug = c["logo_tipo"]
+
+    id_to_slug = await _mapa_empresas_propias()
+    todos = await db.users.find(
+        {"role": "usuario", "permisos": {"$in": ["reportes.caja_banco"]}},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "permisos": 1, "logos_asignados": 1},
+    ).to_list(500)
+    # Fallback si permisos no matchea por $in (datos legacy)
+    if not todos:
+        todos = await db.users.find(
+            {"role": "usuario"},
+            {"_id": 0, "id": 1, "name": 1, "email": 1, "permisos": 1, "logos_asignados": 1},
+        ).to_list(500)
+        todos = [u for u in todos if "reportes.caja_banco" in (u.get("permisos") or [])]
+
+    out = []
+    sin_empresa = 0
+    for u in todos:
+        if slug and not await _usuario_acceso_logo(u, slug, id_to_slug):
+            sin_empresa += 1
+            continue
+        out.append({
+            "id": u["id"],
+            "name": u.get("name") or u.get("email"),
+            "email": u.get("email"),
+        })
+
+    aviso = None
+    if not out:
+        if not todos:
+            aviso = (
+                "Ningún usuario tiene guardado el permiso Reportes → Caja/Banco. "
+                "Marcá el permiso en Usuarios, guardá, y pedile que cierre sesión y vuelva a entrar."
+            )
+        elif sin_empresa:
+            aviso = (
+                f"Hay {len(todos)} usuario(s) con permiso de reporte, pero ninguno tiene asignada "
+                f"la empresa «{slug}» en Nuestras Empresas."
+            )
+        else:
+            aviso = "No hay usuarios elegibles."
+
+    return {"usuarios": out, "aviso": aviso, "total_con_permiso": len(todos)}
+
+
 @router.patch("/admin/cuentas-bancarias/{cuenta_id}/predeterminada")
 async def set_predeterminada(
     cuenta_id: str,

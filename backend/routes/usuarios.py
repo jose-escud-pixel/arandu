@@ -35,6 +35,13 @@ def _permisos_permitidos_admin(user: dict, requested: List[str]) -> List[str]:
     return [permiso for permiso in requested if permiso in disponibles]
 
 
+# Permisos que se guardan aunque el módulo "reportes" no esté en modulos_habilitados de la empresa
+_PERMISOS_EXENTOS_MODULO = frozenset({
+    "reportes.caja_banco",
+    "bancos.asignar_acceso_reporte",
+})
+
+
 async def _filtrar_permisos_por_empresas_propias(permisos: List[str], logos_asignados: List[str]) -> List[str]:
     """Evita asignar permisos de módulos que ninguna empresa propia seleccionada tiene habilitados."""
     if not logos_asignados:
@@ -48,6 +55,9 @@ async def _filtrar_permisos_por_empresas_propias(permisos: List[str], logos_asig
         modulos_habilitados.update(ep.get("modulos_habilitados") if ep.get("modulos_habilitados") is not None else DEFAULT_EMPRESA_MODULOS)
     filtrados = []
     for permiso in permisos or []:
+        if permiso in _PERMISOS_EXENTOS_MODULO:
+            filtrados.append(permiso)
+            continue
         permiso_modulo = permiso.split(".", 1)[0]
         modulo_empresa = PERMISO_A_MODULO_EMPRESA.get(permiso_modulo)
         if modulo_empresa and modulo_empresa in modulos_habilitados:
@@ -97,13 +107,18 @@ async def create_usuario(data: AdminUserCreate, admin: dict = Depends(require_au
     permisos_solicitados = _permisos_permitidos_admin(admin, data.permisos)
     permisos = await _filtrar_permisos_por_empresas_propias(permisos_solicitados, logos_asignados) if data.role == "usuario" else []
     empresa_default = data.empresa_default if data.empresa_default in logos_asignados else (logos_asignados[0] if logos_asignados else None)
+    cuentas_reporte_ids = []  # acceso por cuenta: Bancos → Acceso reporte (usuarios_reporte_ids)
+    empresas_todos = bool(data.empresas_todos_clientes) if data.role == "usuario" else False
+    empresas_asignadas = [] if empresas_todos else (data.empresas_asignadas if data.role == "usuario" else [])
     user_doc = {
         "id": user_id, "email": data.email, "name": data.name,
         "password": hash_password(data.password), "role": data.role,
         "permisos": permisos,
-        "empresas_asignadas": data.empresas_asignadas if data.role == "usuario" else [],
+        "empresas_asignadas": empresas_asignadas,
+        "empresas_todos_clientes": empresas_todos,
         "logos_asignados": logos_asignados,
         "empresa_default": empresa_default,
+        "cuentas_reporte_ids": cuentas_reporte_ids,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.users.insert_one(user_doc)
@@ -111,8 +126,10 @@ async def create_usuario(data: AdminUserCreate, admin: dict = Depends(require_au
     return UserResponse(
         id=user_id, email=data.email, name=data.name, role=data.role,
         permisos=user_doc["permisos"], empresas_asignadas=user_doc["empresas_asignadas"],
+        empresas_todos_clientes=user_doc.get("empresas_todos_clientes", False),
         logos_asignados=user_doc["logos_asignados"],
         empresa_default=user_doc.get("empresa_default"),
+        cuentas_reporte_ids=user_doc.get("cuentas_reporte_ids", []),
         created_at=user_doc["created_at"]
     )
 
@@ -139,12 +156,17 @@ async def update_usuario(user_id: str, data: AdminUserCreate, admin: dict = Depe
     permisos_solicitados = _permisos_permitidos_admin(admin, data.permisos)
     permisos = await _filtrar_permisos_por_empresas_propias(permisos_solicitados, logos_asignados) if data.role == "usuario" else []
     empresa_default = data.empresa_default if data.empresa_default in logos_asignados else (logos_asignados[0] if logos_asignados else None)
+    cuentas_reporte_ids = []  # acceso por cuenta: Bancos → Acceso reporte (usuarios_reporte_ids)
+    empresas_todos = bool(data.empresas_todos_clientes) if data.role == "usuario" else False
+    empresas_asignadas = [] if empresas_todos else (data.empresas_asignadas if data.role == "usuario" else [])
     update_fields = {
         "email": data.email, "name": data.name, "role": data.role,
         "permisos": permisos,
-        "empresas_asignadas": data.empresas_asignadas if data.role == "usuario" else [],
+        "empresas_asignadas": empresas_asignadas,
+        "empresas_todos_clientes": empresas_todos,
         "logos_asignados": logos_asignados,
         "empresa_default": empresa_default,
+        "cuentas_reporte_ids": cuentas_reporte_ids,
     }
     if data.password:
         update_fields["password"] = hash_password(data.password)

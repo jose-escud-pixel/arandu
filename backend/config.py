@@ -28,7 +28,7 @@ PERMISOS_DISPONIBLES = {
         "facturas", "cliente_detallado",
         "ingresos", "recibos", "notas_credito",
         "presupuestos", "compras", "gastos",
-        "proveedores", "iva",
+        "proveedores", "iva", "caja_banco",
         # Reportes de inventario
         "productos_stock", "stock_historial",
         # Reporte técnico
@@ -48,7 +48,7 @@ PERMISOS_DISPONIBLES = {
     "notas_credito": ["ver", "crear", "editar", "eliminar"],
     "inventario_productos": ["ver", "crear", "editar", "eliminar", "crear_servicio", "stock_inicial", "ajustar_stock"],
     "historial_stock": ["ver"],
-    "bancos": ["ver", "crear", "editar", "eliminar"],
+    "bancos": ["ver", "crear", "editar", "eliminar", "asignar_acceso_reporte"],
     "usuarios": ["ver", "crear", "editar", "eliminar"],
     "auditoria": ["ver"],
 }

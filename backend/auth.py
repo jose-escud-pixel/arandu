@@ -106,12 +106,59 @@ def has_permission(user: dict, permiso: str) -> bool:
     return permiso in user.get("permisos", [])
 
 def can_access_empresa(user: dict, empresa_id: str) -> bool:
-    if user.get("role") == "super_admin":
+    """Acceso a un cliente (empresa). Admin/gerente/super_admin ven todos los clientes."""
+    if user.get("role") in ("admin", "super_admin", "gerente"):
         return True
-    asignadas = user.get("empresas_asignadas", [])
+    if user.get("empresas_todos_clientes"):
+        return True
+    asignadas = user.get("empresas_asignadas", []) or []
     if not asignadas:
         return False
     return empresa_id in asignadas
+
+
+def apply_empresa_cliente_filter(query: dict, user: dict) -> bool:
+    """
+    Restringe query de clientes (colección empresas: campo id) para usuarios normales.
+    Retorna False si no debe ver ningún cliente.
+    """
+    if user.get("role") in ("admin", "super_admin", "gerente"):
+        return True
+    if user.get("empresas_todos_clientes"):
+        return True
+    ids = list(user.get("empresas_asignadas") or [])
+    if not ids:
+        return False
+    filtro = {"id": {"$in": ids}}
+    if not query:
+        query.update(filtro)
+    elif "$and" in query:
+        query["$and"].append(filtro)
+    else:
+        prev = dict(query)
+        query.clear()
+        query["$and"] = [prev, filtro]
+    return True
+
+
+def apply_empresa_id_filter(query: dict, user: dict, field: str = "empresa_id") -> bool:
+    """Restringe documentos que referencian empresa_id (presupuestos, alertas, etc.)."""
+    if user.get("role") in ("admin", "super_admin", "gerente"):
+        return True
+    if user.get("empresas_todos_clientes"):
+        return True
+    ids = list(user.get("empresas_asignadas") or [])
+    if not ids:
+        return False
+    if field not in query:
+        query[field] = {"$in": ids}
+    elif isinstance(query.get(field), dict) and "$in" in query[field]:
+        query[field]["$in"] = [eid for eid in query[field]["$in"] if eid in ids]
+        if not query[field]["$in"]:
+            return False
+    elif query[field] not in ids:
+        return False
+    return True
 
 def require_permiso(permiso: str):
     async def checker(current_user: dict = Depends(get_current_user)):

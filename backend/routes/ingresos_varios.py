@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import uuid
 
 from config import db
+from routes.cuentas_bancarias import resolver_cuenta_id
 from auth import require_authenticated, has_permission, get_logos_acceso, apply_logo_filter, is_forbidden
 
 router = APIRouter()
@@ -125,10 +126,13 @@ async def create_ingreso(
 
     now = datetime.now(timezone.utc).isoformat()
 
-    # Obtener nombre de cuenta si se envió cuenta_id pero no cuenta_nombre
+    moneda_real = "PYG" if (data.tipo_cambio and float(data.tipo_cambio) > 0) else (data.moneda or "PYG")
+    cuenta_id = await resolver_cuenta_id(data.logo_tipo, moneda_real, data.cuenta_id)
+    if not cuenta_id:
+        raise HTTPException(status_code=400, detail="No hay cuenta bancaria predeterminada. Creá una en Bancos.")
     cuenta_nombre = data.cuenta_nombre
-    if data.cuenta_id and not cuenta_nombre:
-        c = await db.cuentas_bancarias.find_one({"id": data.cuenta_id}, {"nombre": 1, "_id": 0})
+    if not cuenta_nombre:
+        c = await db.cuentas_bancarias.find_one({"id": cuenta_id}, {"nombre": 1, "_id": 0})
         if c:
             cuenta_nombre = c.get("nombre")
 
@@ -141,7 +145,7 @@ async def create_ingreso(
         "moneda": data.moneda,
         "tipo_cambio": data.tipo_cambio,
         "logo_tipo": data.logo_tipo,
-        "cuenta_id": data.cuenta_id,
+        "cuenta_id": cuenta_id,
         "cuenta_nombre": cuenta_nombre,
         "notas": data.notas,
         "created_at": now,
@@ -167,9 +171,14 @@ async def update_ingreso(
     if not existing:
         raise HTTPException(status_code=404, detail="Ingreso no encontrado")
 
+    logo = data.logo_tipo or existing.get("logo_tipo", "arandujar")
+    moneda_real = "PYG" if (data.tipo_cambio and float(data.tipo_cambio) > 0) else (data.moneda or "PYG")
+    cuenta_id = await resolver_cuenta_id(logo, moneda_real, data.cuenta_id or existing.get("cuenta_id"))
+    if not cuenta_id:
+        raise HTTPException(status_code=400, detail="No hay cuenta bancaria predeterminada. Creá una en Bancos.")
     cuenta_nombre = data.cuenta_nombre
-    if data.cuenta_id and not cuenta_nombre:
-        c = await db.cuentas_bancarias.find_one({"id": data.cuenta_id}, {"nombre": 1, "_id": 0})
+    if not cuenta_nombre:
+        c = await db.cuentas_bancarias.find_one({"id": cuenta_id}, {"nombre": 1, "_id": 0})
         if c:
             cuenta_nombre = c.get("nombre")
 
@@ -181,7 +190,7 @@ async def update_ingreso(
         "moneda": data.moneda,
         "tipo_cambio": data.tipo_cambio,
         "logo_tipo": data.logo_tipo or existing.get("logo_tipo"),
-        "cuenta_id": data.cuenta_id,
+        "cuenta_id": cuenta_id,
         "cuenta_nombre": cuenta_nombre,
         "notas": data.notas,
         "updated_at": datetime.now(timezone.utc).isoformat(),

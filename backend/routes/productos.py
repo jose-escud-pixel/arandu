@@ -16,6 +16,7 @@ class ProductoCreate(BaseModel):
     nombre: str
     descripcion: Optional[str] = None
     sku: str                              # SKU obligatorio
+    codigo_barras: Optional[str] = None   # opcional, único si se define
     categoria: Optional[str] = None
     precio_costo: float = 0
     precio_venta: float = 0
@@ -30,6 +31,7 @@ class ProductoUpdate(BaseModel):
     nombre: Optional[str] = None
     descripcion: Optional[str] = None
     sku: Optional[str] = None
+    codigo_barras: Optional[str] = None
     categoria: Optional[str] = None
     precio_costo: Optional[float] = None
     precio_venta: Optional[float] = None
@@ -150,6 +152,7 @@ async def get_productos(
         query["$or"] = [
             {"nombre":      {"$regex": search, "$options": "i"}},
             {"sku":         {"$regex": search, "$options": "i"}},
+            {"codigo_barras": {"$regex": search, "$options": "i"}},
             {"descripcion": {"$regex": search, "$options": "i"}},
             {"categoria":   {"$regex": search, "$options": "i"}},
         ]
@@ -160,6 +163,28 @@ async def get_productos(
 
     productos = await db.productos.find(query, {"_id": 0}).sort("nombre", 1).to_list(1000)
     return productos
+
+
+@router.get("/admin/productos/by-barcode/{codigo}")
+async def get_producto_by_barcode(
+    codigo: str,
+    logo_tipo: Optional[str] = None,
+    user: dict = Depends(require_authenticated),
+):
+    code = (codigo or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Código de barras vacío")
+    query = {"codigo_barras": code, "activo": {"$ne": False}}
+    logo_q: dict = {}
+    await apply_logo_filter(logo_q, user, logo_tipo)
+    if is_forbidden(logo_q):
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    if logo_q:
+        query.update(logo_q)
+    producto = await db.productos.find_one(query, {"_id": 0})
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado para ese código de barras")
+    return producto
 
 
 @router.post("/admin/productos")
@@ -185,6 +210,12 @@ async def create_producto(data: ProductoCreate, user: dict = Depends(require_aut
     if existe_nombre:
         raise HTTPException(status_code=400, detail=f"Ya existe un producto con el nombre '{nombre_trimmed}'")
 
+    codigo_barras = (data.codigo_barras or "").strip() or None
+    if codigo_barras:
+        dup_bar = await db.productos.find_one({"codigo_barras": codigo_barras}, {"_id": 0, "id": 1})
+        if dup_bar:
+            raise HTTPException(status_code=400, detail=f"Ya existe un producto con el código de barras '{codigo_barras}'")
+
     # Validar permiso para crear servicios
     es_servicio = (data.categoria or "").strip() == "Servicios"
     if es_servicio and not has_permission(user, "inventario_productos.crear_servicio"):
@@ -200,6 +231,7 @@ async def create_producto(data: ProductoCreate, user: dict = Depends(require_aut
 
     data_dict = data.dict()
     data_dict["sku"] = sku_trimmed
+    data_dict["codigo_barras"] = codigo_barras
     data_dict["stock_actual"] = 0
     data_dict["stock_minimo"] = stock_minimo
 
@@ -265,6 +297,16 @@ async def update_producto(
         )
         if existe_nombre:
             raise HTTPException(status_code=400, detail=f"Ya existe otro producto con el nombre '{nombre_trimmed}'")
+
+    if "codigo_barras" in update_fields:
+        cb = (update_fields.get("codigo_barras") or "").strip() or None
+        update_fields["codigo_barras"] = cb
+        if cb:
+            dup_bar = await db.productos.find_one(
+                {"codigo_barras": cb, "id": {"$ne": producto_id}}, {"_id": 0, "id": 1}
+            )
+            if dup_bar:
+                raise HTTPException(status_code=400, detail=f"Ya existe otro producto con el código de barras '{cb}'")
 
     # Validar permiso de servicios si se está cambiando la categoría
     if "categoria" in update_fields:

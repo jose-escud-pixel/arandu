@@ -423,7 +423,7 @@ export default function VentasPage() {
     if (!nuevo) return;
     if (nuevo === "presupuesto" && hasPermission("presupuestos.crear")) {
       setTab("presupuestos");
-      setPresFormItem({ presupuesto: null, mode: "create" });
+      setPresFormItem({ presupuesto: null, mode: "new" });
     } else if (nuevo === "factura" && hasPermission("facturas.crear")) {
       setTab("facturas");
       setFacFormItem(null);
@@ -479,7 +479,7 @@ export default function VentasPage() {
 	        fetch(`${API}/admin/ingresos-varios${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
         fetch(`${API}/admin/empresas${logoQc}`, { headers }),
         hasPermission("proveedores.ver") ? fetch(`${API}/admin/proveedores?activo=true`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
-	        hasModule?.("productos_stock") ? fetch(`${API}/admin/productos${logoFilter !== "todas" ? `?logo_tipo=${logoFilter}` : ""}`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
+	        hasModule?.("productos_stock") ? fetch(`${API}/admin/productos`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
 	        fetch(`${API}/admin/cuentas-bancarias${logoQc}`, { headers }),
 	        fetch(`${API}/admin/recibos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
 	        hasPermission("notas_credito.ver")
@@ -501,7 +501,10 @@ export default function VentasPage() {
       if (rIng.ok) { const dIng = await rIng.json(); setIngresos(Array.isArray(dIng) ? dIng : []); }
       if (rEmp.ok) setEmpresas(await rEmp.json());
       if (rProv.ok) setProveedores(await rProv.json());
-      if (rProd.ok) setProductos(await rProd.json());
+      if (rProd.ok) {
+        const d = await rProd.json();
+        setProductos(Array.isArray(d) ? d : []);
+      }
 	      if (rCuentas.ok) setCuentasDisp(await rCuentas.json());
 	      if (rRecibos.ok) setRecibos(await rRecibos.json());
 	      if (rNotas.ok) setNotasCredito(await rNotas.json());
@@ -851,6 +854,12 @@ export default function VentasPage() {
           detalle = sinUuid ? ` — ${sinUuid}` : "";
         }
         toast.error(`${errors} factura${errors !== 1 ? "s" : ""} no se pudieron registrar${detalle}`);
+      }
+      if (recibos?.length === 1 && recibos[0].recibo_id) {
+        try {
+          const rRec = await fetch(`${API}/admin/recibos/${recibos[0].recibo_id}`, { headers });
+          if (rRec.ok) setReciboDoc(await rRec.json());
+        } catch (_) { /* ignore */ }
       }
     } catch (e) {
       toast.error(e.message || "Error al registrar pagos");
@@ -1237,7 +1246,7 @@ export default function VentasPage() {
                 </div>
                 {isPresupuestos && hasPermission("presupuestos.crear") && (
                   <button
-                    onClick={() => setPresFormItem({ presupuesto: null, mode: "create" })}
+                    onClick={() => setPresFormItem({ presupuesto: null, mode: "new" })}
                     className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-all font-body whitespace-nowrap"
                   >
                     <Plus className="w-4 h-4" /> Nuevo presupuesto
@@ -1770,7 +1779,21 @@ export default function VentasPage() {
                           <span className="font-mono text-amber-300">#{r.numero}</span>
                         </td>
                         <td className="px-4 py-3">
-                          <span className="text-slate-300 font-mono text-xs">{r.factura_numero || "-"}</span>
+                          {(r.facturas?.length > 1 || r.bulk) ? (
+                            <div className="space-y-0.5">
+                              {(r.facturas || []).map((f, i) => (
+                                <span key={i} className="block text-slate-300 font-mono text-xs">
+                                  {f.factura_numero || "-"}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-slate-300 font-mono text-xs">
+                              {r.facturas?.length === 1
+                                ? r.facturas[0].factura_numero
+                                : (r.factura_numero || "-")}
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3 max-w-[200px]">
                           <p className="text-slate-200 truncate">{r.razon_social || "-"}</p>
@@ -1922,7 +1945,21 @@ export default function VentasPage() {
           presupuesto={presFormItem.presupuesto}
           mode={presFormItem.mode}
           onClose={() => setPresFormItem(null)}
-          onSaved={() => { setPresFormItem(null); fetchAll(); }}
+          onSaved={(saved) => {
+            setPresFormItem(null);
+            if (saved?.id) {
+              setPresupuestos(prev => {
+                const idx = prev.findIndex(p => p.id === saved.id);
+                if (idx >= 0) {
+                  const next = [...prev];
+                  next[idx] = { ...next[idx], ...saved };
+                  return next;
+                }
+                return [saved, ...prev];
+              });
+            }
+            fetchAll();
+          }}
           token={token}
           API={API}
           empresas={empresas}
@@ -4199,7 +4236,11 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto, cuentasDisp = [] }) {
   }, [onClose]);
 
   const accentColor = r.logo_tipo === "jar" ? "#dc2626" : r.logo_tipo === "arandu" ? "#2563eb" : "#1d4ed8";
-  const fmt = (n) => fmtMonto(n, r.moneda);
+  const fmt = (n, moneda) => fmtMonto(n, moneda || r.moneda);
+  const lineasFacturas = (r.facturas?.length > 0)
+    ? r.facturas
+    : (r.factura_numero ? [{ factura_numero: r.factura_numero, monto: r.monto, moneda: r.moneda }] : []);
+  const esReciboMultiple = lineasFacturas.length > 1 || r.bulk;
 
   // Cuenta efectiva: la guardada en el recibo o la predeterminada por moneda/empresa
   const cuentaEfectiva = r.cuenta_nombre
@@ -4222,7 +4263,9 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto, cuentasDisp = [] }) {
         <tr><td style="padding:8px 4px;color:#6b7280;width:40%">Empresa:</td><td style="padding:8px 4px;font-weight:600">${r.logo_tipo === "jar" ? "JAR Informática" : r.logo_tipo === "arandu" ? "Arandu Informática" : "Arandu&JAR Informática"}</td></tr>
         <tr style="background:#f9fafb"><td style="padding:8px 4px;color:#6b7280">Recibido de:</td><td style="padding:8px 4px;font-weight:600">${r.razon_social || "-"}</td></tr>
         ${r.ruc ? `<tr><td style="padding:8px 4px;color:#6b7280">RUC:</td><td style="padding:8px 4px">${r.ruc}</td></tr>` : ""}
-        <tr style="background:#f9fafb"><td style="padding:8px 4px;color:#6b7280">Por factura:</td><td style="padding:8px 4px;font-family:monospace;font-weight:600">${r.factura_numero || "-"}</td></tr>
+        ${esReciboMultiple
+          ? `<tr style="background:#f9fafb"><td style="padding:8px 4px;color:#6b7280;vertical-align:top">Facturas pagadas (${lineasFacturas.length}):</td><td style="padding:8px 4px">${lineasFacturas.map(f => `<div style="font-family:monospace;font-weight:600;margin-bottom:4px">${f.factura_numero || "-"} — ${fmt(f.monto, f.moneda)}</div>`).join("")}</td></tr>`
+          : `<tr style="background:#f9fafb"><td style="padding:8px 4px;color:#6b7280">Por factura:</td><td style="padding:8px 4px;font-family:monospace;font-weight:600">${lineasFacturas[0]?.factura_numero || r.factura_numero || "-"}</td></tr>`}
         <tr><td style="padding:8px 4px;color:#6b7280">Fecha de pago:</td><td style="padding:8px 4px;font-weight:600">${r.fecha_pago || "-"}</td></tr>
         ${cuentaEfectiva ? `<tr style="background:#f9fafb"><td style="padding:8px 4px;color:#6b7280">Cuenta bancaria:</td><td style="padding:8px 4px;font-weight:600">🏦 ${cuentaEfectiva}</td></tr>` : ""}
       </table>
@@ -4274,10 +4317,23 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto, cuentasDisp = [] }) {
               <p className="text-gray-800 font-semibold">{r.razon_social || "-"}</p>
               {r.ruc && <p className="text-gray-500 text-xs mt-0.5">RUC: {r.ruc}</p>}
             </div>
-            <div className="bg-gray-50 rounded-lg p-3">
-              <p className="text-gray-400 text-xs uppercase tracking-wide mb-1">Factura</p>
-              <p className="text-gray-800 font-mono font-semibold">{r.factura_numero || "-"}</p>
-              <p className="text-gray-400 text-xs mt-0.5">{r.fecha_pago || "-"}</p>
+            <div className={`bg-gray-50 rounded-lg p-3 ${esReciboMultiple ? "col-span-2" : ""}`}>
+              <p className="text-gray-400 text-xs uppercase tracking-wide mb-1">
+                {esReciboMultiple ? `Facturas pagadas (${lineasFacturas.length})` : "Factura"}
+              </p>
+              {esReciboMultiple ? (
+                <ul className="space-y-1.5 mt-1">
+                  {lineasFacturas.map((f, i) => (
+                    <li key={i} className="flex justify-between gap-2 text-sm">
+                      <span className="text-gray-800 font-mono font-semibold">{f.factura_numero || "-"}</span>
+                      <span className="text-gray-600 shrink-0">{fmt(f.monto, f.moneda)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-gray-800 font-mono font-semibold">{lineasFacturas[0]?.factura_numero || r.factura_numero || "-"}</p>
+              )}
+              <p className="text-gray-400 text-xs mt-1.5">{r.fecha_pago || "-"}</p>
             </div>
           </div>
 

@@ -44,8 +44,10 @@ async def login(credentials: UserLogin):
             role=user.get("role", "user"), avatar=user.get("avatar"),
             permisos=user.get("permisos", []),
             empresas_asignadas=user.get("empresas_asignadas", []),
+            empresas_todos_clientes=user.get("empresas_todos_clientes", False),
             logos_asignados=user.get("logos_asignados", []),
             empresa_default=user.get("empresa_default"),
+            cuentas_reporte_ids=user.get("cuentas_reporte_ids", []),
             created_at=user["created_at"]
         )
     )
@@ -68,8 +70,10 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         role=current_user.get("role", "user"), avatar=current_user.get("avatar"),
         permisos=current_user.get("permisos", []),
         empresas_asignadas=current_user.get("empresas_asignadas", []),
+        empresas_todos_clientes=current_user.get("empresas_todos_clientes", False),
         logos_asignados=current_user.get("logos_asignados", []),
         empresa_default=current_user.get("empresa_default"),
+        cuentas_reporte_ids=current_user.get("cuentas_reporte_ids", []),
         created_at=current_user["created_at"]
     )
 

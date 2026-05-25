@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from datetime import datetime, timezone
 import uuid
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from config import db
 from auth import require_authenticated, has_permission, log_auditoria, get_logos_acceso
@@ -33,7 +33,16 @@ class ReciboCreate(BaseModel):
     pago_id: Optional[str] = None        # id del pago en facturas.pagos
 
 
+class ReciboFacturaLinea(BaseModel):
+    factura_id: Optional[str] = None
+    factura_numero: Optional[str] = None
+    monto: Optional[float] = None
+    moneda: Optional[str] = None
+
+
 class ReciboResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     numero: str
     factura_id: str
@@ -45,9 +54,14 @@ class ReciboResponse(BaseModel):
     fecha_pago: str
     logo_tipo: str
     cuenta_id: Optional[str] = None
+    cuenta_nombre: Optional[str] = None
     notas: Optional[str] = None
     pago_id: Optional[str] = None
     created_at: str
+    facturas: Optional[List[ReciboFacturaLinea]] = None
+    bulk: Optional[bool] = None
+    tipo_cambio: Optional[float] = None
+    monto_cuenta: Optional[float] = None
 
 
 # ─────────────────────────────────────────────

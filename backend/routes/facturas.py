@@ -7,8 +7,18 @@ from config import db
 from auth import require_authenticated, has_permission, log_auditoria, get_logos_acceso, apply_logo_filter, is_forbidden
 from models.schemas import FacturaCreate, FacturaResponse
 from routes.cotizaciones import tipo_cambio_usd_sugerido
+from routes.cuentas_bancarias import resolver_cuenta_id
 
 router = APIRouter()
+
+
+async def _cuenta_pago_resuelta(logo_tipo: str, moneda: str, cuenta_id: Optional[str] = None) -> tuple:
+    """(cuenta_id, cuenta_nombre) usando predeterminada si falta cuenta."""
+    cid = await resolver_cuenta_id(logo_tipo or "arandujar", moneda or "PYG", cuenta_id)
+    if not cid:
+        return None, None
+    c = await db.cuentas_bancarias.find_one({"id": cid}, {"_id": 0, "nombre": 1})
+    return cid, (c.get("nombre") if c else None)
 
 
 # ─────────────────────────────────────────────
@@ -424,17 +434,21 @@ async def create_factura(data: FacturaCreate, user: dict = Depends(require_authe
     await _reservar_numero_timbrado_si_corresponde(doc_data)
     # Si se crea ya pagada y se proveyó cuenta, armamos el array pagos[]
     # para que el balance / saldo de cuentas lo registre correctamente.
-    if doc_data.get("estado") == "pagada" and doc_data.get("cuenta_id"):
-        # Resolver nombre si vino solo el id
-        cuenta_nombre = doc_data.get("cuenta_nombre")
-        if not cuenta_nombre:
-            c = await db.cuentas_bancarias.find_one({"id": doc_data["cuenta_id"]}, {"_id": 0, "nombre": 1})
-            cuenta_nombre = c.get("nombre") if c else None
+    if doc_data.get("estado") == "pagada":
+        cid, cuenta_nombre = await _cuenta_pago_resuelta(
+            doc_data.get("logo_tipo", "arandujar"),
+            doc_data.get("moneda", "PYG"),
+            doc_data.get("cuenta_id"),
+        )
+        if not cid:
+            raise HTTPException(status_code=400, detail="No hay cuenta bancaria predeterminada. Creá una en Bancos.")
+        doc_data["cuenta_id"] = cid
+        doc_data["cuenta_nombre"] = cuenta_nombre or doc_data.get("cuenta_nombre")
         doc_data["pagos"] = [_build_pago_entry(
             monto=doc_data.get("monto", 0),
             fecha=doc_data.get("fecha_pago") or doc_data.get("fecha"),
-            cuenta_id=doc_data["cuenta_id"],
-            cuenta_nombre=cuenta_nombre,
+            cuenta_id=cid,
+            cuenta_nombre=doc_data["cuenta_nombre"],
             tipo_cambio=doc_data.get("tipo_cambio"),
         )]
         # Asegurar fecha_pago seteada
@@ -481,21 +495,26 @@ async def update_factura(factura_id: str, data: FacturaCreate, user: dict = Depe
     await _validar_stock_factura(update_data, fac)
     # Si se está marcando como pagada (estaba pendiente o sin pagos) y se dio cuenta,
     # registramos el pago como entrada en pagos[].
-    if update_data.get("estado") == "pagada" and update_data.get("cuenta_id"):
+    if update_data.get("estado") == "pagada":
+        cid, cuenta_nombre = await _cuenta_pago_resuelta(
+            update_data.get("logo_tipo") or fac.get("logo_tipo", "arandujar"),
+            update_data.get("moneda") or fac.get("moneda", "PYG"),
+            update_data.get("cuenta_id") or fac.get("cuenta_id"),
+        )
+        if not cid:
+            raise HTTPException(status_code=400, detail="No hay cuenta bancaria predeterminada. Creá una en Bancos.")
+        update_data["cuenta_id"] = cid
+        update_data["cuenta_nombre"] = cuenta_nombre or update_data.get("cuenta_nombre")
         existing_pagos = fac.get("pagos") or []
         already_has_full_pago = any(
             (p.get("monto", 0) >= update_data.get("monto", 0) - 0.01) for p in existing_pagos
         )
         if not already_has_full_pago:
-            cuenta_nombre = update_data.get("cuenta_nombre")
-            if not cuenta_nombre:
-                c = await db.cuentas_bancarias.find_one({"id": update_data["cuenta_id"]}, {"_id": 0, "nombre": 1})
-                cuenta_nombre = c.get("nombre") if c else None
             entry = _build_pago_entry(
                 monto=update_data.get("monto", 0),
                 fecha=update_data.get("fecha_pago") or update_data.get("fecha"),
-                cuenta_id=update_data["cuenta_id"],
-                cuenta_nombre=cuenta_nombre,
+                cuenta_id=cid,
+                cuenta_nombre=update_data["cuenta_nombre"],
                 tipo_cambio=update_data.get("tipo_cambio"),
             )
             update_data["pagos"] = existing_pagos + [entry]
@@ -573,12 +592,12 @@ async def pago_parcial_factura(
     if monto_nuevo <= 0:
         raise HTTPException(status_code=400, detail="El monto pagado debe ser mayor a 0")
 
-    # ── Obtener nombre de la cuenta si se proveyó ────────────────
-    cuenta_nombre = None
-    if cuenta_id:
-        cuenta_doc = await db.cuentas_bancarias.find_one({"id": cuenta_id}, {"_id": 0, "nombre": 1})
-        if cuenta_doc:
-            cuenta_nombre = cuenta_doc.get("nombre")
+    moneda_pago = "PYG" if (tipo_cambio and float(tipo_cambio) > 0) else fac.get("moneda", "PYG")
+    cuenta_id, cuenta_nombre = await _cuenta_pago_resuelta(
+        fac.get("logo_tipo", "arandujar"), moneda_pago, cuenta_id
+    )
+    if not cuenta_id:
+        raise HTTPException(status_code=400, detail="No hay cuenta bancaria predeterminada. Creá una en Bancos.")
 
     # ── Calcular monto en moneda de la cuenta (si hay tipo de cambio) ──
     monto_cuenta = None

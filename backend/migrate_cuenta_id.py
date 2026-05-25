@@ -20,6 +20,26 @@ Ejecutar UNA sola vez desde el directorio backend/:
 
 import asyncio
 from config import db
+from routes.cuentas_bancarias import ensure_cuenta_predeterminada
+
+
+async def ensure_cuentas_empresas_propias():
+    """Crea cuenta predeterminada PYG por cada empresa propia."""
+    empresas = await db.empresas_propias.find(
+        {"activo": {"$ne": False}}, {"_id": 0, "slug": 1, "nombre": 1}
+    ).to_list(100)
+    creadas = 0
+    for emp in empresas:
+        slug = (emp.get("slug") or "").strip()
+        if not slug:
+            continue
+        antes = await db.cuentas_bancarias.count_documents(
+            {"logo_tipo": slug, "moneda": "PYG", "es_predeterminada": True, "activa": {"$ne": False}}
+        )
+        await ensure_cuenta_predeterminada(slug, emp.get("nombre", ""), "PYG")
+        if not antes:
+            creadas += 1
+    print(f"  Empresas propias: {len(empresas)} revisadas, {creadas} cuenta(s) PYG predeterminada(s) nuevas")
 
 
 async def get_pred_map():
@@ -187,25 +207,28 @@ async def main():
     print("MIGRACIÓN: asignando cuenta_id a movimientos sin cuenta")
     print("=" * 60)
 
-    print("\n[1/6] Obteniendo cuentas predeterminadas...")
+    print("\n[1/7] Creando cuentas predeterminadas PYG por empresa propia...")
+    await ensure_cuentas_empresas_propias()
+
+    print("\n[2/7] Obteniendo cuentas predeterminadas...")
     pred_map = await get_pred_map()
     if not pred_map:
         print("  ERROR: No se encontraron cuentas bancarias. Abortando.")
         return
 
-    print("\n[2/6] Migrando facturas (pagos anidados)...")
+    print("\n[3/7] Migrando facturas (pagos anidados)...")
     await migrate_facturas(pred_map)
 
-    print("\n[3/6] Migrando compras (pagos anidados + tipo_cambio)...")
+    print("\n[4/7] Migrando compras (pagos anidados + tipo_cambio)...")
     await migrate_compras(pred_map)
 
-    print("\n[4/6] Migrando ingresos_varios...")
+    print("\n[5/7] Migrando ingresos_varios...")
     await migrate_ingresos_varios(pred_map)
 
-    print("\n[5/6] Migrando pagos_costos_fijos...")
+    print("\n[6/7] Migrando pagos_costos_fijos...")
     await migrate_costos_fijos(pred_map)
 
-    print("\n[6/6] Migrando pagos_proveedores (tipo_cambio → PYG)...")
+    print("\n[7/7] Migrando pagos_proveedores (tipo_cambio → PYG)...")
     await migrate_pagos_proveedores(pred_map)
 
     print("\n" + "=" * 60)

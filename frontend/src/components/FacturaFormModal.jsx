@@ -56,6 +56,8 @@ const FacturaFormModal = ({
 
   const [form, setForm] = useState(getDefaultForm());
   const [saving, setSaving] = useState(false);
+  const [barcodeInput, setBarcodeInput] = useState("");
+  const [barcodeLoading, setBarcodeLoading] = useState(false);
   const [tcInfo, setTcInfo] = useState(null);
 
   // ── Timbrado config ────────────────────────────────────────────
@@ -231,6 +233,76 @@ const FacturaFormModal = ({
       });
       return { ...prev, conceptos };
     });
+  };
+
+  const appendProductoConcepto = (prod, incrementIfExists = true) => {
+    if (!prod) return false;
+    const ivaTipo = prod.iva_tipo || "10";
+    const precio = parseFloat(prod.precio_venta) || 0;
+    setForm(prev => {
+      const conceptos = [...(prev.conceptos || [])];
+      if (incrementIfExists) {
+        const idx = conceptos.findIndex(c => String(c.producto_id) === String(prod.id));
+        if (idx >= 0) {
+          const cant = (parseFloat(conceptos[idx].cantidad) || 0) + 1;
+          conceptos[idx] = {
+            ...conceptos[idx],
+            cantidad: cant,
+            subtotal: cant * (parseFloat(conceptos[idx].precio_unitario) || 0),
+          };
+          return { ...prev, conceptos, modo: productosHabilitados ? "productos" : prev.modo, afecta_stock: productosHabilitados ? true : prev.afecta_stock };
+        }
+      }
+      const vacio = conceptos.findIndex(c => !c.descripcion && !c.producto_id && !(parseFloat(c.precio_unitario) > 0));
+      const nuevo = {
+        descripcion: prod.nombre,
+        cantidad: 1,
+        precio_unitario: precio,
+        subtotal: precio,
+        producto_id: prod.id,
+        producto_sku: prod.sku || "",
+        iva_tipo: ivaTipo,
+      };
+      if (vacio >= 0) conceptos[vacio] = nuevo;
+      else conceptos.push(nuevo);
+      return {
+        ...prev,
+        conceptos,
+        modo: productosHabilitados ? "productos" : prev.modo,
+        afecta_stock: productosHabilitados ? true : prev.afecta_stock,
+      };
+    });
+    return true;
+  };
+
+  const handleBarcodeSubmit = async () => {
+    const code = (barcodeInput || "").trim();
+    if (!code) return;
+    let prod = productos.find(p => (p.codigo_barras || "").trim() === code && p.activo !== false);
+    if (!prod && API && token) {
+      try {
+        setBarcodeLoading(true);
+        const q = new URLSearchParams();
+        if (logoTipo) q.set("logo_tipo", logoTipo);
+        const res = await fetch(`${API}/admin/productos/by-barcode/${encodeURIComponent(code)}?${q}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) prod = await res.json();
+        else throw new Error((await res.json().catch(() => ({}))).detail || "Producto no encontrado");
+      } catch (e) {
+        toast.error(e.message || "No se encontró el producto");
+        return;
+      } finally {
+        setBarcodeLoading(false);
+      }
+    }
+    if (!prod) {
+      toast.error("No se encontró producto con ese código de barras");
+      return;
+    }
+    appendProductoConcepto(prod, true);
+    setBarcodeInput("");
+    toast.success(`${prod.nombre} agregado`);
   };
 
   const selectProductoForConcepto = (idx, productoId) => {
@@ -790,6 +862,31 @@ const FacturaFormModal = ({
                 <Plus className="w-3.5 h-3.5" /> Agregar ítem
               </button>
             </div>
+
+            {(productosHabilitados || productos.length > 0) && (
+              <div className="mb-3 flex flex-wrap items-end gap-2 p-3 rounded-xl border border-emerald-200 bg-emerald-50/80">
+                <div className="flex-1 min-w-[200px]">
+                  <label className={labelCls}>Código de barras</label>
+                  <input
+                    className={inputCls}
+                    value={barcodeInput}
+                    onChange={(e) => setBarcodeInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleBarcodeSubmit(); } }}
+                    placeholder="Escanear o escribir y Enter"
+                    disabled={barcodeLoading}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleBarcodeSubmit}
+                  disabled={barcodeLoading || !barcodeInput.trim()}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {barcodeLoading ? "Buscando..." : "Agregar"}
+                </button>
+                <p className="w-full text-[11px] text-emerald-700">Si el producto ya está en la lista, se suma 1 a la cantidad.</p>
+              </div>
+            )}
 
             {productosHabilitados && (
               <div className="flex flex-wrap items-center gap-2 mb-3">

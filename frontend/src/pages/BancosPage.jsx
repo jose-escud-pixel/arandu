@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Plus, Edit2, Trash2, Building2, Star, X, Check } from "lucide-react";
+import { ArrowLeft, Plus, Edit2, Trash2, Building2, Star, X, Check, Users } from "lucide-react";
 import { AuthContext } from "../App";
 import { toast } from "sonner";
 
@@ -28,7 +28,11 @@ const emptyForm = {
 export default function BancosPage() {
   const navigate = useNavigate();
   const { token, activeEmpresaPropia, user, hasPermission } = useContext(AuthContext);
-  const canEdit = user?.role === "admin" || hasPermission("balance.editar");
+  const canCreate = user?.role === "admin" || hasPermission("bancos.crear");
+  const canEdit = user?.role === "admin" || hasPermission("bancos.editar");
+  const canDelete = user?.role === "admin" || hasPermission("bancos.eliminar");
+  const canAccesoReporte = user?.role === "admin" || user?.role === "gerente"
+    || hasPermission("bancos.asignar_acceso_reporte") || hasPermission("bancos.editar");
 
   const [cuentas, setCuentas] = useState([]);
   const [balanceTotales, setBalanceTotales] = useState(null);
@@ -36,6 +40,12 @@ export default function BancosPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [formData, setFormData] = useState(emptyForm);
+  const [showAccesoModal, setShowAccesoModal] = useState(false);
+  const [cuentaAcceso, setCuentaAcceso] = useState(null);
+  const [usuariosReporte, setUsuariosReporte] = useState([]);
+  const [accesoIds, setAccesoIds] = useState([]);
+  const [loadingAcceso, setLoadingAcceso] = useState(false);
+  const [accesoAviso, setAccesoAviso] = useState("");
 
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -44,8 +54,23 @@ export default function BancosPage() {
     try {
       const q = new URLSearchParams();
       if (activeEmpresaPropia?.slug) q.set("logo_tipo", activeEmpresaPropia.slug);
-      const res = await fetch(`${API}/admin/cuentas-bancarias/saldos${q.toString() ? `?${q}` : ""}`, { headers });
-      if (res.ok) setCuentas(await res.json());
+      const qs = q.toString() ? `?${q}` : "";
+      const [resLista, resSaldos] = await Promise.all([
+        fetch(`${API}/admin/cuentas-bancarias${qs}`, { headers }),
+        fetch(`${API}/admin/cuentas-bancarias/saldos${qs}`, { headers }),
+      ]);
+      const lista = resLista.ok ? await resLista.json() : [];
+      const saldos = resSaldos.ok ? await resSaldos.json() : [];
+      const saldoMap = Object.fromEntries((saldos || []).map(c => [c.id, c]));
+      const merged = (lista.length ? lista : saldos).map(c => ({
+        ...c,
+        ...(saldoMap[c.id] || {}),
+        saldo_actual: saldoMap[c.id]?.saldo_actual ?? c.saldo_actual ?? c.saldo_inicial ?? 0,
+      }));
+      if (!merged.length && !activeEmpresaPropia?.slug) {
+        toast.error("Seleccioná una empresa propia en el selector superior");
+      }
+      setCuentas(merged);
     } catch { toast.error("Error al cargar cuentas"); }
     setLoading(false);
   };
@@ -67,6 +92,10 @@ export default function BancosPage() {
   }, [activeEmpresaPropia]); // eslint-disable-line
 
   const openNew = () => {
+    if (!activeEmpresaPropia?.slug) {
+      toast.error("Seleccioná una empresa propia en el selector superior antes de crear la cuenta");
+      return;
+    }
     setEditingId(null);
     setFormData({ ...emptyForm });
     setShowForm(true);
@@ -91,11 +120,16 @@ export default function BancosPage() {
   const handleSave = async (e) => {
     e.preventDefault();
     if (!formData.nombre) { toast.error("Nombre requerido"); return; }
+    const slug = activeEmpresaPropia?.slug;
+    if (!slug) {
+      toast.error("Seleccioná una empresa propia en el selector superior");
+      return;
+    }
     try {
       const payload = {
         ...formData,
         saldo_inicial: parseFloat(formData.saldo_inicial) || 0,
-        logo_tipo: activeEmpresaPropia?.slug || "arandujar",
+        logo_tipo: slug,
       };
       const url = editingId
         ? `${API}/admin/cuentas-bancarias/${editingId}`
@@ -105,11 +139,71 @@ export default function BancosPage() {
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error();
-      toast.success(editingId ? "Cuenta actualizada" : "Cuenta creada");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Error ${res.status}`);
+      }
+      toast.success(editingId ? "Cuenta actualizada" : `Cuenta creada (${activeEmpresaPropia?.nombre || slug})`);
       setShowForm(false);
-      fetchCuentas();
-    } catch { toast.error("Error al guardar"); }
+      await fetchCuentas();
+    } catch (err) {
+      toast.error(err.message || "Error al guardar");
+    }
+  };
+
+  const openAccesoReporte = async (c) => {
+    if (!canAccesoReporte) return;
+    setCuentaAcceso(c);
+    setAccesoIds((c.usuarios_reporte_ids || []).map(String));
+    setShowAccesoModal(true);
+    setLoadingAcceso(true);
+    setAccesoAviso("");
+    try {
+      const q = new URLSearchParams();
+      if (activeEmpresaPropia?.slug) q.set("logo_tipo", activeEmpresaPropia.slug);
+      q.set("cuenta_id", c.id);
+      const res = await fetch(`${API}/admin/cuentas-bancarias/usuarios-acceso-reporte?${q}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        const lista = Array.isArray(data) ? data : (data.usuarios || []);
+        setUsuariosReporte(lista);
+        setAccesoAviso(data.aviso || "");
+        if (!lista.length && data.aviso) toast.error(data.aviso, { duration: 8000 });
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setUsuariosReporte([]);
+        toast.error(err.detail || "No se pudo cargar usuarios");
+      }
+    } catch {
+      setUsuariosReporte([]);
+      toast.error("Error de conexión al cargar usuarios");
+    }
+    setLoadingAcceso(false);
+  };
+
+  const toggleAccesoUsuario = (uid) => {
+    const id = String(uid);
+    setAccesoIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const guardarAccesoReporte = async () => {
+    if (!cuentaAcceso?.id) return;
+    try {
+      const res = await fetch(`${API}/admin/cuentas-bancarias/${cuentaAcceso.id}/acceso-reporte`, {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ usuarios_reporte_ids: accesoIds }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Error al guardar");
+      }
+      toast.success("Acceso al reporte actualizado");
+      setShowAccesoModal(false);
+      await fetchCuentas();
+    } catch (e) {
+      toast.error(e.message || "Error al guardar acceso");
+    }
   };
 
   const handleDelete = async (c) => {
@@ -151,7 +245,7 @@ export default function BancosPage() {
                 {activeEmpresaPropia.nombre}
               </span>
             )}
-            {canEdit && (
+            {canCreate && (
               <button onClick={openNew} data-testid="new-cuenta-btn"
                 className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
                 <Plus className="w-4 h-4" /> Nueva cuenta
@@ -181,7 +275,10 @@ export default function BancosPage() {
           <div className="text-center py-16 border border-dashed border-white/10 rounded-xl">
             <Building2 className="w-12 h-12 mx-auto mb-3 text-slate-600" />
             <p className="text-slate-400 font-body">Sin cuentas bancarias</p>
-            {canEdit && <button onClick={openNew} className="text-blue-400 hover:text-blue-300 text-sm mt-3 underline">Crear la primera cuenta</button>}
+            {canCreate && <button onClick={openNew} className="text-blue-400 hover:text-blue-300 text-sm mt-3 underline">Crear la primera cuenta</button>}
+            {!activeEmpresaPropia?.slug && (
+              <p className="text-amber-400/90 text-xs mt-2">Seleccioná la empresa propia arriba para ver y crear cuentas de esa empresa.</p>
+            )}
           </div>
         ) : (
           <div className="space-y-2">
@@ -205,6 +302,11 @@ export default function BancosPage() {
                   <p className="text-slate-400 text-xs">
                     {c.banco || "—"}{c.numero_cuenta ? ` · N° ${c.numero_cuenta}` : ""}
                   </p>
+                  {canAccesoReporte && (c.usuarios_reporte_ids?.length > 0) && (
+                    <p className="text-cyan-500/80 text-[10px] mt-0.5">
+                      Reporte: {c.usuarios_reporte_ids.length} usuario(s)
+                    </p>
+                  )}
                 </div>
                 <div className="text-right">
                   <p className={`font-heading text-lg font-bold ${(c.saldo_actual ?? 0) >= 0 ? "text-emerald-300" : "text-red-300"}`}>
@@ -215,14 +317,22 @@ export default function BancosPage() {
                     <p className="text-slate-600 text-[10px]">inicial: {fmt(c.saldo_inicial, c.moneda)}</p>
                   )}
                 </div>
-                {canEdit && (
+                {(canEdit || canAccesoReporte) && (
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {canAccesoReporte && (
+                      <button type="button" onClick={() => openAccesoReporte(c)} title="Acceso reporte Caja/Banco"
+                        className="text-slate-400 hover:text-cyan-400 p-1">
+                        <Users className="w-4 h-4" />
+                      </button>
+                    )}
+                    {canEdit && (
                     <button onClick={() => openEdit(c)} className="text-slate-400 hover:text-blue-400 p-1">
                       <Edit2 className="w-4 h-4" />
                     </button>
-                    <button onClick={() => handleDelete(c)} className="text-slate-400 hover:text-red-400 p-1">
+                    )}
+                    {canDelete && <button onClick={() => handleDelete(c)} className="text-slate-400 hover:text-red-400 p-1">
                       <Trash2 className="w-4 h-4" />
-                    </button>
+                    </button>}
                   </div>
                 )}
               </div>
@@ -230,6 +340,51 @@ export default function BancosPage() {
           </div>
         )}
       </div>
+
+      {showAccesoModal && cuentaAcceso && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowAccesoModal(false)}>
+          <div onClick={e => e.stopPropagation()} className="bg-arandu-dark border border-white/10 rounded-2xl w-full max-w-md max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between p-5 border-b border-white/10">
+              <div>
+                <h2 className="font-heading text-white text-lg">Acceso reporte Caja/Banco</h2>
+                <p className="text-slate-500 text-xs mt-1">{cuentaAcceso.nombre}</p>
+              </div>
+              <button type="button" onClick={() => setShowAccesoModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1">
+              <p className="text-slate-400 text-xs mb-3">
+                Usuarios con permiso <span className="text-cyan-400">Reportes → Caja/Banco</span> que pueden generar el reporte de esta cuenta.
+              </p>
+              {loadingAcceso ? (
+                <p className="text-slate-500 text-sm animate-pulse">Cargando usuarios…</p>
+              ) : usuariosReporte.length === 0 ? (
+                <p className="text-amber-400 text-xs">
+                  {accesoAviso || (
+                    <>No hay usuarios elegibles. Deben ser <strong>Usuario restringido</strong>, con la misma <strong>Nuestra Empresa</strong> marcada y permiso <strong>Reportes → Caja/Banco</strong> guardado (luego cerrar sesión y volver a entrar).</>
+                  )}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {usuariosReporte.map(u => {
+                    const on = accesoIds.includes(String(u.id));
+                    return (
+                      <button key={u.id} type="button" onClick={() => toggleAccesoUsuario(u.id)}
+                        className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-all ${on ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-200" : "border-white/10 text-slate-400 hover:border-white/20"}`}>
+                        <span className="font-medium">{u.name}</span>
+                        <span className="text-slate-500 text-xs block">{u.email}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="p-5 border-t border-white/10 flex gap-2 justify-end">
+              <button type="button" onClick={() => setShowAccesoModal(false)} className="px-4 py-2 text-slate-400 text-sm">Cancelar</button>
+              <button type="button" onClick={guardarAccesoReporte} className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-sm font-medium">Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Form modal */}
       {showForm && (

@@ -29,6 +29,7 @@ from routes.notas_credito import router as notas_credito_router
 from routes.productos import router as productos_router
 from routes.cotizaciones import router as cotizaciones_router
 from routes.timbrado import router as timbrado_router
+from routes.reportes_caja import router as reportes_caja_router
 
 app = FastAPI(title="Arandu&JAR Informatica API")
 
@@ -75,6 +76,7 @@ app.include_router(notas_credito_router, prefix="/api")
 app.include_router(productos_router, prefix="/api")
 app.include_router(cotizaciones_router, prefix="/api")
 app.include_router(timbrado_router, prefix="/api")
+app.include_router(reportes_caja_router, prefix="/api")
 
 
 async def init_admin_user():

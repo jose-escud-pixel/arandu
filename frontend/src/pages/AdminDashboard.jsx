@@ -79,6 +79,7 @@ const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [cumpleanosResumen, setCumpleanosResumen] = useState(null);
 
   useEffect(() => {
     fetchData();
@@ -91,11 +92,16 @@ const AdminDashboard = () => {
       if (periodoTipo === "mes") resumenParams.set("mes", periodoMes);
       if (periodoTipo === "anio") resumenParams.set("anio", periodoAnio);
       if (activeEmpresaPropia?.slug) resumenParams.set("logo_tipo", activeEmpresaPropia.slug);
-      const [messagesRes, statsRes, resumenRes] = await Promise.all([
+      const fetches = [
         fetch(`${API}/admin/messages`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API}/admin/stats${q}`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`${API}/admin/dashboard/resumen?${resumenParams}`, { headers: { Authorization: `Bearer ${token}` } })
-      ]);
+        fetch(`${API}/admin/dashboard/resumen?${resumenParams}`, { headers: { Authorization: `Bearer ${token}` } }),
+      ];
+      if (hasPermission("alertas.ver")) {
+        fetches.push(fetch(`${API}/admin/alertas/cumpleanos/resumen${q}`, { headers: { Authorization: `Bearer ${token}` } }));
+      }
+      const results = await Promise.all(fetches);
+      const [messagesRes, statsRes, resumenRes, cumpleanosRes] = results;
 
       if (messagesRes.ok) {
         const messagesData = await messagesRes.json();
@@ -108,6 +114,11 @@ const AdminDashboard = () => {
       }
       if (resumenRes.ok) {
         setResumen(await resumenRes.json());
+      }
+      if (cumpleanosRes?.ok) {
+        setCumpleanosResumen(await cumpleanosRes.json());
+      } else {
+        setCumpleanosResumen(null);
       }
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -486,6 +497,7 @@ const AdminDashboard = () => {
           {/* Estadísticas operativas */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8" data-testid="stats-grid">
             {[
+              { perm: hasPermission("alertas.ver") && cumpleanosResumen, title: "Cumpleaños", icon: Bell, color: "text-pink-400", value: cumpleanosResumen?.hoy ?? 0, lines: [`Hoy (rojo): ${cumpleanosResumen?.hoy ?? 0}`, `Próximos (amarillo): ${cumpleanosResumen?.proximos ?? 0}`, `En ventana: ${cumpleanosResumen?.total ?? 0}`], link: "/sistema/reportes?tab=alertas" },
               { perm: hasModule("mensajes"), title: "Mensajes", icon: MessageSquare, color: "text-blue-400", value: resumen?.mensajes?.total || 0, lines: [`Sin leer: ${resumen?.mensajes?.sin_leer || 0}`] },
               { perm: hasPermission("empresas.ver"), title: "Clientes", icon: Building2, color: "text-purple-400", value: resumen?.clientes?.total || 0, lines: ["clientes registrados"] },
               { perm: hasPermission("presupuestos.ver"), title: "Presupuestos", icon: FileText, color: "text-green-400", value: resumen?.presupuestos?.total || 0, lines: [`Aprobados: ${resumen?.presupuestos?.aprobados || 0}`, `Rechazados: ${resumen?.presupuestos?.rechazados || 0}`, `Cobrados: ${resumen?.presupuestos?.cobrados || 0}`, `Faltantes: ${resumen?.presupuestos?.faltantes || 0}`] },
@@ -500,9 +512,8 @@ const AdminDashboard = () => {
               { perm: hasPermission("balance.ver"), title: "IVA", icon: Scale, color: "text-violet-400", value: fmtMixed(resumen?.iva?.saldo, resumen?.iva?.saldo_usd), lines: [`A pagar: ${fmtMixed(resumen?.iva?.a_pagar, resumen?.iva?.a_pagar_usd)}`, `Pagado: ${fmtPYG(resumen?.iva?.pagado)}`] },
             ].filter(card => card.perm).map((card, i) => {
               const Icon = card.icon;
-              return (
-                <motion.div key={card.title} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
-                  className="bg-arandu-dark-light border border-white/5 rounded-xl p-4 min-h-[150px]">
+              const inner = (
+                <>
                   <div className="flex items-center justify-between mb-3">
                     <p className="text-slate-400 text-sm font-body">{card.title}</p>
                     <Icon className={`w-5 h-5 ${card.color}`} />
@@ -511,6 +522,14 @@ const AdminDashboard = () => {
                   <div className="mt-2 space-y-0.5">
                     {card.lines.map(line => <p key={line} className="text-slate-500 text-xs">{line}</p>)}
                   </div>
+                </>
+              );
+              return (
+                <motion.div key={card.title} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}
+                  className="bg-arandu-dark-light border border-white/5 rounded-xl p-4 min-h-[150px]">
+                  {card.link ? (
+                    <Link to={card.link} className="block hover:opacity-90 transition-opacity">{inner}</Link>
+                  ) : inner}
                 </motion.div>
               );
             })}

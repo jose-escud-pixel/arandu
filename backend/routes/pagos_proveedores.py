@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from config import db
 from auth import require_authenticated, has_permission, log_auditoria, get_logos_acceso, apply_logo_filter, is_forbidden
+from routes.cuentas_bancarias import resolver_cuenta_id
 
 router = APIRouter()
 
@@ -257,6 +258,17 @@ async def create_pago_proveedor(data: PagoProveedorCreate, user: dict = Depends(
             recibo_numero, data.logo_tipo, data.proveedor_id, data.proveedor_nombre
         )
 
+    cuenta_id = data.cuenta_id
+    cuenta_nombre = data.cuenta_nombre
+    if data.fecha_pago:
+        moneda_real = "PYG" if (data.tipo_cambio and float(data.tipo_cambio) > 0) else (data.moneda or "PYG")
+        cuenta_id = await resolver_cuenta_id(data.logo_tipo, moneda_real, cuenta_id)
+        if not cuenta_id:
+            raise HTTPException(status_code=400, detail="No hay cuenta bancaria predeterminada. Creá una en Bancos.")
+        if not cuenta_nombre:
+            c = await db.cuentas_bancarias.find_one({"id": cuenta_id}, {"nombre": 1, "_id": 0})
+            cuenta_nombre = c.get("nombre") if c else None
+
     doc = {
         "id": pago_id,
         "proveedor_id": data.proveedor_id,
@@ -266,8 +278,8 @@ async def create_pago_proveedor(data: PagoProveedorCreate, user: dict = Depends(
         "moneda": data.moneda,
         "tipo_cambio": data.tipo_cambio,
         "monto_gs": data.monto_gs,
-        "cuenta_id": data.cuenta_id,
-        "cuenta_nombre": data.cuenta_nombre,
+        "cuenta_id": cuenta_id,
+        "cuenta_nombre": cuenta_nombre,
         "cuenta_moneda": data.cuenta_moneda,
         "cuenta_pago": data.cuenta_pago,
         "fecha_vencimiento": data.fecha_vencimiento,

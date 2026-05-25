@@ -49,6 +49,8 @@ const ACCIONES_LABELS = {
   crear_servicio: "Crear servicios",
   stock_inicial: "Stock inicial",
   modo_libre: "Modo libre",
+  caja_banco: "Caja / Banco",
+  asignar_acceso_reporte: "Asignar acceso reporte",
 };
 
 function ChipSearch({ chips, setChips, inputVal, setInputVal, placeholder }) {
@@ -111,7 +113,8 @@ const UsuariosPage = () => {
     role: "usuario",
     permisos: [],
     empresas_asignadas: [],
-    logos_asignados: []
+    empresas_todos_clientes: true,
+    logos_asignados: [],
   });
   const [expandedUser, setExpandedUser] = useState(null);
   const [searchChips, setSearchChips] = useState([]);
@@ -182,7 +185,8 @@ const UsuariosPage = () => {
       role: "usuario",
       permisos: [],
       empresas_asignadas: [],
-      logos_asignados: []
+      empresas_todos_clientes: true,
+      logos_asignados: [],
     });
     setEditingId(null);
     setShowForm(false);
@@ -221,6 +225,7 @@ const UsuariosPage = () => {
 
       return {
         ...prev,
+        empresas_todos_clientes: false,
         empresas_asignadas: exists
           ? empresasActuales.filter(empId => empId !== id)
           : [...empresasActuales, id]
@@ -244,14 +249,10 @@ const UsuariosPage = () => {
   };
 
   const selectAllEmpresas = () => {
-    const empresasFiltradas = getEmpresasFiltradas(formData.logos_asignados);
-    const allIds = empresasFiltradas.map(e => String(e.id));
-    const selectedIds = (formData.empresas_asignadas || []).map(String);
-    const allSelected = allIds.length > 0 && allIds.every(id => selectedIds.includes(id));
-
     setFormData(prev => ({
       ...prev,
-      empresas_asignadas: allSelected ? [] : allIds
+      empresas_todos_clientes: !prev.empresas_todos_clientes,
+      empresas_asignadas: [],
     }));
   };
 
@@ -299,8 +300,9 @@ const UsuariosPage = () => {
     try {
       const payload = {
         ...limpiarPermisosFueraDeModulos(formData),
-        empresas_asignadas: (formData.empresas_asignadas || []).map(String),
-        logos_asignados: (formData.logos_asignados || []).map(String)
+        empresas_asignadas: formData.empresas_todos_clientes ? [] : (formData.empresas_asignadas || []).map(String),
+        empresas_todos_clientes: !!formData.empresas_todos_clientes,
+        logos_asignados: (formData.logos_asignados || []).map(String),
       };
 
       const url = editingId
@@ -338,7 +340,8 @@ const UsuariosPage = () => {
       role: usuario.role,
       permisos: usuario.permisos || [],
       empresas_asignadas: (usuario.empresas_asignadas || []).map(String),
-      logos_asignados: (usuario.logos_asignados || []).map(String)
+      empresas_todos_clientes: usuario.empresas_todos_clientes ?? ((usuario.empresas_asignadas || []).length === 0),
+      logos_asignados: (usuario.logos_asignados || []).map(String),
     });
     setShowForm(true);
   };
@@ -370,8 +373,10 @@ const UsuariosPage = () => {
     return modulos.map(m => MODULOS_LABELS[m] || m).join(", ");
   };
 
-  const getEmpresasSummary = (asignadas) => {
-    if (!asignadas || !asignadas.length) return "Sin clientes asignados";
+  const getEmpresasSummary = (usuario) => {
+    if (usuario?.empresas_todos_clientes) return "Todos los clientes";
+    const asignadas = usuario?.empresas_asignadas || [];
+    if (!asignadas.length) return "Sin clientes asignados";
     const found = empresas.filter(e => asignadas.map(String).includes(String(e.id)));
     if (!found.length) return `${asignadas.length} clientes`;
     return found.map(e => e.nombre).join(", ");
@@ -396,7 +401,7 @@ const UsuariosPage = () => {
     const texto = [
       usuario.name, usuario.email, usuario.role,
       getLogosSummary(usuario.logos_asignados),
-      getEmpresasSummary(usuario.empresas_asignadas),
+      getEmpresasSummary(usuario),
       getPermisosSummary(usuario.permisos),
       ...(usuario.permisos || [])
     ].filter(Boolean).join(" ");
@@ -606,75 +611,6 @@ const UsuariosPage = () => {
                         </div>
                       )}
 
-                      {/* ── CLIENTES ASIGNADOS (empresas_asignadas) — solo para usuario ── */}
-                      {formData.role === "usuario" && (() => {
-                        const empresasFiltradas = getEmpresasFiltradas(formData.logos_asignados);
-                        const selectedIds = (formData.empresas_asignadas || []).map(String);
-                        const allFilteredSelected = empresasFiltradas.length > 0 && empresasFiltradas.every(e => selectedIds.includes(String(e.id)));
-                        const noLogosSelected = (formData.logos_asignados || []).length === 0;
-                        return (
-                          <div className="border border-white/10 rounded-lg overflow-hidden">
-                            <div className="bg-arandu-dark p-3 flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <Building2 className="w-4 h-4 text-purple-400" />
-                                <span className="text-white font-medium text-sm">Clientes asignados</span>
-                                <span className="text-slate-500 text-xs">
-                                  ({selectedIds.filter(id => empresasFiltradas.map(e => String(e.id)).includes(id)).length}/{empresasFiltradas.length})
-                                </span>
-                              </div>
-                              {empresasFiltradas.length > 0 && (
-                                <button
-                                  type="button"
-                                  className="text-xs text-purple-400 hover:underline"
-                                  onClick={(e) => { e.stopPropagation(); selectAllEmpresas(); }}
-                                >
-                                  {allFilteredSelected ? "Deseleccionar todas" : "Seleccionar todas"}
-                                </button>
-                              )}
-                            </div>
-
-                            <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto">
-                              {noLogosSelected ? (
-                                <p className="text-slate-500 text-sm col-span-2 py-2">
-                                  Seleccioná primero una empresa propia para ver sus clientes.
-                                </p>
-                              ) : empresasFiltradas.length === 0 ? (
-                                <p className="text-slate-500 text-sm col-span-2 py-2">
-                                  Esta empresa no tiene clientes registrados.
-                                </p>
-                              ) : (
-                                empresasFiltradas.map(emp => {
-                                  const isSelected = selectedIds.includes(String(emp.id));
-                                  return (
-                                    <label
-                                      key={emp.id}
-                                      onClick={() => toggleEmpresa(String(emp.id))}
-                                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer transition-all text-sm ${
-                                        isSelected
-                                          ? "border-purple-500/50 bg-purple-500/10 text-purple-300"
-                                          : "border-white/5 bg-arandu-dark text-slate-400 hover:border-white/10"
-                                      }`}
-                                      data-testid={`empresa-assign-${emp.id}`}
-                                    >
-                                      <div
-                                        className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
-                                          isSelected
-                                            ? "bg-purple-500 border-purple-500"
-                                            : "border-white/20"
-                                        }`}
-                                      >
-                                        {isSelected && <Check className="w-3 h-3 text-white" />}
-                                      </div>
-                                      <span className="truncate">{emp.nombre}</span>
-                                    </label>
-                                  );
-                                })
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })()}
-
                       {/* ── PERMISOS — solo para usuario ── */}
                       {formData.role === "usuario" && <div className="border border-white/10 rounded-lg overflow-hidden">
                         <div className="bg-arandu-dark p-3 flex items-center gap-2">
@@ -682,7 +618,60 @@ const UsuariosPage = () => {
                           <span className="text-white font-medium text-sm">Permisos por Módulo</span>
                         </div>
 
-                        <div className="p-3 space-y-2">
+                        <div className="p-3 space-y-3">
+                          {/* Clientes dentro de permisos */}
+                          {(() => {
+                            const empresasFiltradas = getEmpresasFiltradas(formData.logos_asignados);
+                            const selectedIds = (formData.empresas_asignadas || []).map(String);
+                            const noLogosSelected = (formData.logos_asignados || []).length === 0;
+                            const todos = !!formData.empresas_todos_clientes;
+                            return (
+                              <div className="border border-purple-500/20 rounded-lg overflow-hidden bg-purple-500/5">
+                                <div className="bg-arandu-dark/80 p-3 flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2">
+                                    <Building2 className="w-4 h-4 text-purple-400" />
+                                    <span className="text-white font-medium text-sm">Clientes</span>
+                                  </div>
+                                  <label
+                                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer text-xs font-medium transition-all ${
+                                      todos ? "border-purple-500 bg-purple-500/20 text-purple-200" : "border-white/10 text-slate-400"
+                                    }`}
+                                    onClick={(e) => { e.preventDefault(); selectAllEmpresas(); }}
+                                  >
+                                    <div className={`w-4 h-4 rounded border flex items-center justify-center ${todos ? "bg-purple-500 border-purple-500" : "border-white/20"}`}>
+                                      {todos && <Check className="w-3 h-3 text-white" />}
+                                    </div>
+                                    Todos (incluye nuevos)
+                                  </label>
+                                </div>
+                                {!todos && (
+                                  <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto">
+                                    {noLogosSelected ? (
+                                      <p className="text-slate-500 text-sm col-span-2">Seleccioná primero una empresa propia.</p>
+                                    ) : empresasFiltradas.length === 0 ? (
+                                      <p className="text-slate-500 text-sm col-span-2">Sin clientes en esta empresa.</p>
+                                    ) : empresasFiltradas.map(emp => {
+                                      const isSelected = selectedIds.includes(String(emp.id));
+                                      return (
+                                        <label key={emp.id} onClick={() => toggleEmpresa(String(emp.id))}
+                                          className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm ${
+                                            isSelected ? "border-purple-500/50 bg-purple-500/10 text-purple-300" : "border-white/5 text-slate-400"
+                                          }`}>
+                                          <div className={`w-4 h-4 rounded border flex items-center justify-center ${isSelected ? "bg-purple-500 border-purple-500" : "border-white/20"}`}>
+                                            {isSelected && <Check className="w-3 h-3 text-white" />}
+                                          </div>
+                                          <span className="truncate">{emp.nombre}</span>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                                {todos && (
+                                  <p className="px-3 pb-3 text-slate-500 text-xs">Verá todos los clientes de sus empresas, incluso los que se creen después.</p>
+                                )}
+                              </div>
+                            );
+                          })()}
                           {Object.entries(permisosDisponibles).filter(([modulo]) => {
                             const moduloEmpresa = PERMISO_A_MODULO_EMPRESA[modulo];
                             return !!moduloEmpresa && modulosPermitidosForm.includes(moduloEmpresa);
@@ -754,6 +743,14 @@ const UsuariosPage = () => {
                           )}
                         </div>
                       </div>}
+                    </div>
+                  )}
+
+                  {formData.role === "usuario" && formData.permisos.includes("reportes.caja_banco") && (
+                    <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-lg p-3">
+                      <p className="text-cyan-300/90 text-xs">
+                        Este usuario puede usar el reporte si tiene <strong className="text-cyan-200">Reportes → Caja/Banco</strong>. Quién asigna cuentas necesita <strong className="text-cyan-200">Bancos → Asignar acceso reporte</strong> en Bancos → ícono usuarios en cada cuenta.
+                      </p>
                     </div>
                   )}
 
@@ -936,7 +933,7 @@ const UsuariosPage = () => {
                             <Building2 className="w-3 h-3" /> Clientes
                           </p>
                           <p className="text-purple-300 text-sm">
-                            {getEmpresasSummary(usuario.empresas_asignadas)}
+                            {getEmpresasSummary(usuario)}
                           </p>
                         </div>
 

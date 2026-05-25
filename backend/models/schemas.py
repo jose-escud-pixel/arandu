@@ -48,8 +48,10 @@ class AdminUserCreate(BaseModel):
     role: str = "usuario"
     permisos: List[str] = []
     empresas_asignadas: List[str] = []
+    empresas_todos_clientes: bool = True
     logos_asignados: List[str] = []
     empresa_default: Optional[str] = None
+    cuentas_reporte_ids: List[str] = []
 
     @field_validator("email")
     @classmethod
@@ -73,8 +75,10 @@ class UserResponse(BaseModel):
     avatar: Optional[str] = None
     permisos: List[str] = []
     empresas_asignadas: List[str] = []
+    empresas_todos_clientes: bool = True
     logos_asignados: List[str] = []
     empresa_default: Optional[str] = None
+    cuentas_reporte_ids: List[str] = []
     created_at: str
 
 class ProfileUpdate(BaseModel):
@@ -139,6 +143,8 @@ class EmpresaCreate(BaseModel):
     # Datos adicionales del cliente
     personeria: Optional[str] = "fisica"    # fisica | juridica
     fecha_nacimiento: Optional[str] = None  # YYYY-MM-DD
+    cumpleanos_amarillo_dias: Optional[int] = None  # None = usar valor global
+    cumpleanos_urgente_dias: Optional[int] = None   # None = usar valor global
     nacionalidad: Optional[str] = None
     pais: Optional[str] = None
     ciudad: Optional[str] = None
@@ -161,12 +167,15 @@ class EmpresaResponse(BaseModel):
     # Datos adicionales del cliente
     personeria: Optional[str] = "fisica"
     fecha_nacimiento: Optional[str] = None
+    cumpleanos_amarillo_dias: Optional[int] = None
+    cumpleanos_urgente_dias: Optional[int] = None
     nacionalidad: Optional[str] = None
     pais: Optional[str] = None
     ciudad: Optional[str] = None
     municipio: Optional[str] = None
     con_inventario_tecnico: Optional[bool] = None
     created_at: str
+    ventas_activas_count: Optional[int] = 0
 
 
 # ================== EMPRESA PROPIA MODELS ==================
@@ -661,6 +670,8 @@ class AlertaCreate(BaseModel):
     fecha_vencimiento: str
     activo_id: Optional[str] = None
     notificar_dias: int = 30
+    notificar_dias_urgente: Optional[int] = 0
+    auto_generada: bool = False
 
 class AlertaResponse(BaseModel):
     id: str
@@ -673,6 +684,8 @@ class AlertaResponse(BaseModel):
     activo_id: Optional[str] = None
     activo_nombre: Optional[str] = None
     notificar_dias: int = 30
+    notificar_dias_urgente: Optional[int] = 0
+    auto_generada: bool = False
     estado: str = "activa"
     created_at: str
 
