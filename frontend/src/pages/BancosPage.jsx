@@ -31,8 +31,10 @@ export default function BancosPage() {
   const canCreate = user?.role === "admin" || hasPermission("bancos.crear");
   const canEdit = user?.role === "admin" || hasPermission("bancos.editar");
   const canDelete = user?.role === "admin" || hasPermission("bancos.eliminar");
+  // Solo admin/gerente o quien tenga el permiso específico pueden asignar cuentas a usuarios.
+  // bancos.editar NO da acceso: es para editar datos de la cuenta, no para asignar acceso al reporte.
   const canAccesoReporte = user?.role === "admin" || user?.role === "gerente"
-    || hasPermission("bancos.asignar_acceso_reporte") || hasPermission("bancos.editar");
+    || hasPermission("bancos.asignar_acceso_reporte");
 
   const [cuentas, setCuentas] = useState([]);
   const [balanceTotales, setBalanceTotales] = useState(null);
@@ -352,26 +354,39 @@ export default function BancosPage() {
               <button type="button" onClick={() => setShowAccesoModal(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
             <div className="p-5 overflow-y-auto flex-1">
-              <p className="text-slate-400 text-xs mb-3">
-                Usuarios con permiso <span className="text-cyan-400">Reportes → Caja/Banco</span> que pueden generar el reporte de esta cuenta.
+              <p className="text-slate-400 text-xs mb-4">
+                Marcá los usuarios que pueden generar el reporte de esta cuenta.
+                Solo aparecen usuarios con permiso <span className="text-cyan-400 font-medium">Reportes → Caja/Banco</span>.
+                Los usuarios marcados <strong className="text-white">solo verán esta cuenta</strong> en su reporte, no el resto de las cuentas.
               </p>
               {loadingAcceso ? (
                 <p className="text-slate-500 text-sm animate-pulse">Cargando usuarios…</p>
               ) : usuariosReporte.length === 0 ? (
-                <p className="text-amber-400 text-xs">
-                  {accesoAviso || (
-                    <>No hay usuarios elegibles. Deben ser <strong>Usuario restringido</strong>, con la misma <strong>Nuestra Empresa</strong> marcada y permiso <strong>Reportes → Caja/Banco</strong> guardado (luego cerrar sesión y volver a entrar).</>
-                  )}
-                </p>
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                  <p className="text-amber-300 text-xs leading-relaxed">
+                    {accesoAviso || (
+                      <>
+                        No hay usuarios con el permiso <strong>Reportes → Caja/Banco</strong>.<br />
+                        Andá a <strong>Usuarios y Permisos</strong>, buscá al usuario, activá el permiso
+                        y guardá. Luego el usuario debe cerrar sesión y volver a entrar.
+                      </>
+                    )}
+                  </p>
+                </div>
               ) : (
                 <div className="space-y-2">
                   {usuariosReporte.map(u => {
                     const on = accesoIds.includes(String(u.id));
                     return (
                       <button key={u.id} type="button" onClick={() => toggleAccesoUsuario(u.id)}
-                        className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-all ${on ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-200" : "border-white/10 text-slate-400 hover:border-white/20"}`}>
-                        <span className="font-medium">{u.name}</span>
-                        <span className="text-slate-500 text-xs block">{u.email}</span>
+                        className={`w-full text-left px-3 py-2.5 rounded-lg border text-sm transition-all flex items-center justify-between gap-2 ${on ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-200" : "border-white/10 text-slate-300 hover:border-white/30 hover:bg-white/3"}`}>
+                        <div>
+                          <span className="font-medium block">{u.name}</span>
+                          <span className="text-slate-500 text-xs">{u.email}</span>
+                        </div>
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all ${on ? "bg-cyan-500 border-cyan-500" : "border-white/20"}`}>
+                          {on && <Check className="w-3 h-3 text-white" />}
+                        </div>
                       </button>
                     );
                   })}

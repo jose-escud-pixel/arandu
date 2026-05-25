@@ -1237,13 +1237,12 @@ const ReportesPage = () => {
       }
       const cuentas = await res.json();
       if (!cuentas.length) {
-        const resBancos = await fetch(`${API}/admin/cuentas-bancarias${q}`, { headers: { Authorization: `Bearer ${token}` } });
-        const todas = resBancos.ok ? await resBancos.json() : [];
-        if (!todas.length) {
-          toast.error("No hay ninguna cuenta bancaria creada. Andá a Bancos → Nueva cuenta y creá una antes de este reporte.");
-        } else {
-          toast.error("No tenés ninguna cuenta bancaria habilitada para este reporte. Pedí al administrador que te asigne cuentas en Usuarios.");
-        }
+        // No llamamos /admin/cuentas-bancarias aquí porque eso expondría todos los bancos
+        // a usuarios que sólo deberían ver los que les fueron asignados.
+        toast.error(
+          "No tenés cuentas bancarias habilitadas para este reporte. " +
+          "Pedí al administrador que te asigne cuentas en Bancos → ícono de usuarios."
+        );
         return;
       }
       setCajaCuentasPicker(cuentas);

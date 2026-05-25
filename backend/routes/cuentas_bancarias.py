@@ -337,6 +337,88 @@ async def get_saldos_cuentas(
 
 
 # ─────────────────────────────────────────────
+#  GET  /admin/cuentas-bancarias/usuarios-acceso-reporte
+#  IMPORTANTE: debe ir ANTES de /{cuenta_id} o FastAPI lo captura como parámetro
+# ─────────────────────────────────────────────
+@router.get("/admin/cuentas-bancarias/usuarios-acceso-reporte")
+async def listar_usuarios_acceso_reporte(
+    logo_tipo: Optional[str] = None,
+    cuenta_id: Optional[str] = None,
+    user: dict = Depends(require_authenticated),
+):
+    """
+    Usuarios con permiso reportes.caja_banco filtrados por la empresa de la cuenta.
+    Solo se muestran usuarios de la misma empresa (logo_tipo) que la cuenta bancaria.
+    Un admin de JAR nunca ve usuarios de Arandu y viceversa.
+    """
+    if not _puede_asignar_acceso_reporte(user):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+
+    # Determinar el slug de la cuenta
+    slug = (logo_tipo or "").strip()
+    if cuenta_id:
+        c = await db.cuentas_bancarias.find_one({"id": cuenta_id}, {"_id": 0, "logo_tipo": 1})
+        if c and c.get("logo_tipo"):
+            slug = c["logo_tipo"]
+
+    id_to_slug = await _mapa_empresas_propias()
+
+    # Tres estrategias de query para máxima compatibilidad con versiones de Mongo
+    todos_raw = await db.users.find(
+        {"role": "usuario", "permisos": "reportes.caja_banco"},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "permisos": 1, "logos_asignados": 1},
+    ).to_list(500)
+
+    if not todos_raw:
+        todos_raw = await db.users.find(
+            {"role": "usuario", "permisos": {"$elemMatch": {"$eq": "reportes.caja_banco"}}},
+            {"_id": 0, "id": 1, "name": 1, "email": 1, "permisos": 1, "logos_asignados": 1},
+        ).to_list(500)
+
+    if not todos_raw:
+        todos_raw = await db.users.find(
+            {"role": "usuario"},
+            {"_id": 0, "id": 1, "name": 1, "email": 1, "permisos": 1, "logos_asignados": 1},
+        ).to_list(500)
+        todos_raw = [u for u in todos_raw if "reportes.caja_banco" in (u.get("permisos") or [])]
+
+    total_con_permiso = len(todos_raw)
+
+    # Filtrar por empresa de la cuenta — JAR no ve usuarios de Arandu ni viceversa
+    out = []
+    sin_empresa = 0
+    for u in todos_raw:
+        if slug:
+            if not await _usuario_acceso_logo(u, slug, id_to_slug):
+                sin_empresa += 1
+                continue
+        out.append({
+            "id": u["id"],
+            "name": u.get("name") or u.get("email"),
+            "email": u.get("email"),
+        })
+
+    aviso = None
+    if not out:
+        if total_con_permiso == 0:
+            aviso = (
+                "Ningún usuario tiene el permiso Reportes → Caja/Banco. "
+                "Andá a Usuarios y Permisos, activá el permiso en el usuario correspondiente, "
+                "guardá, y pedile que cierre sesión y vuelva a entrar."
+            )
+        elif sin_empresa:
+            aviso = (
+                f"Hay {total_con_permiso} usuario(s) con permiso de reporte, pero ninguno "
+                f"tiene asignada la empresa «{slug}» en Nuestras Empresas. "
+                f"Verificá que el usuario tenga marcada esta empresa en Usuarios y Permisos."
+            )
+        else:
+            aviso = "No hay usuarios elegibles para esta cuenta."
+
+    return {"usuarios": out, "aviso": aviso, "total_con_permiso": total_con_permiso}
+
+
+# ─────────────────────────────────────────────
 #  GET  /admin/cuentas-bancarias/{id}
 # ─────────────────────────────────────────────
 @router.get("/admin/cuentas-bancarias/{cuenta_id}")
@@ -468,10 +550,11 @@ async def update_cuenta_bancaria(
 #  Marcar como predeterminada para su logo+moneda
 # ─────────────────────────────────────────────
 def _puede_asignar_acceso_reporte(user: dict) -> bool:
+    # Solo admin/gerente o quien tenga el permiso específico de asignar acceso.
+    # bancos.editar NO da acceso a esta función (es solo para editar datos de la cuenta).
     return (
         user.get("role") in ("admin", "super_admin", "gerente")
         or has_permission(user, "bancos.asignar_acceso_reporte")
-        or has_permission(user, "bancos.editar")
     )
 
 
@@ -526,12 +609,13 @@ async def set_acceso_reporte_cuenta(
             if "reportes.caja_banco" not in (u.get("permisos") or []):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"El usuario {u.get('id')} no tiene permiso reportes.caja_banco",
+                    detail="El usuario no tiene el permiso Reportes → Caja/Banco. Asignáselo primero en Usuarios.",
                 )
+            # Validar que el usuario pertenezca a la misma empresa que la cuenta
             if logo_cuenta and not await _usuario_acceso_logo(u, logo_cuenta, id_to_slug):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"El usuario no tiene asignada la empresa de esta cuenta",
+                    detail=f"El usuario no pertenece a la empresa de esta cuenta ({logo_cuenta}). Solo se pueden asignar usuarios de la misma empresa.",
                 )
 
     await db.cuentas_bancarias.update_one(
@@ -543,65 +627,6 @@ async def set_acceso_reporte_cuenta(
     )
     updated = await db.cuentas_bancarias.find_one({"id": cuenta_id}, {"_id": 0})
     return updated
-
-
-@router.get("/admin/cuentas-bancarias/usuarios-acceso-reporte")
-async def listar_usuarios_acceso_reporte(
-    logo_tipo: Optional[str] = None,
-    cuenta_id: Optional[str] = None,
-    user: dict = Depends(require_authenticated),
-):
-    """Usuarios con permiso reportes.caja_banco (candidatos para asignar acceso por cuenta)."""
-    if not _puede_asignar_acceso_reporte(user):
-        raise HTTPException(status_code=403, detail="Sin permiso")
-
-    slug = (logo_tipo or "").strip()
-    if cuenta_id:
-        c = await db.cuentas_bancarias.find_one({"id": cuenta_id}, {"_id": 0, "logo_tipo": 1})
-        if c and c.get("logo_tipo"):
-            slug = c["logo_tipo"]
-
-    id_to_slug = await _mapa_empresas_propias()
-    todos = await db.users.find(
-        {"role": "usuario", "permisos": {"$in": ["reportes.caja_banco"]}},
-        {"_id": 0, "id": 1, "name": 1, "email": 1, "permisos": 1, "logos_asignados": 1},
-    ).to_list(500)
-    # Fallback si permisos no matchea por $in (datos legacy)
-    if not todos:
-        todos = await db.users.find(
-            {"role": "usuario"},
-            {"_id": 0, "id": 1, "name": 1, "email": 1, "permisos": 1, "logos_asignados": 1},
-        ).to_list(500)
-        todos = [u for u in todos if "reportes.caja_banco" in (u.get("permisos") or [])]
-
-    out = []
-    sin_empresa = 0
-    for u in todos:
-        if slug and not await _usuario_acceso_logo(u, slug, id_to_slug):
-            sin_empresa += 1
-            continue
-        out.append({
-            "id": u["id"],
-            "name": u.get("name") or u.get("email"),
-            "email": u.get("email"),
-        })
-
-    aviso = None
-    if not out:
-        if not todos:
-            aviso = (
-                "Ningún usuario tiene guardado el permiso Reportes → Caja/Banco. "
-                "Marcá el permiso en Usuarios, guardá, y pedile que cierre sesión y vuelva a entrar."
-            )
-        elif sin_empresa:
-            aviso = (
-                f"Hay {len(todos)} usuario(s) con permiso de reporte, pero ninguno tiene asignada "
-                f"la empresa «{slug}» en Nuestras Empresas."
-            )
-        else:
-            aviso = "No hay usuarios elegibles."
-
-    return {"usuarios": out, "aviso": aviso, "total_con_permiso": len(todos)}
 
 
 @router.patch("/admin/cuentas-bancarias/{cuenta_id}/predeterminada")
