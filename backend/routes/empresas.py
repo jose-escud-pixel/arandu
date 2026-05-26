@@ -8,6 +8,7 @@ import base64
 from config import db, DEFAULT_EMPRESA_MODULOS, EMPRESA_MODULOS_DISPONIBLES, EMPRESA_MODULOS_OBLIGATORIOS
 from auth import require_admin, require_authenticated, has_permission, can_access_empresa, get_logos_acceso, log_auditoria, apply_empresa_cliente_filter
 from routes.cuentas_bancarias import ensure_cuenta_predeterminada
+from routes.plan_cuentas import ensure_plan_cuentas_default
 from models.schemas import (
     ContactMessage, ContactMessageResponse,
     EmpresaCreate, EmpresaResponse,
@@ -15,6 +16,56 @@ from models.schemas import (
 )
 
 router = APIRouter()
+
+
+DATOS_FACTURACION_DEFAULT = {
+    "arandu": {
+        "razon_social": "Arandu Informática",
+        "direccion": "De la Conquista 1132 c/ Isabel la Católica, Barrio Sajonia, Asunción, Paraguay",
+        "telefono": "021-421330 / 0981 500 282",
+        "email": "info@aranduinformatica.net",
+    },
+    "jar": {
+        "razon_social": "JAR Informática",
+        "direccion": "De la Conquista 1132 c/ Isabel la Católica, Barrio Sajonia, Asunción, Paraguay",
+        "telefono": "021-421330 / 0981 500 282",
+        "email": "info@aranduinformatica.net",
+    },
+    "arandujar": {
+        "razon_social": "AranduJAR Informática",
+        "direccion": "De la Conquista 1132 c/ Isabel la Católica, Barrio Sajonia, Asunción, Paraguay",
+        "telefono": "021-421330 / 0981 500 282",
+        "email": "info@aranduinformatica.net",
+    },
+}
+
+
+def _datos_facturacion_fields(data: EmpresaPropiaCreate) -> dict:
+    return {
+        "razon_social": data.razon_social,
+        "ruc": data.ruc,
+        "direccion": data.direccion,
+        "telefono": data.telefono,
+        "email": data.email,
+    }
+
+
+async def _ensure_datos_facturacion_empresa_propia(empresa: dict) -> dict:
+    slug = (empresa.get("slug") or "").lower()
+    defaults = DATOS_FACTURACION_DEFAULT.get(slug, {})
+    updates = {}
+    if defaults and not empresa.get("datos_facturacion_migrados"):
+        for key, value in defaults.items():
+            if value and not empresa.get(key):
+                updates[key] = value
+                empresa[key] = value
+        updates["datos_facturacion_migrados"] = True
+        empresa["datos_facturacion_migrados"] = True
+    for key in ("razon_social", "ruc", "direccion", "telefono", "email"):
+        empresa.setdefault(key, None)
+    if updates and empresa.get("id"):
+        await db.empresas_propias.update_one({"id": empresa["id"]}, {"$set": updates})
+    return empresa
 
 
 def _normalizar_modulos(modulos: Optional[List[str]]) -> List[str]:
@@ -104,9 +155,9 @@ async def get_empresas_propias(user: dict = Depends(require_authenticated)):
     # Auto-seed las 3 empresas por defecto si la colección está vacía
     if not propias:
         defaults = [
-            {"id": str(uuid.uuid4()), "nombre": "Arandu",    "slug": "arandu",    "color": DEFAULT_CONFIG["arandu"]["color"],    "tema": DEFAULT_CONFIG["arandu"]["tema"],    "logo_url": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
-            {"id": str(uuid.uuid4()), "nombre": "JAR",       "slug": "jar",       "color": DEFAULT_CONFIG["jar"]["color"],       "tema": DEFAULT_CONFIG["jar"]["tema"],       "logo_url": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
-            {"id": str(uuid.uuid4()), "nombre": "AranduJAR", "slug": "arandujar", "color": DEFAULT_CONFIG["arandujar"]["color"], "tema": DEFAULT_CONFIG["arandujar"]["tema"], "logo_url": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
+            {"id": str(uuid.uuid4()), "nombre": "Arandu",    "slug": "arandu",    "color": DEFAULT_CONFIG["arandu"]["color"],    "tema": DEFAULT_CONFIG["arandu"]["tema"],    "logo_url": None, **DATOS_FACTURACION_DEFAULT.get("arandu", {}), "ruc": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
+            {"id": str(uuid.uuid4()), "nombre": "JAR",       "slug": "jar",       "color": DEFAULT_CONFIG["jar"]["color"],       "tema": DEFAULT_CONFIG["jar"]["tema"],       "logo_url": None, **DATOS_FACTURACION_DEFAULT.get("jar", {}), "ruc": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
+            {"id": str(uuid.uuid4()), "nombre": "AranduJAR", "slug": "arandujar", "color": DEFAULT_CONFIG["arandujar"]["color"], "tema": DEFAULT_CONFIG["arandujar"]["tema"], "logo_url": None, **DATOS_FACTURACION_DEFAULT.get("arandujar", {}), "ruc": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
         ]
         await db.empresas_propias.insert_many(defaults)
         propias = await db.empresas_propias.find({}, {"_id": 0}).sort("nombre", 1).to_list(100)
@@ -135,6 +186,11 @@ async def get_empresas_propias(user: dict = Depends(require_authenticated)):
                     {"$set": {"modulos_habilitados": p["modulos_habilitados"]}}
                 )
 
+    for propia in propias:
+        await _ensure_datos_facturacion_empresa_propia(propia)
+        if propia.get("slug"):
+            await ensure_plan_cuentas_default(propia.get("slug"))
+
     if user.get("role") != "admin":
         asignadas = set(map(str, user.get("logos_asignados", []) or []))
         propias = [p for p in propias if str(p.get("id")) in asignadas]
@@ -151,14 +207,17 @@ async def create_empresa_propia(data: EmpresaPropiaCreate, admin: dict = Depends
         "id": str(uuid.uuid4()),
         "nombre": data.nombre,
         "slug": slug,
+        **_datos_facturacion_fields(data),
         "logo_url": data.logo_url,
         "color": data.color or "#3b82f6",
         "tema": data.tema or "oscuro-azul",
         "modulos_habilitados": _normalizar_modulos(data.modulos_habilitados),
+        "datos_facturacion_migrados": True,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.empresas_propias.insert_one(doc)
     await ensure_cuenta_predeterminada(slug, data.nombre, "PYG")
+    await ensure_plan_cuentas_default(slug)
     await log_auditoria(admin, "empresas_propias", "crear", f"Empresa propia creada: {data.nombre}", doc["id"])
     return {k: v for k, v in doc.items() if k != "_id"}
 
@@ -172,9 +231,11 @@ async def update_empresa_propia(empresa_id: str, data: EmpresaPropiaCreate, admi
     update_fields = {
         "nombre": data.nombre,
         "slug": slug,
+        **_datos_facturacion_fields(data),
         "color": data.color or "#3b82f6",
         "tema": data.tema or "oscuro-azul",
         "modulos_habilitados": _normalizar_modulos(data.modulos_habilitados),
+        "datos_facturacion_migrados": True,
     }
     if data.logo_url is not None:
         update_fields["logo_url"] = data.logo_url

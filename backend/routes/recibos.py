@@ -15,6 +15,22 @@ from auth import require_authenticated, has_permission, log_auditoria, get_logos
 router = APIRouter()
 
 
+
+
+async def _snapshot_emisor(logo_tipo: Optional[str]) -> dict:
+    logo = logo_tipo or "arandujar"
+    empresa = await db.empresas_propias.find_one({"slug": logo}, {"_id": 0}) or {}
+    nombre = empresa.get("razon_social") or empresa.get("nombre") or (
+        "JAR Informática" if logo == "jar" else "Arandu Informática" if logo == "arandu" else "AranduJAR Informática"
+    )
+    return {
+        "emisor_razon_social": nombre,
+        "emisor_ruc": empresa.get("ruc"),
+        "emisor_direccion": empresa.get("direccion"),
+        "emisor_telefono": empresa.get("telefono"),
+        "emisor_email": empresa.get("email"),
+    }
+
 # ─────────────────────────────────────────────
 #  SCHEMAS
 # ─────────────────────────────────────────────
@@ -53,6 +69,11 @@ class ReciboResponse(BaseModel):
     moneda: str
     fecha_pago: str
     logo_tipo: str
+    emisor_razon_social: Optional[str] = None
+    emisor_ruc: Optional[str] = None
+    emisor_direccion: Optional[str] = None
+    emisor_telefono: Optional[str] = None
+    emisor_email: Optional[str] = None
     cuenta_id: Optional[str] = None
     cuenta_nombre: Optional[str] = None
     notas: Optional[str] = None
@@ -130,6 +151,7 @@ async def create_recibo(data: ReciboCreate, user: dict = Depends(require_authent
         "numero": numero,
         "numero_normalizado": _numero_doc_normalizado(numero),
         **data.dict(),
+        **await _snapshot_emisor(data.logo_tipo),
         "created_at": now,
     }
     await db.recibos.insert_one(doc)

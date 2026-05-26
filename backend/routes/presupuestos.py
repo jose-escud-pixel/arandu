@@ -10,6 +10,21 @@ from models.schemas import PresupuestoCreate, PresupuestoResponse, CostosReales
 router = APIRouter()
 
 
+async def _snapshot_emisor(logo_tipo: Optional[str]) -> dict:
+    logo = logo_tipo or "arandujar"
+    empresa = await db.empresas_propias.find_one({"slug": logo}, {"_id": 0}) or {}
+    nombre = empresa.get("razon_social") or empresa.get("nombre") or (
+        "JAR Informática" if logo == "jar" else "Arandu Informática" if logo == "arandu" else "AranduJAR Informática"
+    )
+    return {
+        "emisor_razon_social": nombre,
+        "emisor_ruc": empresa.get("ruc"),
+        "emisor_direccion": empresa.get("direccion"),
+        "emisor_telefono": empresa.get("telefono"),
+        "emisor_email": empresa.get("email"),
+    }
+
+
 def _to_float_or_none(value):
     """Convierte un valor a float o None. Maneja strings vacíos y None."""
     if value is None or value == "":
@@ -121,10 +136,12 @@ async def create_presupuesto(data: PresupuestoCreate, user: dict = Depends(requi
     fecha = data.fecha or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     # Alinear logo con el cliente para que aparezca al filtrar por empresa activa
     logo_tipo = data.logo_tipo or empresa.get("logo_tipo") or "arandujar"
+    emisor_snapshot = await _snapshot_emisor(logo_tipo)
     moneda_text = "Dolares Americanos" if data.moneda == "USD" else "Guaranies"
     pago_text = "A credito" if (data.forma_pago or "contado") == "credito" else "Al contado"
     presupuesto_doc = {
         "id": presupuesto_id, "empresa_id": data.empresa_id, "logo_tipo": logo_tipo,
+        **emisor_snapshot,
         "moneda": data.moneda, "forma_pago": data.forma_pago or "contado",
         "numero": numero, "nombre_archivo": data.nombre_archivo or None,
         "fecha": fecha, "tipo_cambio": data.tipo_cambio,

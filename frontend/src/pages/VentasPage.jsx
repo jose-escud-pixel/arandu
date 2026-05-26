@@ -452,6 +452,7 @@ export default function VentasPage() {
   const [empresas, setEmpresas] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [productos, setProductos] = useState([]);
+  const [planCuentas, setPlanCuentas] = useState([]);
 
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -471,7 +472,7 @@ export default function VentasPage() {
       const mesParam = filtroTipo === "mes" ? mes : "";
       const anioParam = filtroTipo === "anio" ? anio : "";
       const buildQ = (params) => { const p = Object.entries(params).filter(([,v]) => v != null && v !== "").map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join("&"); return p ? `?${p}` : ""; };
-	      const [rPres, rFac, rIng, rEmp, rProv, rProd, rCuentas, rRecibos, rNotas] = await Promise.all([
+	      const [rPres, rFac, rIng, rEmp, rProv, rProd, rCuentas, rPlan, rRecibos, rNotas] = await Promise.all([
 	        hasPermission("presupuestos.ver")
             ? fetch(`${API}/admin/presupuestos${buildQ({ mes: mesParam || null, anio: anioParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers })
             : Promise.resolve({ ok: true, json: async () => [] }),
@@ -481,6 +482,7 @@ export default function VentasPage() {
         hasPermission("proveedores.ver") ? fetch(`${API}/admin/proveedores?activo=true`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
 	        hasModule?.("productos_stock") ? fetch(`${API}/admin/productos`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
 	        fetch(`${API}/admin/cuentas-bancarias${logoQc}`, { headers }),
+	        fetch(`${API}/admin/plan-cuentas${logoQc}`, { headers }),
 	        fetch(`${API}/admin/recibos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
 	        hasPermission("notas_credito.ver")
 	          ? fetch(`${API}/admin/notas-credito${buildQ({ tipo: "venta", mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers })
@@ -506,6 +508,7 @@ export default function VentasPage() {
         setProductos(Array.isArray(d) ? d : []);
       }
 	      if (rCuentas.ok) setCuentasDisp(await rCuentas.json());
+      if (rPlan.ok) setPlanCuentas(await rPlan.json());
 	      if (rRecibos.ok) setRecibos(await rRecibos.json());
 	      if (rNotas.ok) setNotasCredito(await rNotas.json());
     } catch (e) {
@@ -1885,6 +1888,7 @@ export default function VentasPage() {
       {presDoc && !presDocLoading && (
         <PresupuestoDocModal
           presupuesto={presDoc}
+          activeEmpresaPropia={empresasPropias.find(ep => ep.slug === presDoc.logo_tipo) || activeEmpresaPropia}
           onClose={() => setPresDoc(null)}
           onEdit={() => { setPresDoc(null); setPresFormItem({ presupuesto: presDoc, mode: "edit" }); }}
           onDelete={() => deletePresupuesto(presDoc.id)}
@@ -2230,6 +2234,7 @@ export default function VentasPage() {
       {facDoc && (
         <FacturaDocModal
           factura={facDoc}
+          activeEmpresaPropia={empresasPropias.find(ep => ep.slug === facDoc.logo_tipo) || activeEmpresaPropia}
           presupuestos={presupuestos}
           onClose={() => setFacDoc(null)}
           onEdit={() => { setFacFormItem(facDoc); setShowFacForm(true); setFacDoc(null); }}
@@ -2377,6 +2382,7 @@ export default function VentasPage() {
           productos={productos}
           productosHabilitados={hasModule?.("productos_stock")}
           cuentasDisp={cuentasDisp}
+          planCuentasDisp={planCuentas}
         />
       )}
 
@@ -2444,6 +2450,7 @@ export default function VentasPage() {
       {reciboDoc && (
         <ReciboDocModal
           recibo={reciboDoc}
+          activeEmpresaPropia={empresasPropias.find(ep => ep.slug === reciboDoc.logo_tipo) || activeEmpresaPropia}
           onClose={() => setReciboDoc(null)}
           fmtMonto={fmtMonto}
           cuentasDisp={cuentasDisp}
@@ -2460,7 +2467,7 @@ const LogoAranduJarDoc = () => <LogoMarcaAranduJar />;
 
 // ═══ Documento completo de presupuesto ══════════════════════════════════
 function PresupuestoDocModal({
-  presupuesto: p, onClose, onEdit, onDelete, onDuplicate, onCostos,
+  presupuesto: p, activeEmpresaPropia = null, onClose, onEdit, onDelete, onDuplicate, onCostos,
   onEstadoChange, canEdit, canDelete, canCreate, canCostos,
   formatNumber, getCurrencySymbol, PRESUP_ESTADOS
 }) {
@@ -2477,6 +2484,12 @@ function PresupuestoDocModal({
   const fmt = (num) => formatNumber(num, p.moneda);
   const sym = getCurrencySymbol(p.moneda);
   const accentColor = p.logo_tipo === "jar" ? "#dc2626" : "#2563eb";
+  const empresaEmisora = activeEmpresaPropia || {};
+  const emisorNombre = p.emisor_razon_social || empresaEmisora.razon_social || empresaEmisora.nombre || (p.logo_tipo === "jar" ? "JAR Informática" : p.logo_tipo === "arandu" ? "Arandu Informática" : "AranduJAR Informática");
+  const emisorRuc = p.emisor_ruc || empresaEmisora.ruc || "";
+  const emisorDireccion = p.emisor_direccion || empresaEmisora.direccion || "De la Conquista 1132 c/ Isabel la Católica · Sajonia, Asunción · Paraguay";
+  const emisorTelefono = p.emisor_telefono || empresaEmisora.telefono || "021-421330";
+  const emisorEmail = p.emisor_email || empresaEmisora.email || "info@aranduinformatica.net";
   const imageItems = (p.items || []).filter(item => item.imagen);
   const buildImageAnnexHTML = (headerBg, headerAccent) => imageItems.length ? `
     <section class="print-annex" style="page-break-before:always;break-before:page;background:white">
@@ -2559,16 +2572,16 @@ function PresupuestoDocModal({
                 ${logoName}
                 <div style="font-size:8px;color:#cbd5e1;letter-spacing:2px;margin-top:1px">INFORMÁTICA</div>
                 <div style="margin-top:6px;font-size:9px;color:#94a3b8;line-height:1.5">
-                  <div>De la Conquista 1132 c/ Isabel la Católica</div>
-                  <div>Barrio Sajonia, Asunción, Paraguay</div>
-                  <div>Tel: 021-421330 · WhatsApp: 0981 500 282</div>
-                  <div>info@aranduinformatica.net</div>
+                  <div style="font-weight:700;color:#e2e8f0">${emisorNombre}${emisorRuc ? ` · RUC: ${emisorRuc}` : ""}</div>
+                  <div>${emisorDireccion}</div>
+                  <div>${emisorTelefono ? `Tel: ${emisorTelefono}` : ""}${emisorTelefono && emisorEmail ? " · " : ""}${emisorEmail || ""}</div>
                 </div>
               </div>
             </div>
             <div style="text-align:right">
               <div style="background:${headerAccent};color:white;font-size:13px;font-weight:800;letter-spacing:2px;padding:4px 14px;border-radius:5px;margin-bottom:6px;display:inline-block">PRESUPUESTO</div>
               <div style="font-size:17px;font-weight:700;color:white;margin-bottom:2px">${numero}</div>
+              ${emisorRuc ? `<div style="font-size:9px;color:#e2e8f0;margin-bottom:2px">RUC: ${emisorRuc}</div>` : ""}
               ${totalHojas > 1 ? `<div style="font-size:9px;color:#94a3b8;margin-bottom:2px">Hoja ${partNum} de ${totalHojas}</div>` : ""}
               <div style="font-size:10px;color:#94a3b8">Fecha: <span style="color:#e2e8f0">${p.fecha}</span></div>
               <div style="font-size:9px;color:#94a3b8;margin-top:1px">Validez: ${p.validez_dias || 15} días</div>
@@ -2682,16 +2695,16 @@ function PresupuestoDocModal({
               ${logoName}
               <div style="font-size:8px;color:#cbd5e1;letter-spacing:2px;margin-top:1px">INFORMÁTICA</div>
               <div style="margin-top:7px;font-size:9.5px;color:#94a3b8;line-height:1.5">
-                <div>De la Conquista 1132 c/ Isabel la Católica</div>
-                <div>Barrio Sajonia, Asunción, Paraguay</div>
-                <div>Tel: 021-421330 · WhatsApp: 0981 500 282</div>
-                <div>info@aranduinformatica.net</div>
+                <div style="font-weight:700;color:#e2e8f0">${emisorNombre}${emisorRuc ? ` · RUC: ${emisorRuc}` : ""}</div>
+                <div>${emisorDireccion}</div>
+                <div>${emisorTelefono ? `Tel: ${emisorTelefono}` : ""}${emisorTelefono && emisorEmail ? " · " : ""}${emisorEmail || ""}</div>
               </div>
             </div>
           </div>
           <div style="text-align:right">
             <div style="background:${headerAccent};color:white;font-size:15px;font-weight:800;letter-spacing:3px;padding:5px 16px;border-radius:5px;margin-bottom:7px;display:inline-block">PRESUPUESTO</div>
             <div style="font-size:19px;font-weight:700;color:white;margin-bottom:2px">${p.numero}</div>
+            ${emisorRuc ? `<div style="font-size:9.5px;color:#e2e8f0;margin-bottom:2px">RUC: ${emisorRuc}</div>` : ""}
             <div style="font-size:10.5px;color:#94a3b8">Fecha: <span style="color:#e2e8f0">${p.fecha}</span></div>
             <div style="font-size:9.5px;color:#94a3b8;margin-top:2px">Validez: ${p.validez_dias || 15} días</div>
           </div>
@@ -2818,15 +2831,16 @@ function PresupuestoDocModal({
               {p.logo_tipo === "jar" && <LogoJar />}
               {(!p.logo_tipo || p.logo_tipo === "arandujar") && <LogoAranduJarDoc />}
               <div className="mt-4 text-sm text-gray-600">
-                <p>De la Conquista 1132 c/ Isabel la Católica</p>
-                <p>Barrio Sajonia, Asunción - Paraguay</p>
-                <p>Tel: 021-421330 | WhatsApp: 0981 500 282</p>
-                <p>info@aranduinformatica.net</p>
+                <p className="font-semibold text-gray-700">{emisorNombre}{emisorRuc ? ` · RUC: ${emisorRuc}` : ""}</p>
+                {emisorDireccion && <p>{emisorDireccion}</p>}
+                {emisorTelefono && <p>Tel: {emisorTelefono}</p>}
+                {emisorEmail && <p>{emisorEmail}</p>}
               </div>
             </div>
             <div className="text-right">
               <h1 className="text-2xl font-bold text-gray-800">PRESUPUESTO</h1>
               <p className="text-lg font-semibold" style={{ color: accentColor }}>{p.numero}</p>
+              {emisorRuc && <p className="text-gray-600 text-sm font-semibold">RUC: {emisorRuc}</p>}
               {p.nombre_archivo && <p className="text-gray-500 text-sm">{p.nombre_archivo}</p>}
               <p className="text-gray-600">Fecha: {p.fecha}</p>
               <p className="text-gray-500 text-sm">Validez: {p.validez_dias || 15} días</p>
@@ -3278,7 +3292,7 @@ function FacturarModal({
 // ═══════════════════════════════════════════════════════════════
 // FacturaDocModal — vista visual de factura (estilo documento)
 // ═══════════════════════════════════════════════════════════════
-function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDelete, onPagar, onDeshacer, canEdit, canDelete, onReciboClick, onPresClick, onEditPago, onDeletePago, cuentasDisp = [] }) {
+function FacturaDocModal({ factura: f, activeEmpresaPropia = null, presupuestos = [], onClose, onEdit, onDelete, onPagar, onDeshacer, canEdit, canDelete, onReciboClick, onPresClick, onEditPago, onDeletePago, cuentasDisp = [] }) {
   React.useEffect(() => {
     const esc = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", esc);
@@ -3286,6 +3300,12 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
   }, [onClose]);
 
   const accentColor = f.logo_tipo === "jar" ? "#dc2626" : "#2563eb";
+  const empresaEmisora = activeEmpresaPropia || {};
+  const emisorNombre = f.emisor_razon_social || empresaEmisora.razon_social || empresaEmisora.nombre || (f.logo_tipo === "jar" ? "JAR Informática" : f.logo_tipo === "arandu" ? "Arandu Informática" : "AranduJAR Informática");
+  const emisorRuc = f.emisor_ruc || empresaEmisora.ruc || "";
+  const emisorDireccion = f.emisor_direccion || empresaEmisora.direccion || "De la Conquista 1132 c/ Isabel la Católica · Sajonia, Asunción · Paraguay";
+  const emisorTelefono = f.emisor_telefono || empresaEmisora.telefono || "021-421330";
+  const emisorEmail = f.emisor_email || empresaEmisora.email || "info@aranduinformatica.net";
   const monedaSym = f.moneda === "PYG" ? "₲" : f.moneda;
   const fmt = (n) => {
     if (n == null) return "-";
@@ -3409,11 +3429,13 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
         <div style="margin-top:6px;border-top:1px solid #d1d5db;padding-top:6px">
           <div style="font-size:18px;font-weight:900;color:#111827;letter-spacing:1px">${docTitle}</div>
           <div style="font-size:14px;font-weight:800;color:${accentColor};letter-spacing:0.5px">${docRef}</div>
+          ${emisorRuc ? `<div style="font-size:10px;color:#374151;font-weight:700;margin-top:2px">RUC: ${emisorRuc}</div>` : ""}
         </div>
       </div>` : `
       <div style="border:2px solid #7c3aed;border-radius:6px;padding:10px 16px;text-align:center;min-width:200px">
         <div style="font-size:20px;font-weight:900;color:#7c3aed">${docTitle}</div>
         <div style="font-size:14px;font-weight:700;color:#7c3aed;margin-top:2px">${docRef}</div>
+        ${emisorRuc ? `<div style="font-size:10px;color:#4c1d95;font-weight:700;margin-top:2px">RUC: ${emisorRuc}</div>` : ""}
         <div style="font-size:9.5px;color:#9ca3af;margin-top:4px">Comprobante interno · no fiscal</div>
       </div>`;
 
@@ -3448,8 +3470,9 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
           <div>
             ${docLogo}
             <div class="company-info">
-              <div>De la Conquista 1132 c/ Isabel la Católica · Sajonia, Asunción · Paraguay</div>
-              <div>Tel: 021-421330 &nbsp;|&nbsp; info@aranduinformatica.net</div>
+              <div style="font-weight:700;color:#334155">${emisorNombre}${emisorRuc ? ` · RUC: ${emisorRuc}` : ""}</div>
+              <div>${emisorDireccion}</div>
+              <div>${emisorTelefono ? `Tel: ${emisorTelefono}` : ""}${emisorTelefono && emisorEmail ? " &nbsp;|&nbsp; " : ""}${emisorEmail || ""}</div>
             </div>
           </div>
           ${timbradoBox}
@@ -3594,9 +3617,10 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
               {f.logo_tipo === "jar" && <LogoJar />}
               {(!f.logo_tipo || f.logo_tipo === "arandujar") && <LogoAranduJarDoc />}
               <div className="mt-4 text-sm text-gray-500">
-                <p>De la Conquista 1132 c/ Isabel la Católica</p>
-                <p>Barrio Sajonia, Asunción - Paraguay</p>
-                <p>Tel: 021-421330 | info@aranduinformatica.net</p>
+                <p className="font-semibold text-gray-700">{emisorNombre}{emisorRuc ? ` · RUC: ${emisorRuc}` : ""}</p>
+                {emisorDireccion && <p>{emisorDireccion}</p>}
+                {emisorTelefono && <p>Tel: {emisorTelefono}</p>}
+                {emisorEmail && <p>{emisorEmail}</p>}
               </div>
             </div>
             <div className="text-right">
@@ -3609,6 +3633,7 @@ function FacturaDocModal({ factura: f, presupuestos = [], onClose, onEdit, onDel
               <p className="text-xl font-semibold mt-1" style={{ color: f.sin_factura ? "#7c3aed" : accentColor }}>
                 {f.sin_factura ? (f.numero_boleta || f.numero) : f.numero}
               </p>
+              {emisorRuc && <p className="text-gray-600 text-sm font-semibold">RUC: {emisorRuc}</p>}
               <p className="text-gray-500 text-sm mt-1">Fecha: <strong className="text-gray-700">{f.fecha || "-"}</strong></p>
               <p className="text-gray-500 text-sm">Forma de pago: <strong className="text-gray-700">{f.forma_pago === "credito" ? "A crédito" : "Al contado"}</strong></p>
               {f.fecha_vencimiento && (
@@ -4228,7 +4253,7 @@ function PagoParcialModal({ fac, montoParcial, setMontoParcial, fechaPagoParcial
 // ═══════════════════════════════════════════════════════════════
 // ReciboDocModal — vista visual de recibo de pago
 // ═══════════════════════════════════════════════════════════════
-function ReciboDocModal({ recibo: r, onClose, fmtMonto, cuentasDisp = [] }) {
+function ReciboDocModal({ recibo: r, activeEmpresaPropia = null, onClose, fmtMonto, cuentasDisp = [] }) {
   React.useEffect(() => {
     const esc = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", esc);
@@ -4236,6 +4261,12 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto, cuentasDisp = [] }) {
   }, [onClose]);
 
   const accentColor = r.logo_tipo === "jar" ? "#dc2626" : r.logo_tipo === "arandu" ? "#2563eb" : "#1d4ed8";
+  const empresaEmisora = activeEmpresaPropia || {};
+  const emisorNombre = r.emisor_razon_social || empresaEmisora.razon_social || empresaEmisora.nombre || (r.logo_tipo === "jar" ? "JAR Informática" : r.logo_tipo === "arandu" ? "Arandu Informática" : "AranduJAR Informática");
+  const emisorRuc = r.emisor_ruc || empresaEmisora.ruc || "";
+  const emisorDireccion = r.emisor_direccion || empresaEmisora.direccion || "De la Conquista 1132 c/ Isabel la Católica · Sajonia, Asunción · Paraguay";
+  const emisorTelefono = r.emisor_telefono || empresaEmisora.telefono || "021-421330";
+  const emisorEmail = r.emisor_email || empresaEmisora.email || "info@aranduinformatica.net";
   const fmt = (n, moneda) => fmtMonto(n, moneda || r.moneda);
   const lineasFacturas = (r.facturas?.length > 0)
     ? r.facturas
@@ -4258,9 +4289,10 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto, cuentasDisp = [] }) {
       <div style="text-align:center;margin-bottom:20px;border-bottom:2px solid ${accentColor};padding-bottom:16px">
         <h1 style="font-size:28px;font-weight:900;color:${accentColor};margin:0">RECIBO DE PAGO</h1>
         <p style="font-size:20px;font-weight:700;color:#1f2937;margin:4px 0">N° ${r.numero}</p>
+        ${emisorRuc ? `<p style="font-size:12px;font-weight:700;color:#374151;margin:2px 0">RUC: ${emisorRuc}</p>` : ""}
       </div>
       <table style="width:100%;border-collapse:collapse;margin-bottom:16px;font-size:14px">
-        <tr><td style="padding:8px 4px;color:#6b7280;width:40%">Empresa:</td><td style="padding:8px 4px;font-weight:600">${r.logo_tipo === "jar" ? "JAR Informática" : r.logo_tipo === "arandu" ? "Arandu Informática" : "Arandu&JAR Informática"}</td></tr>
+        <tr><td style="padding:8px 4px;color:#6b7280;width:40%">Empresa:</td><td style="padding:8px 4px;font-weight:600">${emisorNombre}${emisorRuc ? ` · RUC: ${emisorRuc}` : ""}</td></tr>
         <tr style="background:#f9fafb"><td style="padding:8px 4px;color:#6b7280">Recibido de:</td><td style="padding:8px 4px;font-weight:600">${r.razon_social || "-"}</td></tr>
         ${r.ruc ? `<tr><td style="padding:8px 4px;color:#6b7280">RUC:</td><td style="padding:8px 4px">${r.ruc}</td></tr>` : ""}
         ${esReciboMultiple
@@ -4274,7 +4306,7 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto, cuentasDisp = [] }) {
         <p style="font-size:32px;font-weight:900;color:${accentColor};margin:0">${fmt(r.monto)}</p>
       </div>
       ${r.notas ? `<p style="font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb;padding-top:12px">Notas: ${r.notas}</p>` : ""}
-      <p style="font-size:11px;color:#9ca3af;text-align:center;margin-top:20px">De la Conquista 1132 c/ Isabel la Católica · Barrio Sajonia, Asunción - Paraguay · Tel: 021-421330</p>
+      <p style="font-size:11px;color:#9ca3af;text-align:center;margin-top:20px">${emisorDireccion}${emisorTelefono ? ` · Tel: ${emisorTelefono}` : ""}${emisorEmail ? ` · ${emisorEmail}` : ""}</p>
     </body></html>`);
     w.document.close();
     setTimeout(() => w.print(), 400);
@@ -4307,6 +4339,7 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto, cuentasDisp = [] }) {
           </div>
           <h2 className="text-2xl font-black text-gray-800 tracking-wider">RECIBO DE PAGO</h2>
           <p className="text-4xl font-black mt-1" style={{ color: accentColor }}>N° {r.numero}</p>
+          {emisorRuc && <p className="text-gray-600 text-sm font-semibold mt-1">RUC: {emisorRuc}</p>}
         </div>
 
         {/* Datos del recibo */}
@@ -4356,7 +4389,7 @@ function ReciboDocModal({ recibo: r, onClose, fmtMonto, cuentasDisp = [] }) {
           )}
         </div>
         <div className="px-6 pb-4 text-center">
-          <p className="text-gray-400 text-xs">De la Conquista 1132 c/ Isabel la Católica · Barrio Sajonia, Asunción · Tel: 021-421330</p>
+          <p className="text-gray-400 text-xs">{emisorDireccion}{emisorTelefono ? ` · Tel: ${emisorTelefono}` : ""}{emisorEmail ? ` · ${emisorEmail}` : ""}</p>
         </div>
       </div>
     </div>

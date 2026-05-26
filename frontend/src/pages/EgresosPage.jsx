@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useContext } from "react";
+import React, { useState, useEffect, useContext, useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -83,6 +83,8 @@ const emptyCompra = () => ({
   tipo_cambio: "",
   cuenta_id: "",
   cuenta_nombre: "",
+  plan_cuenta_id: "",
+  plan_cuenta_nombre: "",
   items: [],
   afecta_stock: true,
   notas: "",
@@ -628,6 +630,43 @@ const EgresosPage = () => {
 
   // ── Cuentas bancarias ───────────────────────────────────────────────────────
   const [cuentasDisp, setCuentasDisp] = useState([]);
+  const [planCuentas, setPlanCuentas] = useState([]);
+
+  const addDays = (fecha, dias) => {
+    const base = fecha ? new Date(`${fecha}T00:00:00`) : new Date();
+    if (Number.isNaN(base.getTime())) return fecha || hoy();
+    base.setDate(base.getDate() + Math.max(Number(dias || 0), 0));
+    return base.toISOString().slice(0, 10);
+  };
+
+  const usoPlanCompra = compraForm.tipo_pago === "credito" ? "compra_credito" : "compra_contado";
+  const planCuentasCompra = useMemo(() => (
+    (planCuentas || []).filter(c => c.activa !== false && c.uso === usoPlanCompra && (!c.logo_tipo || c.logo_tipo === compraForm.logo_tipo))
+  ), [planCuentas, usoPlanCompra, compraForm.logo_tipo]);
+
+  const aplicarPlanCuentaCompra = (cuentaId, recalcularFecha = true) => {
+    const cuenta = planCuentasCompra.find(c => String(c.id) === String(cuentaId));
+    setCompraForm(p => ({
+      ...p,
+      plan_cuenta_id: cuentaId || "",
+      plan_cuenta_nombre: cuenta?.nombre || "",
+      fecha_vencimiento: cuenta && recalcularFecha ? addDays(p.fecha, cuenta.dias_vencimiento) : p.fecha_vencimiento,
+    }));
+  };
+
+  useEffect(() => {
+    if (!showCompraForm || compraForm.solo_iva || !planCuentasCompra.length) return;
+    const actualOk = planCuentasCompra.some(c => String(c.id) === String(compraForm.plan_cuenta_id));
+    if (actualOk) return;
+    const pred = planCuentasCompra.find(c => c.predeterminada) || planCuentasCompra[0];
+    setCompraForm(p => ({
+      ...p,
+      plan_cuenta_id: pred.id,
+      plan_cuenta_nombre: pred.nombre,
+      fecha_vencimiento: addDays(p.fecha, pred.dias_vencimiento),
+    }));
+  }, [showCompraForm, compraForm.solo_iva, compraForm.plan_cuenta_id, planCuentasCompra]); // eslint-disable-line
+
 
   // ── Búsquedas por pestaña (chips = filtros activos, input = texto en curso) ──
   const [comprasChips, setComprasChips]     = useState([]);
@@ -707,6 +746,7 @@ const EgresosPage = () => {
     fetchProveedores(activeEmpresaPropia?.slug);
     fetchProductos();
     fetchCuentasDisp();
+    fetchPlanCuentas();
   }, [activeEmpresaPropia?.slug]); // eslint-disable-line
 
   useEffect(() => {
@@ -753,6 +793,14 @@ const EgresosPage = () => {
       const logo = activeEmpresaPropia?.slug;
       const res = await fetch(`${API}/admin/cuentas-bancarias${logo ? `?logo_tipo=${logo}` : ""}`, { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) setCuentasDisp(await res.json());
+    } catch (e) {}
+  };
+
+  const fetchPlanCuentas = async () => {
+    try {
+      const logo = activeEmpresaPropia?.slug;
+      const res = await fetch(`${API}/admin/plan-cuentas${logo ? `?logo_tipo=${logo}` : ""}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) setPlanCuentas(await res.json());
     } catch (e) {}
   };
 
@@ -1591,6 +1639,8 @@ const EgresosPage = () => {
       tipo_cambio: c.tipo_cambio || "",
       cuenta_id: c.cuenta_id || "",
       cuenta_nombre: c.cuenta_nombre || "",
+      plan_cuenta_id: c.plan_cuenta_id || "",
+      plan_cuenta_nombre: c.plan_cuenta_nombre || "",
       items: (c.items || []).map(it => ({ ...it, iva: it.iva ?? 10 })),
       afecta_stock: !!puedeUsarStockProductos && (puedeCambiarAfectaStockCompra ? c.afecta_stock !== false : true),
       notas: c.notas || "",
@@ -1628,6 +1678,10 @@ const EgresosPage = () => {
       toast.error("La vigencia del timbrado es obligatoria cuando tiene factura");
       return;
     }
+    if (!compraForm.solo_iva && !compraForm.plan_cuenta_id) {
+      toast.error("Seleccioná una cuenta del plan de cuentas");
+      return;
+    }
     const itemsNorm = (compraForm.items || []).map(it => ({
       ...it,
       cantidad: Number(it.cantidad) || 1,
@@ -1645,7 +1699,9 @@ const EgresosPage = () => {
       afecta_stock: compraForm.solo_iva ? false : (!!puedeUsarStockProductos && (puedeCambiarAfectaStockCompra ? compraForm.afecta_stock : true)),
       cuenta_id: compraForm.solo_iva ? null : compraForm.cuenta_id,
       cuenta_nombre: compraForm.solo_iva ? null : compraForm.cuenta_nombre,
-      fecha_pago: compraForm.tipo_pago === "contado" ? (compraForm.fecha_pago || compraForm.fecha) : null,
+      plan_cuenta_id: compraForm.solo_iva ? null : compraForm.plan_cuenta_id,
+      plan_cuenta_nombre: compraForm.solo_iva ? null : compraForm.plan_cuenta_nombre,
+      fecha_pago: compraForm.tipo_pago === "contado" && compraForm.cuenta_id ? (compraForm.fecha_pago || compraForm.fecha) : null,
       tipo_cambio: compraForm.tipo_cambio !== "" ? Number(compraForm.tipo_cambio) : null,
       numero_factura: compraForm.tiene_factura ? String(compraForm.numero_factura || "").trim() : null,
       nro_timbrado: compraForm.tiene_factura ? (compraForm.nro_timbrado || null) : null,
@@ -2123,7 +2179,7 @@ const EgresosPage = () => {
                                 </td>
                                 <td className="px-4 py-3 text-right">
                                   <p className="text-white font-bold whitespace-nowrap">{fmt(c.monto_total, c.moneda)}</p>
-                                  {c.tipo_pago === "credito" && c.saldo_pendiente > 0 && (
+                                  {c.saldo_pendiente > 0 && (
                                     <p className="text-red-400 text-xs">Debe {fmt(c.saldo_pendiente, c.moneda)}</p>
                                   )}
                                 </td>
@@ -2134,7 +2190,7 @@ const EgresosPage = () => {
                                 </td>
                                 <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                                   <div className="flex items-center justify-center gap-1">
-                                    {c.tipo_pago === "credito" && c.estado_pago !== "pagado" && (
+                                    {c.estado_pago !== "pagado" && !c.solo_iva && (
                                       <button
                                         onClick={() => { setShowPagoModal(c); setPagoForm({ monto_pagado: c.saldo_pendiente || "", fecha_pago: hoy(), notas: "" }); }}
                                         className="flex items-center gap-1 px-2 py-1 bg-emerald-600/30 text-emerald-300 rounded-lg hover:bg-emerald-600/50 transition-colors text-xs"
@@ -3191,7 +3247,7 @@ const EgresosPage = () => {
                         className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2.5 text-white text-sm focus:outline-none focus:border-amber-500/50" required />
                     </div>
                     <div>
-                      <label className="text-slate-400 text-sm mb-1 block">Cuenta bancaria *</label>
+                      <label className="text-slate-400 text-sm mb-1 block">Cuenta bancaria de pago inmediato</label>
                       <select value={pagoIvaForm.cuenta_id} onChange={e => {
                         const cuenta = cuentasDisp.find(c => c.id === e.target.value);
                         setPagoIvaForm(p => ({ ...p, cuenta_id: e.target.value, cuenta_nombre: cuenta?.nombre || "" }));
@@ -3798,6 +3854,9 @@ const EgresosPage = () => {
                           ...p,
                           tipo_pago: tipo,
                           fecha_pago: tipo === "contado" ? (p.fecha_pago || p.fecha) : "",
+                          plan_cuenta_id: "",
+                          plan_cuenta_nombre: "",
+                          fecha_vencimiento: "",
                         }))}
                         className={`flex-1 flex items-center justify-center gap-2 p-2.5 rounded-lg border text-sm transition-all capitalize ${compraForm.tipo_pago === tipo ? "border-orange-500 bg-orange-500/10 text-orange-300" : "border-white/10 text-slate-400 hover:border-white/20"}`}
                       >
@@ -3808,7 +3867,33 @@ const EgresosPage = () => {
                   </div>
                 </div>
 
-                {/* Cuenta bancaria — solo contado */}
+
+
+                {/* Plan de cuenta */}
+                {!compraForm.solo_iva && (
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-slate-400 text-sm mb-1 block">Plan de cuenta *</label>
+                      <select
+                        value={compraForm.plan_cuenta_id || ""}
+                        onChange={e => aplicarPlanCuentaCompra(e.target.value, true)}
+                        className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-orange-500/50"
+                      >
+                        <option value="">Seleccionar cuenta...</option>
+                        {planCuentasCompra.map(c => <option key={c.id} value={c.id}>{c.nombre}{c.predeterminada ? " ★" : ""}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-slate-400 text-sm mb-1 block">Vencimiento</label>
+                      <Input type="date" value={compraForm.fecha_vencimiento}
+                        onChange={e => setCompraForm(p => ({ ...p, fecha_vencimiento: e.target.value }))}
+                        className="bg-arandu-dark border-white/10 text-white" />
+                      <p className="text-slate-500 text-xs mt-1">Viene del plan de cuenta, pero podés ajustarlo.</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Cuenta bancaria — pago inmediato opcional para contado */}
                 {compraForm.tipo_pago === "contado" && !compraForm.solo_iva && (
                   <div className="grid md:grid-cols-2 gap-4">
                     <div>
@@ -3838,20 +3923,11 @@ const EgresosPage = () => {
                       <Input type="date" value={compraForm.fecha_pago}
                         onChange={e => setCompraForm(p => ({ ...p, fecha_pago: e.target.value }))}
                         className="bg-arandu-dark border-white/10 text-white" />
-                      <p className="text-slate-500 text-xs mt-1">Por defecto usa la fecha de la factura, pero podés cambiarla.</p>
+                      <p className="text-slate-500 text-xs mt-1">Si no seleccionás banco/caja, queda pendiente en la cuenta contado.</p>
                     </div>
                   </div>
                 )}
 
-                {/* Fecha vencimiento (solo crédito) */}
-                {compraForm.tipo_pago === "credito" && (
-                  <div>
-                    <label className="text-slate-400 text-sm mb-1 block">Fecha de vencimiento del crédito</label>
-                    <Input type="date" value={compraForm.fecha_vencimiento}
-                      onChange={e => setCompraForm(p => ({ ...p, fecha_vencimiento: e.target.value }))}
-                      className="bg-arandu-dark border-white/10 text-white" />
-                  </div>
-                )}
 
                 {/* Factura */}
                 <div className="bg-arandu-dark rounded-lg p-3 border border-white/5">
@@ -4677,7 +4753,7 @@ const EgresosPage = () => {
               </div>
 
               {/* Saldo si es credito */}
-              {selectedCompraView.tipo_pago === "credito" && (
+              {selectedCompraView.saldo_pendiente > 0 && !selectedCompraView.solo_iva && (
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3">
                     <p className="text-slate-500 text-xs mb-0.5">Pagado</p>
@@ -4728,7 +4804,7 @@ const EgresosPage = () => {
               )}
 
               {/* Acciones */}
-              {selectedCompraView.tipo_pago === "credito" && selectedCompraView.estado_pago !== "pagado" && (
+              {selectedCompraView.estado_pago !== "pagado" && !selectedCompraView.solo_iva && (
                 <button
                   onClick={() => {
                     setShowPagoModal(selectedCompraView);

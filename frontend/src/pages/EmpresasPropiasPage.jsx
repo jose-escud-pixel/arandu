@@ -108,6 +108,11 @@ const EmpresasPropiasPage = () => {
   const emptyForm = () => ({
     nombre: "",
     slug: "",
+    razon_social: "",
+    ruc: "",
+    direccion: "",
+    telefono: "",
+    email: "",
     color: "#3b82f6",
     tema: "oscuro-azul",
     modulos_habilitados: [...DEFAULT_EMPRESA_MODULOS],
@@ -143,8 +148,13 @@ const EmpresasPropiasPage = () => {
 
   const openEdit = (ep) => {
     setForm({
-      nombre: ep.nombre,
-      slug: ep.slug,
+      nombre: ep.nombre || "",
+      slug: ep.slug || "",
+      razon_social: ep.razon_social || "",
+      ruc: ep.ruc || "",
+      direccion: ep.direccion || "",
+      telefono: ep.telefono || "",
+      email: ep.email || "",
       color: ep.color || "#3b82f6",
       tema: ep.tema || "oscuro-azul",
       modulos_habilitados: modulosHabilitadosEmpresa(ep),
@@ -320,6 +330,11 @@ const EmpresasPropiasPage = () => {
                       <div className="flex-1 min-w-0">
                         <h3 className="text-white font-semibold text-lg">{ep.nombre}</h3>
                         <p className="text-slate-500 text-xs font-mono mt-0.5">slug: <span className="text-slate-300">{ep.slug}</span></p>
+                        {(ep.razon_social || ep.ruc) && (
+                          <p className="text-slate-400 text-xs mt-1 truncate">
+                            {ep.razon_social || ep.nombre}{ep.ruc ? ` · RUC ${ep.ruc}` : ""}
+                          </p>
+                        )}
                         <div className="flex items-center gap-2 mt-2">
                           <div className="flex items-center gap-1.5 bg-arandu-dark rounded-lg px-2.5 py-1">
                             <div className="w-3 h-3 rounded-full" style={{ backgroundColor: tema.preview.accent }} />
@@ -410,6 +425,53 @@ const EmpresasPropiasPage = () => {
                       className="bg-arandu-dark border-white/10 text-white font-mono"
                       placeholder="mi-empresa" />
                     <p className="text-slate-400 text-xs mt-1">Solo letras minúsculas, números y guiones. Se auto-genera del nombre.</p>
+                  </div>
+                </div>
+
+                {/* Datos fiscales / facturación */}
+                <div className="bg-arandu-dark/60 border border-white/10 rounded-xl p-4 space-y-4">
+                  <div>
+                    <h3 className="text-slate-200 text-sm font-semibold">Datos fiscales para facturación</h3>
+                    <p className="text-slate-500 text-xs mt-0.5">Estos datos se usan como emisor en facturas, boletas y comprobantes.</p>
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-slate-400 text-sm mb-1 block">Razón social</label>
+                      <Input value={form.razon_social}
+                        onChange={e => setForm(p => ({ ...p, razon_social: e.target.value }))}
+                        className="bg-arandu-dark border-white/10 text-white"
+                        placeholder="Ej: Mi Empresa S.A." />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 text-sm mb-1 block">RUC</label>
+                      <Input value={form.ruc}
+                        onChange={e => setForm(p => ({ ...p, ruc: e.target.value }))}
+                        className="bg-arandu-dark border-white/10 text-white"
+                        placeholder="Ej: 80000000-1" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-slate-400 text-sm mb-1 block">Dirección</label>
+                    <Input value={form.direccion}
+                      onChange={e => setForm(p => ({ ...p, direccion: e.target.value }))}
+                      className="bg-arandu-dark border-white/10 text-white"
+                      placeholder="Dirección que aparecerá en la factura" />
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-slate-400 text-sm mb-1 block">Teléfono</label>
+                      <Input value={form.telefono}
+                        onChange={e => setForm(p => ({ ...p, telefono: e.target.value }))}
+                        className="bg-arandu-dark border-white/10 text-white"
+                        placeholder="Ej: 0981 000 000" />
+                    </div>
+                    <div>
+                      <label className="text-slate-400 text-sm mb-1 block">Email</label>
+                      <Input value={form.email}
+                        onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
+                        className="bg-arandu-dark border-white/10 text-white"
+                        placeholder="facturacion@empresa.com" />
+                    </div>
                   </div>
                 </div>
 

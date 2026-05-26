@@ -16,6 +16,7 @@ const FacturaFormModal = ({
   productos = [],
   productosHabilitados = false,
   cuentasDisp = [],  // cuentas bancarias disponibles
+  planCuentasDisp = [],
 }) => {
   const isEdit = !!factura;
   // En modo edición, respetar sin_factura del registro; en modo nuevo, usar la prop
@@ -42,6 +43,8 @@ const FacturaFormModal = ({
     fecha_pago: "",
     cuenta_id: "",
     cuenta_nombre: "",
+    plan_cuenta_id: "",
+    plan_cuenta_nombre: "",
     presupuesto_ids: [],
     notas: "",
     modo: defaultModo,
@@ -151,6 +154,8 @@ const FacturaFormModal = ({
         fecha_pago:         factura.fecha_pago ? factura.fecha_pago.slice(0, 10) : "",
         cuenta_id:          factura.cuenta_id || primerPago.cuenta_id || "",
         cuenta_nombre:      factura.cuenta_nombre || primerPago.cuenta_nombre || "",
+        plan_cuenta_id:     factura.plan_cuenta_id || "",
+        plan_cuenta_nombre: factura.plan_cuenta_nombre || "",
         razon_social:       factura.razon_social || "",
         ruc:                factura.ruc || "",
         empresa_id:         empIdFinal,
@@ -201,6 +206,42 @@ const FacturaFormModal = ({
       .catch(() => {});
     return () => { cancelled = true; };
   }, [API, token, form.moneda, form.fecha, form.tipo_cambio, tcInfo?.tipo_cambio_sugerido, tcInfo?.venta]);
+
+
+  const addDays = (fecha, dias) => {
+    const base = fecha ? new Date(`${fecha}T00:00:00`) : new Date();
+    if (Number.isNaN(base.getTime())) return fecha || new Date().toISOString().slice(0, 10);
+    base.setDate(base.getDate() + Math.max(Number(dias || 0), 0));
+    return base.toISOString().slice(0, 10);
+  };
+
+  const usoPlanCuenta = form.forma_pago === "credito" ? "venta_credito" : "venta_contado";
+  const planCuentasFiltradas = useMemo(() => {
+    return (planCuentasDisp || []).filter(c => c.activa !== false && c.uso === usoPlanCuenta && (!c.logo_tipo || c.logo_tipo === logoTipo));
+  }, [planCuentasDisp, usoPlanCuenta, logoTipo]);
+
+  const aplicarPlanCuenta = (cuentaId, recalcularFecha = true) => {
+    const cuenta = planCuentasFiltradas.find(c => String(c.id) === String(cuentaId));
+    setForm(prev => ({
+      ...prev,
+      plan_cuenta_id: cuentaId || "",
+      plan_cuenta_nombre: cuenta?.nombre || "",
+      fecha_vencimiento: cuenta && recalcularFecha ? addDays(prev.fecha, cuenta.dias_vencimiento) : prev.fecha_vencimiento,
+    }));
+  };
+
+  useEffect(() => {
+    if (!planCuentasFiltradas.length) return;
+    const actualOk = planCuentasFiltradas.some(c => String(c.id) === String(form.plan_cuenta_id));
+    if (actualOk) return;
+    const pred = planCuentasFiltradas.find(c => c.predeterminada) || planCuentasFiltradas[0];
+    setForm(prev => ({
+      ...prev,
+      plan_cuenta_id: pred.id,
+      plan_cuenta_nombre: pred.nombre,
+      fecha_vencimiento: addDays(prev.fecha, pred.dias_vencimiento),
+    }));
+  }, [planCuentasFiltradas, form.plan_cuenta_id]); // eslint-disable-line
 
   // Format helper (₲ o USD según moneda actual)
   const fmtMonto = (n) => {
@@ -488,6 +529,10 @@ const FacturaFormModal = ({
       toast.error("Agregá al menos un ítem con descripción, cantidad y precio");
       return;
     }
+    if (!form.plan_cuenta_id) {
+      toast.error("Seleccioná una cuenta del plan de cuentas");
+      return;
+    }
     const cuentaSeleccionada = cuentasDisp.find(c => String(c.id) === String(form.cuenta_id));
     const monedaCuenta = cuentaSeleccionada?.moneda || form.moneda || "PYG";
     const estadoOut = isEdit ? (factura?.estado || "pendiente") : "pendiente";
@@ -531,6 +576,8 @@ const FacturaFormModal = ({
       tipo_cambio: form.tipo_cambio !== "" && form.tipo_cambio != null ? Number(form.tipo_cambio) : null,
       estado: estadoOut,
       fecha_vencimiento: form.fecha_vencimiento || null,
+      plan_cuenta_id: form.plan_cuenta_id || null,
+      plan_cuenta_nombre: form.plan_cuenta_nombre || null,
       fecha_pago: estadoOut === "pagada" ? (form.fecha_pago || form.fecha) : null,
       cuenta_id: estadoOut === "pagada" ? (form.cuenta_id || null) : null,
       cuenta_nombre: estadoOut === "pagada" ? (form.cuenta_nombre || null) : null,
@@ -719,21 +766,34 @@ const FacturaFormModal = ({
             </div>
           </div>
 
-          {/* Row 2: Forma pago, Vencimiento */}
-          <div className="grid grid-cols-2 gap-4">
+          {/* Row 2: Forma pago, Plan de cuenta y vencimiento */}
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className={labelCls}>Forma de Pago</label>
               <select
                 className={inputCls}
                 value={form.forma_pago}
-                onChange={(e) => set("forma_pago", e.target.value)}
+                onChange={(e) => setForm(prev => ({ ...prev, forma_pago: e.target.value, plan_cuenta_id: "", plan_cuenta_nombre: "", fecha_vencimiento: "" }))}
               >
                 <option value="contado">Contado</option>
                 <option value="credito">Crédito</option>
               </select>
             </div>
             <div>
-              <label className={labelCls}>Fecha de Vencimiento</label>
+              <label className={labelCls}>Plan de cuenta *</label>
+              <select
+                className={inputCls}
+                value={form.plan_cuenta_id || ""}
+                onChange={(e) => aplicarPlanCuenta(e.target.value, true)}
+              >
+                <option value="">Seleccionar cuenta...</option>
+                {planCuentasFiltradas.map(c => (
+                  <option key={c.id} value={c.id}>{c.nombre}{c.predeterminada ? " ★" : ""}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Vencimiento</label>
               <input
                 type="date"
                 className={inputCls}

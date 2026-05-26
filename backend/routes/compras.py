@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from config import db
 from auth import require_authenticated, has_permission, log_auditoria, get_logos_acceso, apply_logo_filter, is_forbidden
 from routes.cotizaciones import tipo_cambio_usd_sugerido
+from routes.plan_cuentas import resolver_plan_cuenta_operacion
 
 router = APIRouter()
 
@@ -50,6 +51,8 @@ class CompraCreate(BaseModel):
     # cuenta bancaria desde la que se pagó (solo aplica a contado)
     cuenta_id: Optional[str] = None
     cuenta_nombre: Optional[str] = None
+    plan_cuenta_id: Optional[str] = None
+    plan_cuenta_nombre: Optional[str] = None
 
 class CompraUpdate(BaseModel):
     logo_tipo: Optional[str] = None
@@ -76,6 +79,8 @@ class CompraUpdate(BaseModel):
     fecha_pago: Optional[str] = None
     cuenta_id: Optional[str] = None
     cuenta_nombre: Optional[str] = None
+    plan_cuenta_id: Optional[str] = None
+    plan_cuenta_nombre: Optional[str] = None
 
 class PagoCompraCreate(BaseModel):
     monto_pagado: float
@@ -93,11 +98,11 @@ def _estado_pago(compra: dict) -> str:
     """Calcula el estado de pago de una compra."""
     if compra.get("solo_iva"):
         return "registrado"
-    if compra.get("tipo_pago") == "contado":
-        return "pagado"
     pagos = compra.get("pagos", [])
     creditos = compra.get("creditos", [])
     total_pagado = sum(p.get("monto_pagado", 0) for p in pagos)
+    if compra.get("tipo_pago") == "contado" and not pagos and (compra.get("fecha_pago") or compra.get("cuenta_id")):
+        total_pagado = compra.get("monto_total", 0)
     total_creditos = sum(c.get("monto", 0) for c in creditos)
     if total_pagado + total_creditos >= compra.get("monto_total", 0):
         return "pagado"
@@ -115,7 +120,10 @@ def _fmt(compra: dict) -> dict:
     compra["estado_pago"] = _estado_pago(compra)
     pagos = compra.get("pagos", [])
     creditos = compra.get("creditos", [])
-    compra["total_pagado"] = sum(p.get("monto_pagado", 0) for p in pagos)
+    total_pagado = sum(p.get("monto_pagado", 0) for p in pagos)
+    if compra.get("tipo_pago") == "contado" and not pagos and (compra.get("fecha_pago") or compra.get("cuenta_id")):
+        total_pagado = compra.get("monto_total", 0)
+    compra["total_pagado"] = total_pagado
     compra["total_creditos"] = sum(c.get("monto", 0) for c in creditos)
     compra["saldo_pendiente"] = max(0, compra.get("monto_total", 0) - compra["total_pagado"] - compra["total_creditos"])
     return compra
@@ -384,6 +392,14 @@ async def create_compra(data: CompraCreate, user: dict = Depends(require_authent
         )
     if data.solo_iva and not data.tiene_factura:
         raise HTTPException(status_code=400, detail="Una compra Solo IVA debe tener factura.")
+
+    plan_cuenta = None
+    fecha_vencimiento_plan = None
+    if not data.solo_iva:
+        uso_plan = "compra_credito" if data.tipo_pago == "credito" else "compra_contado"
+        plan_cuenta, fecha_vencimiento_plan = await resolver_plan_cuenta_operacion(
+            data.logo_tipo, uso_plan, data.plan_cuenta_id, data.fecha, data.fecha_vencimiento
+        )
     proveedor_id_final = await _crear_proveedor_desde_compra(data, user)
 
     # Calcular subtotales de items
@@ -418,10 +434,12 @@ async def create_compra(data: CompraCreate, user: dict = Depends(require_authent
         "items": items,
         "afecta_stock": False if data.solo_iva else afecta_stock,
         "notas": data.notas,
-        "fecha_vencimiento": data.fecha_vencimiento,
-        "fecha_pago": (data.fecha_pago or data.fecha) if data.tipo_pago == "contado" else None,
-        "cuenta_id": data.cuenta_id if data.tipo_pago == "contado" and not data.solo_iva else None,
-        "cuenta_nombre": data.cuenta_nombre if data.tipo_pago == "contado" and not data.solo_iva else None,
+        "fecha_vencimiento": fecha_vencimiento_plan if not data.solo_iva else data.fecha_vencimiento,
+        "plan_cuenta_id": plan_cuenta.get("id") if plan_cuenta else None,
+        "plan_cuenta_nombre": plan_cuenta.get("nombre") if plan_cuenta else None,
+        "fecha_pago": (data.fecha_pago or data.fecha) if data.tipo_pago == "contado" and data.cuenta_id else None,
+        "cuenta_id": data.cuenta_id if data.tipo_pago == "contado" and data.cuenta_id and not data.solo_iva else None,
+        "cuenta_nombre": data.cuenta_nombre if data.tipo_pago == "contado" and data.cuenta_id and not data.solo_iva else None,
         "pagos": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "created_by": user.get("id"),
@@ -497,17 +515,18 @@ async def update_compra(compra_id: str, data: CompraUpdate, user: dict = Depends
     existing_compra = await db.compras.find_one(
         {"id": compra_id},
         {"moneda": 1, "tipo_cambio": 1, "tipo_pago": 1, "tiene_factura": 1, "fecha": 1,
-         "numero_factura": 1, "proveedor_id": 1, "proveedor_nombre": 1, "logo_tipo": 1, "fecha_pago": 1}
+         "numero_factura": 1, "proveedor_id": 1, "proveedor_nombre": 1, "logo_tipo": 1, "fecha_pago": 1, "fecha_vencimiento": 1, "plan_cuenta_id": 1, "solo_iva": 1}
     ) or {}
     moneda_final = update_data.get("moneda", existing_compra.get("moneda"))
     tc_final = update_data.get("tipo_cambio", existing_compra.get("tipo_cambio"))
     tipo_pago_final = update_data.get("tipo_pago", existing_compra.get("tipo_pago"))
     tiene_factura_final = update_data.get("tiene_factura", existing_compra.get("tiene_factura"))
+    solo_iva_final = update_data.get("solo_iva", existing_compra.get("solo_iva", False))
     fecha_final = update_data.get("fecha", existing_compra.get("fecha"))
     update_data["tipo_cambio"] = await _asegurar_tc_fiscal_compra(
         moneda_final, tc_final, tipo_pago_final, tiene_factura_final, fecha_final
     )
-    if update_data.get("solo_iva") and not tiene_factura_final:
+    if solo_iva_final and not tiene_factura_final:
         raise HTTPException(status_code=400, detail="Una compra Solo IVA debe tener factura.")
     numero_final = update_data.get("numero_factura", existing_compra.get("numero_factura"))
     proveedor_id_final = update_data.get("proveedor_id", existing_compra.get("proveedor_id"))
@@ -524,15 +543,30 @@ async def update_compra(compra_id: str, data: CompraUpdate, user: dict = Depends
         update_data["numero_factura_normalizado"] = None
         update_data["nro_timbrado"] = None
         update_data["fecha_vigencia_timbrado"] = None
-    if update_data.get("solo_iva"):
+    if solo_iva_final:
         update_data["afecta_stock"] = False
         update_data["cuenta_id"] = None
         update_data["cuenta_nombre"] = None
+        update_data["plan_cuenta_id"] = None
+        update_data["plan_cuenta_nombre"] = None
+
+    if not solo_iva_final:
+        uso_plan = "compra_credito" if tipo_pago_final == "credito" else "compra_contado"
+        plan_cuenta, fecha_vencimiento_plan = await resolver_plan_cuenta_operacion(
+            logo_final,
+            uso_plan,
+            update_data.get("plan_cuenta_id") or existing_compra.get("plan_cuenta_id"),
+            fecha_final,
+            update_data.get("fecha_vencimiento") or existing_compra.get("fecha_vencimiento"),
+        )
+        update_data["plan_cuenta_id"] = plan_cuenta.get("id")
+        update_data["plan_cuenta_nombre"] = plan_cuenta.get("nombre")
+        update_data["fecha_vencimiento"] = fecha_vencimiento_plan
     if tipo_pago_final == "contado" and not update_data.get("fecha_pago") and not existing_compra.get("fecha_pago"):
         update_data["fecha_pago"] = fecha_final
     if tipo_pago_final != "contado":
         update_data["fecha_pago"] = None
-    if not update_data.get("solo_iva") and "items" in update_data and "afecta_stock" in update_data and not has_permission(user, "compras.afectar_stock"):
+    if not solo_iva_final and "items" in update_data and "afecta_stock" in update_data and not has_permission(user, "compras.afectar_stock"):
         if _tiene_productos_vinculados_items(update_data.get("items") or []):
             update_data["afecta_stock"] = True
     if "items" in update_data:
@@ -584,8 +618,8 @@ async def registrar_pago_compra(compra_id: str, data: PagoCompraCreate, user: di
     compra = await db.compras.find_one({"id": compra_id}, {"_id": 0})
     if not compra:
         raise HTTPException(status_code=404, detail="Compra no encontrada")
-    if compra.get("tipo_pago") == "contado":
-        raise HTTPException(status_code=400, detail="Esta compra es al contado, no necesita pagos")
+    if compra.get("solo_iva"):
+        raise HTTPException(status_code=400, detail="Una compra Solo IVA no necesita pagos")
 
     pago = {
         "id": str(uuid.uuid4()),

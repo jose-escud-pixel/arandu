@@ -6,7 +6,7 @@ import {
   MessageSquare, CheckCircle, Clock, User, Phone,
   ChevronRight, BarChart3, Inbox, Building2, FileText, Users, Shield, Eye, Server,
   ClipboardList, DollarSign, AlertCircle, Truck, TrendingDown, UserCheck, Receipt, Scale, TrendingUp, ShoppingBag, Package,
-  ChevronLeft, Bell
+  ChevronLeft, Bell, BookOpen
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { AuthContext } from "../App";
@@ -26,11 +26,13 @@ const LogoDisplay = ({ activeEmpresaPropia }) => {
   // Si tiene logo_url: mostrar la imagen
   if (activeEmpresaPropia?.logo_url) {
     return (
-      <img
-        src={activeEmpresaPropia.logo_url}
-        alt={activeEmpresaPropia.nombre}
-        className="h-10 max-w-[160px] object-contain"
-      />
+      <div className="h-14 w-full max-w-[190px] flex items-center">
+        <img
+          src={activeEmpresaPropia.logo_url}
+          alt={activeEmpresaPropia.nombre}
+          className="max-h-14 max-w-full object-contain"
+        />
+      </div>
     );
   }
   // Sin logo_url: logo de texto según slug
@@ -287,6 +289,16 @@ const AdminDashboard = () => {
                 <span className="font-body">Bancos</span>
               </Link>
             )}
+            {hasPermission("plan_cuentas.ver") && (
+              <Link
+                to="/sistema/plan-cuentas"
+                data-testid="menu-plan-cuentas"
+                className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
+              >
+                <BookOpen className="w-5 h-5 text-cyan-400" />
+                <span className="font-body">Plan de cuentas</span>
+              </Link>
+            )}
             {hasPermission("inventario.ver") && (
               <Link
                 to="/sistema/inventario"
@@ -452,7 +464,9 @@ const AdminDashboard = () => {
               }}
             >
               {activeEmpresaPropia.logo_url ? (
-                <img src={activeEmpresaPropia.logo_url} alt={activeEmpresaPropia.nombre} className="h-6 object-contain" />
+                <span className="w-10 h-7 flex items-center justify-center flex-shrink-0 rounded bg-white/85">
+                  <img src={activeEmpresaPropia.logo_url} alt={activeEmpresaPropia.nombre} className="max-w-full max-h-full object-contain" />
+                </span>
               ) : (
                 <span className="w-3 h-3 rounded-full" style={{ backgroundColor: activeEmpresaPropia.color || "#3b82f6" }} />
               )}

@@ -11,6 +11,12 @@ export const EMPRESA_MODULOS = {
     permisos: ["bancos"],
     obligatorio: true,
   },
+  plan_cuentas: {
+    label: "Plan de cuentas",
+    desc: "Cuentas por cobrar y pagar para ventas/compras contado y crédito",
+    permisos: ["plan_cuentas"],
+    obligatorio: true,
+  },
   ventas_base: {
     label: "Ventas base",
     desc: "Facturas, recibos/cobros de crédito y notas de crédito de ventas",

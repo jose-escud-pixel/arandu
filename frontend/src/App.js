@@ -22,11 +22,15 @@ import VentasPage from "./pages/VentasPage";
 import ProductosPage from "./pages/ProductosPage";
 import StockHistorialPage from "./pages/StockHistorialPage";
 import BancosPage from "./pages/BancosPage";
+import PlanCuentasPage from "./pages/PlanCuentasPage";
 import EmpresasPropiasPage from "./pages/EmpresasPropiasPage";
 import { toast } from "sonner";
 import { empresaTieneModulo, permisoHabilitadoPorEmpresa } from "./lib/modulosEmpresa";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const ARANDUJAR_TOKEN_KEY = "arandujar_token";
+const CLINIC_TOKEN_KEY = "arandu_clinic_token";
+const CLINIC_DOCTOR_KEY = "arandu_clinic_doctor";
 
 // ── Auth + Theme context ────────────────────────────────────────────────────
 export const AuthContext = React.createContext(null);
@@ -52,7 +56,7 @@ function applyTheme(tema) {
 
 function AuthProvider({ children }) {
   const [user, setUser] = React.useState(null);
-  const [token, setToken] = React.useState(localStorage.getItem("token"));
+  const [token, setToken] = React.useState(localStorage.getItem(ARANDUJAR_TOKEN_KEY));
   const [loading, setLoading] = React.useState(true);
   const [empresasPropias, setEmpresasPropias] = React.useState([]);
   const [activeEmpresaPropia, setActiveEmpresaPropia] = React.useState(null);
@@ -119,7 +123,7 @@ function AuthProvider({ children }) {
 
   React.useEffect(() => {
     const checkAuth = async () => {
-      const savedToken = localStorage.getItem("token");
+      const savedToken = localStorage.getItem(ARANDUJAR_TOKEN_KEY);
       if (savedToken) {
         try {
           const response = await fetch(`${API}/auth/me`, {
@@ -131,7 +135,7 @@ function AuthProvider({ children }) {
             setToken(savedToken);
             await loadEmpresasPropias(savedToken, userData);
           } else {
-            localStorage.removeItem("token");
+            localStorage.removeItem(ARANDUJAR_TOKEN_KEY);
             setToken(null);
           }
         } catch (e) {
@@ -146,13 +150,16 @@ function AuthProvider({ children }) {
   const login = async (userData, accessToken) => {
     setUser(userData);
     setToken(accessToken);
-    localStorage.setItem("token", accessToken);
+    localStorage.setItem(ARANDUJAR_TOKEN_KEY, accessToken);
+    localStorage.removeItem("token");
+    localStorage.removeItem(CLINIC_TOKEN_KEY);
+    localStorage.removeItem(CLINIC_DOCTOR_KEY);
     await loadEmpresasPropias(accessToken, userData);
   };
 
   const logout = React.useCallback(async (silent = false) => {
     // Le avisamos al backend para que limpie la sesión activa (best-effort).
-    const t = localStorage.getItem("token");
+    const t = localStorage.getItem(ARANDUJAR_TOKEN_KEY);
     if (t) {
       try {
         await fetch(`${API}/auth/logout`, {
@@ -165,6 +172,7 @@ function AuthProvider({ children }) {
     setToken(null);
     setActiveEmpresaPropia(null);
     setEmpresasPropias([]);
+    localStorage.removeItem(ARANDUJAR_TOKEN_KEY);
     localStorage.removeItem("token");
     applyTheme("oscuro-azul");
     if (!silent && typeof window !== "undefined") {
@@ -204,7 +212,7 @@ function AuthProvider({ children }) {
     if (empresa) {
       localStorage.setItem("empresa_default", empresa.id);
       // Persistir en el backend en background
-      const t = localStorage.getItem("token");
+      const t = localStorage.getItem(ARANDUJAR_TOKEN_KEY);
       if (t) {
         fetch(`${API}/auth/empresa-default`, {
           method: "PUT",
@@ -383,6 +391,9 @@ function App() {
             } />
             <Route path="/sistema/bancos" element={
               <ProtectedRoute requiredPermission="bancos.ver"><BancosPage /></ProtectedRoute>
+            } />
+            <Route path="/sistema/plan-cuentas" element={
+              <ProtectedRoute requiredPermission="plan_cuentas.ver"><PlanCuentasPage /></ProtectedRoute>
             } />
           </Routes>
         </BrowserRouter>

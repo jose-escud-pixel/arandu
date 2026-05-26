@@ -183,6 +183,11 @@ class EmpresaResponse(BaseModel):
 class EmpresaPropiaCreate(BaseModel):
     nombre: str
     slug: Optional[str] = None  # e.g. "arandu", "jar", "arandujar" — auto-generated if omitted
+    razon_social: Optional[str] = None
+    ruc: Optional[str] = None
+    direccion: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
     logo_url: Optional[str] = None
     color: Optional[str] = "#3b82f6"
     tema: Optional[str] = "oscuro-azul"
@@ -203,6 +208,11 @@ class EmpresaPropiaResponse(BaseModel):
     id: str
     nombre: str
     slug: str
+    razon_social: Optional[str] = None
+    ruc: Optional[str] = None
+    direccion: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
     logo_url: Optional[str] = None
     color: Optional[str] = "#3b82f6"
     tema: str = "oscuro-azul"
@@ -278,6 +288,12 @@ class PresupuestoResponse(BaseModel):
     empresa_id: str
     empresa_nombre: Optional[str] = None
     empresa_ruc: Optional[str] = None
+
+    emisor_razon_social: Optional[str] = None
+    emisor_ruc: Optional[str] = None
+    emisor_direccion: Optional[str] = None
+    emisor_telefono: Optional[str] = None
+    emisor_email: Optional[str] = None
     logo_tipo: str
     moneda: str = "PYG"
     forma_pago: str = "contado"
@@ -695,6 +711,12 @@ class AlertaResponse(BaseModel):
 
 class FacturaCreate(BaseModel):
     logo_tipo: str = "arandujar"          # arandu | arandujar | jar
+
+    emisor_razon_social: Optional[str] = None
+    emisor_ruc: Optional[str] = None
+    emisor_direccion: Optional[str] = None
+    emisor_telefono: Optional[str] = None
+    emisor_email: Optional[str] = None
     tipo: str = "emitida"                 # emitida | recibida
     sin_factura: bool = False             # True = boleta (venta sin comprobante fiscal)
     numero: Optional[str] = None         # Nro de factura (vacío si sin_factura=True)
@@ -715,6 +737,8 @@ class FacturaCreate(BaseModel):
     tipo_cambio: Optional[float] = None
     estado: str = "pendiente"             # pendiente | pagada | parcial | anulada
     fecha_vencimiento: Optional[str] = None
+    plan_cuenta_id: Optional[str] = None
+    plan_cuenta_nombre: Optional[str] = None
     fecha_pago: Optional[str] = None
     monto_pagado: Optional[float] = None  # para pagos parciales
     presupuesto_id: Optional[str] = None # DEPRECATED: usar presupuesto_ids
@@ -749,6 +773,12 @@ class PagoItem(BaseModel):
 class FacturaResponse(BaseModel):
     id: str
     logo_tipo: str
+
+    emisor_razon_social: Optional[str] = None
+    emisor_ruc: Optional[str] = None
+    emisor_direccion: Optional[str] = None
+    emisor_telefono: Optional[str] = None
+    emisor_email: Optional[str] = None
     tipo: str
     sin_factura: bool = False
     numero: Optional[str] = None
@@ -769,6 +799,8 @@ class FacturaResponse(BaseModel):
     tipo_cambio: Optional[float] = None
     estado: str
     fecha_vencimiento: Optional[str] = None
+    plan_cuenta_id: Optional[str] = None
+    plan_cuenta_nombre: Optional[str] = None
     fecha_pago: Optional[str] = None
     monto_pagado: Optional[float] = None
     pagos: List[PagoItem] = []            # historial de pagos parciales/totales

@@ -8,6 +8,7 @@ import uuid
 from config import db, JWT_SECRET, JWT_ALGORITHM, DEFAULT_EMPRESA_MODULOS, PERMISO_A_MODULO_EMPRESA
 
 security = HTTPBearer()
+JWT_APP = "arandujar"
 
 
 def hash_password(password: str) -> str:
@@ -20,6 +21,7 @@ def create_token(user_id: str, session_id: str = None) -> str:
     """Genera un JWT incluyendo session_id, así una sesión nueva invalida la
     anterior (single-session enforcement)."""
     payload = {
+        "app": JWT_APP,
         "user_id": user_id,
         "exp": datetime.now(timezone.utc).timestamp() + 86400 * 7,
     }
@@ -31,6 +33,8 @@ def create_token(user_id: str, session_id: str = None) -> str:
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
         payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get("app") != JWT_APP:
+            raise HTTPException(status_code=401, detail="Token inválido para AranduJAR")
         user_id = payload.get("user_id")
         token_sid = payload.get("session_id")
         user = await db.users.find_one({"id": user_id}, {"_id": 0})

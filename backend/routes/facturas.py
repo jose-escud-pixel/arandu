@@ -8,9 +8,26 @@ from auth import require_authenticated, has_permission, log_auditoria, get_logos
 from models.schemas import FacturaCreate, FacturaResponse
 from routes.cotizaciones import tipo_cambio_usd_sugerido
 from routes.cuentas_bancarias import resolver_cuenta_id
+from routes.plan_cuentas import resolver_plan_cuenta_operacion
 
 router = APIRouter()
 
+
+
+
+async def _snapshot_emisor(logo_tipo: Optional[str]) -> dict:
+    logo = logo_tipo or "arandujar"
+    empresa = await db.empresas_propias.find_one({"slug": logo}, {"_id": 0}) or {}
+    nombre = empresa.get("razon_social") or empresa.get("nombre") or (
+        "JAR Informática" if logo == "jar" else "Arandu Informática" if logo == "arandu" else "AranduJAR Informática"
+    )
+    return {
+        "emisor_razon_social": nombre,
+        "emisor_ruc": empresa.get("ruc"),
+        "emisor_direccion": empresa.get("direccion"),
+        "emisor_telefono": empresa.get("telefono"),
+        "emisor_email": empresa.get("email"),
+    }
 
 async def _cuenta_pago_resuelta(logo_tipo: str, moneda: str, cuenta_id: Optional[str] = None) -> tuple:
     """(cuenta_id, cuenta_nombre) usando predeterminada si falta cuenta."""
@@ -406,7 +423,20 @@ async def create_factura(data: FacturaCreate, user: dict = Depends(require_authe
         raise HTTPException(status_code=403, detail="Sin permiso para crear facturas")
     now = datetime.now(timezone.utc).isoformat()
     doc_data = data.dict()
+    doc_data.update(await _snapshot_emisor(doc_data.get("logo_tipo", "arandujar")))
     doc_data = await _asegurar_tc_fiscal_factura(doc_data)
+
+    uso_plan = "venta_credito" if doc_data.get("forma_pago") == "credito" else "venta_contado"
+    plan_cuenta, vencimiento = await resolver_plan_cuenta_operacion(
+        doc_data.get("logo_tipo", "arandujar"),
+        uso_plan,
+        doc_data.get("plan_cuenta_id"),
+        doc_data.get("fecha"),
+        doc_data.get("fecha_vencimiento"),
+    )
+    doc_data["plan_cuenta_id"] = plan_cuenta.get("id")
+    doc_data["plan_cuenta_nombre"] = plan_cuenta.get("nombre")
+    doc_data["fecha_vencimiento"] = vencimiento
 
     if doc_data.get("sin_factura"):
         # Boleta: auto-generar número único, no requiere timbrado, no afecta IVA fiscal
@@ -484,7 +514,25 @@ async def update_factura(factura_id: str, data: FacturaCreate, user: dict = Depe
     if not fac:
         raise HTTPException(status_code=404, detail="Factura no encontrada")
     update_data = data.dict()
+    emisor_keys = ("emisor_razon_social", "emisor_ruc", "emisor_direccion", "emisor_telefono", "emisor_email")
+    if any(fac.get(k) for k in emisor_keys):
+        for k in emisor_keys:
+            update_data[k] = fac.get(k)
+    else:
+        update_data.update(await _snapshot_emisor(update_data.get("logo_tipo") or fac.get("logo_tipo", "arandujar")))
     update_data = await _asegurar_tc_fiscal_factura(update_data)
+
+    uso_plan = "venta_credito" if update_data.get("forma_pago") == "credito" else "venta_contado"
+    plan_cuenta, vencimiento = await resolver_plan_cuenta_operacion(
+        update_data.get("logo_tipo") or fac.get("logo_tipo", "arandujar"),
+        uso_plan,
+        update_data.get("plan_cuenta_id"),
+        update_data.get("fecha") or fac.get("fecha"),
+        update_data.get("fecha_vencimiento"),
+    )
+    update_data["plan_cuenta_id"] = plan_cuenta.get("id")
+    update_data["plan_cuenta_nombre"] = plan_cuenta.get("nombre")
+    update_data["fecha_vencimiento"] = vencimiento
     if not update_data.get("sin_factura"):
         await _ensure_factura_numero_unico(update_data, ignore_id=factura_id)
     update_data["numero_normalizado"] = _numero_doc_normalizado(update_data.get("numero") or fac.get("numero_boleta", ""))
@@ -648,6 +696,7 @@ async def pago_parcial_factura(
             "moneda": fac.get("moneda", "PYG"),
             "fecha_pago": fecha_pago,
             "logo_tipo": fac.get("logo_tipo", "arandujar"),
+            **{k: fac.get(k) for k in ("emisor_razon_social", "emisor_ruc", "emisor_direccion", "emisor_telefono", "emisor_email")},
             "cuenta_id": cuenta_id,
             "cuenta_nombre": cuenta_nombre,
             "tipo_cambio": tipo_cambio,
@@ -804,6 +853,7 @@ async def pago_bulk_facturas(
                 "moneda":            grupo[0].get("moneda", "PYG"),
                 "fecha_pago":        fecha_pago,
                 "logo_tipo":         logo_tipo,
+                **{k: grupo[0].get(k) for k in ("emisor_razon_social", "emisor_ruc", "emisor_direccion", "emisor_telefono", "emisor_email")},
                 "cuenta_id":         cuenta_id,
                 "cuenta_nombre":     cuenta_nombre,
                 "tipo_cambio":       tipo_cambio,

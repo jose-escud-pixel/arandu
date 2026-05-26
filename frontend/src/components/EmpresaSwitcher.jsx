@@ -74,7 +74,9 @@ export default function EmpresaSwitcher({ compact = false }) {
                 className="w-full flex items-center gap-3 px-4 py-2.5 text-slate-300 hover:text-white hover:bg-white/5 transition-all font-body text-sm text-left"
               >
                 {ep.logo_url ? (
-                  <img src={ep.logo_url} alt={ep.nombre} className="w-5 h-5 object-contain rounded" />
+                  <span className="w-8 h-6 flex items-center justify-center flex-shrink-0 rounded bg-white/80">
+                    <img src={ep.logo_url} alt={ep.nombre} className="max-w-full max-h-full object-contain" />
+                  </span>
                 ) : (
                   <span
                     className="w-4 h-4 rounded-full flex-shrink-0"
@@ -107,11 +109,13 @@ export default function EmpresaSwitcher({ compact = false }) {
           }}
         >
           {activeEmpresaPropia?.logo_url ? (
-            <img
-              src={activeEmpresaPropia.logo_url}
-              alt={activeEmpresaPropia.nombre}
-              className="w-6 h-6 object-contain rounded"
-            />
+            <span className="w-9 h-7 flex items-center justify-center flex-shrink-0 rounded bg-white/85">
+              <img
+                src={activeEmpresaPropia.logo_url}
+                alt={activeEmpresaPropia.nombre}
+                className="max-w-full max-h-full object-contain"
+              />
+            </span>
           ) : (
             <span
               className="w-5 h-5 rounded-full flex-shrink-0"
@@ -141,7 +145,9 @@ export default function EmpresaSwitcher({ compact = false }) {
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 text-slate-300 hover:text-white hover:bg-white/5 transition-all font-body text-sm text-left"
               >
                 {ep.logo_url ? (
-                  <img src={ep.logo_url} alt={ep.nombre} className="w-5 h-5 object-contain rounded" />
+                  <span className="w-8 h-6 flex items-center justify-center flex-shrink-0 rounded bg-white/80">
+                    <img src={ep.logo_url} alt={ep.nombre} className="max-w-full max-h-full object-contain" />
+                  </span>
                 ) : (
                   <span
                     className="w-4 h-4 rounded-full flex-shrink-0"
