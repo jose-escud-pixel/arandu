@@ -251,6 +251,7 @@ const TAB_PERMISOS = {
 export default function VentasPage() {
   const { token, user, hasPermission, hasModule, empresasPropias, activeEmpresaPropia } = useContext(AuthContext);
   const isAdmin = user?.role === "admin";
+  const canViewDeleted = (perm) => isAdmin || user?.role === "gerente" || user?.role === "super_admin" || hasPermission(perm);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(() => {
@@ -263,6 +264,13 @@ export default function VentasPage() {
   const [anio, setAnio] = useState(String(new Date().getFullYear()));
   const [search, setSearch] = useState("");
   const [showNew, setShowNew] = useState(false);
+  const [mostrarEliminadas, setMostrarEliminadas] = useState({
+    presupuestos: false,
+    facturas: false,
+    ingresos: false,
+    recibos: false,
+    notas: false,
+  });
   const newBtnRef = useRef(null);
 
   // Ordenamiento por tab: { [tab]: { key, dir: "asc"|"desc" } }
@@ -474,33 +482,37 @@ export default function VentasPage() {
       const buildQ = (params) => { const p = Object.entries(params).filter(([,v]) => v != null && v !== "").map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join("&"); return p ? `?${p}` : ""; };
 	      const [rPres, rFac, rIng, rEmp, rProv, rProd, rCuentas, rPlan, rRecibos, rNotas] = await Promise.all([
 	        hasPermission("presupuestos.ver")
-            ? fetch(`${API}/admin/presupuestos${buildQ({ mes: mesParam || null, anio: anioParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers })
+            ? fetch(`${API}/admin/presupuestos${buildQ({ mes: mesParam || null, anio: anioParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.presupuestos ? "true" : null })}`, { headers })
             : Promise.resolve({ ok: true, json: async () => [] }),
-	        fetch(`${API}/admin/facturas${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
-	        fetch(`${API}/admin/ingresos-varios${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
+	        fetch(`${API}/admin/facturas${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.facturas ? "true" : null })}`, { headers }),
+	        fetch(`${API}/admin/ingresos-varios${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.ingresos ? "true" : null })}`, { headers }),
         fetch(`${API}/admin/empresas${logoQc}`, { headers }),
         hasPermission("proveedores.ver") ? fetch(`${API}/admin/proveedores?activo=true`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
 	        hasModule?.("productos_stock") ? fetch(`${API}/admin/productos`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
 	        fetch(`${API}/admin/cuentas-bancarias${logoQc}`, { headers }),
 	        fetch(`${API}/admin/plan-cuentas${logoQc}`, { headers }),
-	        fetch(`${API}/admin/recibos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers }),
+	        fetch(`${API}/admin/recibos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.recibos ? "true" : null })}`, { headers }),
 	        hasPermission("notas_credito.ver")
-	          ? fetch(`${API}/admin/notas-credito${buildQ({ tipo: "venta", mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null })}`, { headers })
+	          ? fetch(`${API}/admin/notas-credito${buildQ({ tipo: "venta", mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.notas ? "true" : null })}`, { headers })
 	          : Promise.resolve({ ok: false }),
 	      ]);
-      if (rPres.ok) setPresupuestos(await rPres.json());
+      if (rPres.ok) {
+        const data = await rPres.json();
+        setPresupuestos(mostrarEliminadas.presupuestos ? data.filter(x => x.eliminada) : data.filter(x => !x.eliminada));
+      }
       else setPresupuestos([]);
       if (rFac.ok) {
         const data = await rFac.json();
         // Sanitize dates
-        setFacturas(data.map(f => ({
+        const visibles = mostrarEliminadas.facturas ? data.filter(f => f.eliminada) : data.filter(f => !f.eliminada);
+        setFacturas(visibles.map(f => ({
           ...f,
           fecha: f.fecha ? f.fecha.slice(0, 10) : null,
           fecha_vencimiento: f.fecha_vencimiento ? f.fecha_vencimiento.slice(0, 10) : null,
           fecha_pago: f.fecha_pago ? f.fecha_pago.slice(0, 10) : null,
         })));
       }
-      if (rIng.ok) { const dIng = await rIng.json(); setIngresos(Array.isArray(dIng) ? dIng : []); }
+      if (rIng.ok) { const dIng = await rIng.json(); const arr = Array.isArray(dIng) ? dIng : []; setIngresos(mostrarEliminadas.ingresos ? arr.filter(x => x.eliminada) : arr.filter(x => !x.eliminada)); }
       if (rEmp.ok) setEmpresas(await rEmp.json());
       if (rProv.ok) setProveedores(await rProv.json());
       if (rProd.ok) {
@@ -509,17 +521,32 @@ export default function VentasPage() {
       }
 	      if (rCuentas.ok) setCuentasDisp(await rCuentas.json());
       if (rPlan.ok) setPlanCuentas(await rPlan.json());
-	      if (rRecibos.ok) setRecibos(await rRecibos.json());
-	      if (rNotas.ok) setNotasCredito(await rNotas.json());
+	      if (rRecibos.ok) { const data = await rRecibos.json(); setRecibos(mostrarEliminadas.recibos ? data.filter(x => x.eliminada) : data.filter(x => !x.eliminada)); }
+	      if (rNotas.ok) { const data = await rNotas.json(); setNotasCredito(mostrarEliminadas.notas ? data.filter(x => x.eliminada) : data.filter(x => !x.eliminada)); }
     } catch (e) {
       toast.error("Error al cargar datos");
     }
     setLoading(false);
   };
 
-  useEffect(() => { fetchAll(); }, [mes, filtroTipo, activeEmpresaPropia]); // eslint-disable-line
+  useEffect(() => { fetchAll(); }, [mes, filtroTipo, activeEmpresaPropia, mostrarEliminadas]); // eslint-disable-line
 
   const visibleTabs = TABS.filter(t => hasPermission(TAB_PERMISOS[t.id]));
+  const deletePermByTab = {
+    presupuestos: "presupuestos.eliminar",
+    facturas: "facturas.eliminar",
+    ingresos: "ingresos_varios.eliminar",
+    recibos: "facturas.eliminar",
+    notas: "notas_credito.eliminar",
+  };
+  const deletedToggle = canViewDeleted(deletePermByTab[tab]) ? (
+    <button
+      onClick={() => setMostrarEliminadas(prev => ({ ...prev, [tab]: !prev[tab] }))}
+      className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all font-body whitespace-nowrap ${mostrarEliminadas[tab] ? "bg-red-500/20 border-red-500/40 text-red-300" : "border-white/10 text-slate-400 hover:text-white hover:bg-white/5"}`}
+    >
+      <Trash2 className="w-4 h-4" /> {mostrarEliminadas[tab] ? "Ocultar eliminadas" : "Ver eliminadas"}
+    </button>
+  ) : null;
   useEffect(() => {
     if (visibleTabs.length && !visibleTabs.some(t => t.id === tab)) {
       setTab(visibleTabs[0].id);
@@ -1247,7 +1274,8 @@ export default function VentasPage() {
                     className={`w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-3 py-2 text-white text-sm font-body focus:outline-none focus:border-${accentColor}-500`}
                   />
                 </div>
-                {isPresupuestos && hasPermission("presupuestos.crear") && (
+                {deletedToggle}
+                {isPresupuestos && !mostrarEliminadas.presupuestos && hasPermission("presupuestos.crear") && (
                   <button
                     onClick={() => setPresFormItem({ presupuesto: null, mode: "new" })}
                     className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-all font-body whitespace-nowrap"
@@ -1266,7 +1294,7 @@ export default function VentasPage() {
                         </button>
                       ))}
                     </div>
-                    {hasPermission("facturas.crear") && (
+                    {!mostrarEliminadas.facturas && hasPermission("facturas.crear") && (
                       <button
                         onClick={() => { setFacFormItem(null); setFacSinFactura(false); setShowFacForm(true); }}
                         className="flex items-center gap-2 px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm rounded-lg transition-all font-body whitespace-nowrap"
@@ -1274,7 +1302,7 @@ export default function VentasPage() {
                         <Plus className="w-4 h-4" /> Nueva factura
                       </button>
                     )}
-                    {hasPermission("facturas.crear") && (
+                    {!mostrarEliminadas.facturas && hasPermission("facturas.crear") && (
                       <button
                         onClick={() => { setFacFormItem(null); setFacSinFactura(true); setShowFacForm(true); }}
                         className="flex items-center gap-2 px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm rounded-lg transition-all font-body whitespace-nowrap"
@@ -1282,7 +1310,7 @@ export default function VentasPage() {
                         <Receipt className="w-4 h-4" /> Venta sin factura
                       </button>
                     )}
-                    {hasPermission("facturas.timbrado") && activeEmpresaPropia && (
+                    {!mostrarEliminadas.facturas && hasPermission("facturas.timbrado") && activeEmpresaPropia && (
                       <button
                         onClick={() => { setShowTimbradoConfig(true); fetchTimbradoConfig(); }}
                         className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 text-sm rounded-lg transition-all font-body whitespace-nowrap"
@@ -1306,7 +1334,8 @@ export default function VentasPage() {
                 className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-3 py-2 text-white text-sm font-body focus:outline-none focus:border-violet-500"
               />
             </div>
-	            {tab === "ingresos" && hasPermission("ingresos_varios.crear") && (
+            {deletedToggle}
+	            {tab === "ingresos" && !mostrarEliminadas.ingresos && hasPermission("ingresos_varios.crear") && (
 	              <button
                 onClick={() => setShowIngForm(true)}
                 className="flex items-center gap-2 px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm rounded-lg transition-all font-body whitespace-nowrap"
@@ -1314,7 +1343,7 @@ export default function VentasPage() {
 	                <Plus className="w-4 h-4" /> Nuevo ingreso
 	              </button>
 	            )}
-	            {tab === "notas" && hasPermission("notas_credito.crear") && (
+	            {tab === "notas" && !mostrarEliminadas.notas && hasPermission("notas_credito.crear") && (
 	              <button
 	                onClick={() => { setNotaFormItem(null); setShowNotaForm(true); }}
 	                className="flex items-center gap-2 px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white text-sm rounded-lg transition-all font-body whitespace-nowrap"
@@ -1466,7 +1495,7 @@ export default function VentasPage() {
                                   <Wallet className="w-3.5 h-3.5" />
                                 </button>
                               )}
-                              {p.estado === "aprobado" && hasPermission("presupuestos.editar") && (
+                              {!mostrarEliminadas.presupuestos && !p.eliminada && p.estado === "aprobado" && hasPermission("presupuestos.editar") && (
                                 <button
                                   onClick={() => setPresFacturarItem(p)}
                                   title="Facturar/Vincular"
@@ -1475,7 +1504,7 @@ export default function VentasPage() {
                                   <Receipt className="w-3.5 h-3.5" />
                                 </button>
                               )}
-                              {hasPermission("presupuestos.eliminar") && (
+                              {!mostrarEliminadas.presupuestos && hasPermission("presupuestos.eliminar") && (
                                 <button
                                   onClick={() => deletePresupuesto(p.id)}
                                   title="Eliminar"
@@ -1502,7 +1531,7 @@ export default function VentasPage() {
             {/* ── Barra de acciones bulk ── */}
             <div className="flex items-center justify-between mb-3">
               <span className="text-slate-500 text-xs font-body">{filteredFac.length} factura{filteredFac.length !== 1 ? "s" : ""}</span>
-              {selectedFacIds.size > 0 && hasPermission("facturas.editar") && (
+              {!mostrarEliminadas.facturas && selectedFacIds.size > 0 && hasPermission("facturas.editar") && (
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-slate-400">{selectedFacIds.size} seleccionada{selectedFacIds.size !== 1 ? "s" : ""}</span>
                   <button
@@ -1521,7 +1550,7 @@ export default function VentasPage() {
               <div className="text-center py-12 text-slate-500 font-body">
                 <Receipt className="w-10 h-10 mx-auto mb-2 opacity-30" />
                 <p>Sin facturas para este período</p>
-                {hasPermission("facturas.crear") && (
+                {!mostrarEliminadas.facturas && hasPermission("facturas.crear") && (
                   <button onClick={() => { setFacFormItem(null); setShowFacForm(true); }}
                     className="mt-3 text-amber-400 hover:text-amber-300 text-sm">+ Nueva factura</button>
                 )}
@@ -1531,10 +1560,10 @@ export default function VentasPage() {
                 <table className="w-full text-sm font-body">
                   <thead>
                     <tr className="border-b border-white/10 bg-white/3">
-                      {hasPermission("facturas.editar") && (
+                      {!mostrarEliminadas.facturas && hasPermission("facturas.editar") && (
                         <th className="pl-4 py-3 w-8">
                           {(() => {
-                            const pagables = filteredFac.filter(f => f.estado === "pendiente" || f.estado === "parcial");
+                            const pagables = filteredFac.filter(f => !f.eliminada && (f.estado === "pendiente" || f.estado === "parcial"));
                             const allSelected = pagables.length > 0 && pagables.every(f => selectedFacIds.has(f.id));
                             return (
                               <input type="checkbox" checked={allSelected}
@@ -1566,9 +1595,9 @@ export default function VentasPage() {
                         onClick={() => openFacDoc(f.id)}
                         data-testid={`fact-row-${f.id}`}
                         className={`border-b border-white/5 hover:bg-white/3 cursor-pointer transition-colors ${f.estado === "anulada" ? "opacity-50" : ""} ${selectedFacIds.has(f.id) ? "bg-emerald-500/5" : ""}`}>
-                        {hasPermission("facturas.editar") && (
+                        {!mostrarEliminadas.facturas && hasPermission("facturas.editar") && (
                           <td className="pl-4 py-3" onClick={e => e.stopPropagation()}>
-                            {(f.estado === "pendiente" || f.estado === "parcial") && (
+                            {!f.eliminada && (f.estado === "pendiente" || f.estado === "parcial") && (
                               <input type="checkbox"
                                 checked={selectedFacIds.has(f.id)}
                                 onChange={() => setSelectedFacIds(prev => {
@@ -1639,7 +1668,7 @@ export default function VentasPage() {
                         <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                           <div className="flex items-center justify-end gap-1">
                             {/* Pagar / Registrar pago */}
-                            {(f.estado === "pendiente" || f.estado === "parcial") && hasPermission("facturas.editar") && (
+                            {!mostrarEliminadas.facturas && !f.eliminada && (f.estado === "pendiente" || f.estado === "parcial") && hasPermission("facturas.editar") && (
                               f.forma_pago === "credito" ? (
                                 <button onClick={() => openPagoParcial(f)} title="Registrar pago"
                                   className="text-xs bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-600/30 px-2 py-1 rounded-lg transition-all">
@@ -1655,14 +1684,14 @@ export default function VentasPage() {
                             {/* Deshacer pago — deshabilitado, para corregir eliminar y recrear */}
                             {/* Editar factura — deshabilitado, para corregir eliminar y recrear */}
                             {/* Anular */}
-                            {f.estado !== "anulada" && hasPermission("facturas.anular") && (
+                            {!mostrarEliminadas.facturas && f.estado !== "anulada" && hasPermission("facturas.anular") && (
                               <button onClick={() => handleAnularFac(f)} title="Anular"
                                 className="p-1.5 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-amber-500/10 transition-all">
                                 <AlertCircle className="w-3.5 h-3.5" />
                               </button>
                             )}
                             {/* Eliminar */}
-                            {hasPermission("facturas.eliminar") && (
+                            {!mostrarEliminadas.facturas && hasPermission("facturas.eliminar") && (
                               <button onClick={() => handleDeleteFac(f)} title="Eliminar"
                                 className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-all">
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1728,14 +1757,16 @@ export default function VentasPage() {
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-2">
                             {/* editar ingreso deshabilitado — para corregir eliminar y recrear */}
-                            <button onClick={async () => {
-                              if (!window.confirm("¿Eliminar este ingreso?")) return;
-                              const res = await fetch(`${API}/admin/ingresos-varios/${i.id}`, { method: "DELETE", headers });
-                              if (res.ok) { toast.success("Ingreso eliminado"); fetchAll(); }
-                              else toast.error("Error al eliminar");
-                            }} className="text-slate-400 hover:text-red-400 transition-colors" title="Eliminar">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            {!mostrarEliminadas.ingresos && !i.eliminada && (
+                              <button onClick={async () => {
+                                if (!window.confirm("¿Eliminar este ingreso?")) return;
+                                const res = await fetch(`${API}/admin/ingresos-varios/${i.id}`, { method: "DELETE", headers });
+                                if (res.ok) { toast.success("Ingreso eliminado"); fetchAll(); }
+                                else toast.error("Error al eliminar");
+                              }} className="text-slate-400 hover:text-red-400 transition-colors" title="Eliminar">
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1855,7 +1886,7 @@ export default function VentasPage() {
 	                        <td className="px-4 py-3 text-right">
 	                          <div className="flex items-center justify-end gap-2">
 	                            {/* editar nota crédito deshabilitado — para corregir eliminar y recrear */}
-	                            {hasPermission("notas_credito.eliminar") && (
+	                            {!mostrarEliminadas.notas && hasPermission("notas_credito.eliminar") && (
 	                              <button onClick={async () => {
 	                                if (!window.confirm("¿Eliminar esta nota de crédito?")) return;
 	                                const res = await fetch(`${API}/admin/notas-credito/${n.id}`, { method: "DELETE", headers });
@@ -1895,10 +1926,10 @@ export default function VentasPage() {
           onDuplicate={() => duplicatePresupuesto(presDoc)}
           onCostos={() => { setPresDoc(null); setPresCostosItem(presDoc); }}
           onEstadoChange={(nuevo) => { cambiarEstadoPresupuesto(presDoc.id, nuevo); setPresDoc(p => ({ ...p, estado: nuevo })); }}
-          canEdit={hasPermission("presupuestos.editar")}
-          canDelete={hasPermission("presupuestos.eliminar")}
-          canCreate={hasPermission("presupuestos.crear")}
-          canCostos={hasPermission("costos.editar")}
+          canEdit={!presDoc.eliminada && hasPermission("presupuestos.editar")}
+          canDelete={!presDoc.eliminada && hasPermission("presupuestos.eliminar")}
+          canCreate={!presDoc.eliminada && hasPermission("presupuestos.crear")}
+          canCostos={!presDoc.eliminada && hasPermission("costos.editar")}
           formatNumber={formatNumber}
           getCurrencySymbol={getCurrencySymbol}
           PRESUP_ESTADOS={PRESUP_ESTADOS}
@@ -2244,12 +2275,12 @@ export default function VentasPage() {
             else { openPagoContado(facDoc); setFacDoc(null); }
           }}
           onDeshacer={() => { handleDeshacerFac(facDoc); setFacDoc(null); }}
-          canEdit={hasPermission("facturas.editar")}
-          canDelete={hasPermission("facturas.eliminar")}
+          canEdit={!facDoc.eliminada && hasPermission("facturas.editar")}
+          canDelete={!facDoc.eliminada && hasPermission("facturas.eliminar")}
           onReciboClick={(r) => setReciboDoc(r)}
           onPresClick={(presId) => { setFacDoc(null); openPresDoc(presId); }}
-          onEditPago={(fac, pago) => setEditPagoCtx({ factura: fac, pago })}
-          onDeletePago={handleDeletePago}
+          onEditPago={!facDoc.eliminada ? (fac, pago) => setEditPagoCtx({ factura: fac, pago }) : null}
+          onDeletePago={!facDoc.eliminada ? handleDeletePago : null}
           cuentasDisp={cuentasDisp}
         />
       )}

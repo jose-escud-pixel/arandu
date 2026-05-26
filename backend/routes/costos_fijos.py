@@ -72,16 +72,24 @@ def _monto_vigente(costo: dict, periodo: str) -> dict:
     return vigente
 
 
-@router.get("/admin/costos-fijos", response_model=List[CostoFijoResponse])
-async def get_costos_fijos(logo_tipo: Optional[str] = None, user: dict = Depends(require_authenticated)):
+@router.get("/admin/costos-fijos")
+async def get_costos_fijos(
+    logo_tipo: Optional[str] = None,
+    incluir_eliminadas: Optional[bool] = False,
+    user: dict = Depends(require_authenticated)
+):
     if not has_permission(user, "costos_fijos.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso para ver costos fijos")
+    if incluir_eliminadas and user.get("role") not in ("admin", "gerente", "super_admin") and not has_permission(user, "costos_fijos.eliminar"):
+        raise HTTPException(status_code=403, detail="Sin permiso para ver gastos eliminados")
     query = {}
     logo_q: dict = {}
     await apply_logo_filter(logo_q, user, logo_tipo)
     if is_forbidden(logo_q):
         return []
     query.update(logo_q)
+    if not incluir_eliminadas:
+        query["eliminada"] = {"$ne": True}
     costos = await db.costos_fijos.find(query, {"_id": 0}).sort("nombre", 1).to_list(500)
     return costos
 
@@ -102,6 +110,7 @@ async def get_pagos_costos_fijos(
     if is_forbidden(logo_q):
         return []
     costo_query.update(logo_q)
+    costo_query["eliminada"] = {"$ne": True}
     costos = await db.costos_fijos.find(costo_query, {"_id": 0, "id": 1, "nombre": 1, "logo_tipo": 1, "moneda": 1, "tipo_cambio": 1}).to_list(5000)
     costo_map = {c["id"]: c for c in costos}
     query = {"costo_fijo_id": {"$in": list(costo_map.keys())}}
@@ -216,10 +225,19 @@ async def toggle_costo_fijo(costo_id: str, user: dict = Depends(require_authenti
 async def delete_costo_fijo(costo_id: str, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "costos_fijos.eliminar"):
         raise HTTPException(status_code=403, detail="Sin permiso para eliminar costos fijos")
-    result = await db.costos_fijos.delete_one({"id": costo_id})
-    if result.deleted_count == 0:
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db.costos_fijos.update_one(
+        {"id": costo_id},
+        {"$set": {
+            "eliminada": True,
+            "eliminada_at": now,
+            "eliminada_por": user.get("name", user.get("id", "sistema")),
+            "eliminada_por_id": user.get("id"),
+            "activo": False,
+        }}
+    )
+    if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Costo fijo no encontrado")
-    await db.pagos_costos_fijos.delete_many({"costo_fijo_id": costo_id})
     return {"success": True}
 
 
@@ -229,7 +247,7 @@ async def get_vencimientos_periodo(periodo: str, logo_tipo: Optional[str] = None
     if not has_permission(user, "costos_fijos.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso para ver costos fijos")
 
-    query = {"activo": True}
+    query = {"activo": True, "eliminada": {"$ne": True}}
     logo_q: dict = {}
     await apply_logo_filter(logo_q, user, logo_tipo)
     if is_forbidden(logo_q):

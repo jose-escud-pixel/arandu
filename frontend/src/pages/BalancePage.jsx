@@ -33,6 +33,11 @@ function getMesActual() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
+function finDeMes(periodo) {
+  const [year, month] = periodo.split("-").map(Number);
+  return new Date(year, month, 0).toISOString().slice(0, 10);
+}
+
 function getAnioActual() {
   return new Date().getFullYear();
 }
@@ -149,10 +154,12 @@ export default function BalancePage() {
     try {
       const q = new URLSearchParams();
       if (activeEmpresaPropia?.slug) q.set("logo_tipo", activeEmpresaPropia.slug);
+      q.set("desde", `${periodo.slice(0, 4)}-01-01`);
+      q.set("hasta", finDeMes(periodo));
       const res = await fetch(`${API}/admin/cuentas-bancarias/saldos${q.toString() ? `?${q}` : ""}`, { headers });
       if (res.ok) setCuentasBancarias(await res.json());
     } catch { /* silent */ }
-  }, [activeEmpresaPropia]); // eslint-disable-line
+  }, [activeEmpresaPropia, periodo]); // eslint-disable-line
 
   const fetchConversiones = useCallback(async () => {
     try {

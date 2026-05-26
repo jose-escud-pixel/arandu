@@ -9,6 +9,7 @@ from config import db
 from auth import require_authenticated, has_permission, log_auditoria, get_logos_acceso, apply_logo_filter, is_forbidden
 from routes.cotizaciones import tipo_cambio_usd_sugerido
 from routes.plan_cuentas import resolver_plan_cuenta_operacion
+from routes.cuentas_bancarias import resolver_cuenta_id
 
 router = APIRouter()
 
@@ -118,6 +119,11 @@ def _estado_pago(compra: dict) -> str:
 def _fmt(compra: dict) -> dict:
     compra = {k: v for k, v in compra.items() if k != "_id"}
     compra["estado_pago"] = _estado_pago(compra)
+    if compra.get("solo_iva"):
+        compra["total_pagado"] = 0
+        compra["total_creditos"] = 0
+        compra["saldo_pendiente"] = 0
+        return compra
     pagos = compra.get("pagos", [])
     creditos = compra.get("creditos", [])
     total_pagado = sum(p.get("monto_pagado", 0) for p in pagos)
@@ -199,6 +205,8 @@ async def get_compras(
 ):
     if not has_permission(user, "compras.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso para ver compras")
+    if incluir_eliminadas and user.get("role") not in ("admin", "gerente", "super_admin") and not has_permission(user, "compras.eliminar"):
+        raise HTTPException(status_code=403, detail="Sin permiso para ver compras eliminadas")
 
     query = {}
     if not incluir_eliminadas:
@@ -440,9 +448,9 @@ async def create_compra(data: CompraCreate, user: dict = Depends(require_authent
         "fecha_vencimiento": fecha_vencimiento_plan if not data.solo_iva else data.fecha_vencimiento,
         "plan_cuenta_id": plan_cuenta.get("id") if plan_cuenta else None,
         "plan_cuenta_nombre": plan_cuenta.get("nombre") if plan_cuenta else None,
-        "fecha_pago": (data.fecha_pago or data.fecha) if data.tipo_pago == "contado" and data.cuenta_id else None,
-        "cuenta_id": data.cuenta_id if data.tipo_pago == "contado" and data.cuenta_id and not data.solo_iva else None,
-        "cuenta_nombre": data.cuenta_nombre if data.tipo_pago == "contado" and data.cuenta_id and not data.solo_iva else None,
+        "fecha_pago": None,
+        "cuenta_id": None,
+        "cuenta_nombre": None,
         "pagos": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "created_by": user.get("id"),
@@ -565,8 +573,6 @@ async def update_compra(compra_id: str, data: CompraUpdate, user: dict = Depends
         update_data["plan_cuenta_id"] = plan_cuenta.get("id")
         update_data["plan_cuenta_nombre"] = plan_cuenta.get("nombre")
         update_data["fecha_vencimiento"] = fecha_vencimiento_plan
-    if tipo_pago_final == "contado" and not update_data.get("fecha_pago") and not existing_compra.get("fecha_pago"):
-        update_data["fecha_pago"] = fecha_final
     if tipo_pago_final != "contado":
         update_data["fecha_pago"] = None
     if not solo_iva_final and "items" in update_data and "afecta_stock" in update_data and not has_permission(user, "compras.afectar_stock"):
@@ -632,16 +638,28 @@ async def registrar_pago_compra(compra_id: str, data: PagoCompraCreate, user: di
         raise HTTPException(status_code=404, detail="Compra no encontrada")
     if compra.get("solo_iva"):
         raise HTTPException(status_code=400, detail="Una compra Solo IVA no necesita pagos")
+    cuenta_id = await resolver_cuenta_id(
+        compra.get("logo_tipo", "arandujar"),
+        "PYG" if data.tipo_cambio else (data.moneda or compra.get("moneda", "PYG")),
+        data.cuenta_id,
+    )
+    if not cuenta_id:
+        raise HTTPException(status_code=400, detail="Seleccioná una cuenta bancaria para registrar el pago")
+    cuenta_nombre = data.cuenta_nombre
+    if not cuenta_nombre:
+        cuenta = await db.cuentas_bancarias.find_one({"id": cuenta_id}, {"_id": 0, "nombre": 1})
+        cuenta_nombre = cuenta.get("nombre") if cuenta else None
 
     pago = {
         "id": str(uuid.uuid4()),
         "monto_pagado": data.monto_pagado,
         "moneda": data.moneda,
         "tipo_cambio": data.tipo_cambio,
+        "monto_gs": (data.monto_pagado * data.tipo_cambio) if data.moneda == "USD" and data.tipo_cambio else None,
         "fecha_pago": data.fecha_pago,
         "notas": data.notas,
-        "cuenta_id": data.cuenta_id,
-        "cuenta_nombre": data.cuenta_nombre,
+        "cuenta_id": cuenta_id,
+        "cuenta_nombre": cuenta_nombre,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.compras.update_one({"id": compra_id}, {"$push": {"pagos": pago}})

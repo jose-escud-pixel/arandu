@@ -84,14 +84,19 @@ class IngresoResponse(BaseModel):
 async def get_ingresos_varios(
     logo_tipo: Optional[str] = None,
     mes: Optional[str] = None,   # YYYY-MM
+    incluir_eliminadas: Optional[bool] = False,
     user: dict = Depends(require_authenticated)
 ):
+    if incluir_eliminadas and user.get("role") not in ("admin", "gerente", "super_admin") and not has_permission(user, "ingresos_varios.eliminar"):
+        raise HTTPException(status_code=403, detail="Sin permiso para ver ingresos eliminados")
     query = {"categoria": {"$ne": "Pago IVA"}}
     logo_q: dict = {}
     await apply_logo_filter(logo_q, user, logo_tipo if logo_tipo and logo_tipo not in ("todas", "") else None)
     if is_forbidden(logo_q):
         return []
     query.update(logo_q)
+    if not incluir_eliminadas:
+        query["eliminada"] = {"$ne": True}
     if mes:
         query["fecha"] = {"$regex": f"^{mes}"}
 
@@ -214,5 +219,14 @@ async def delete_ingreso(
     if not existing:
         raise HTTPException(status_code=404, detail="Ingreso no encontrado")
 
-    await db.ingresos_varios.delete_one({"id": ingreso_id})
+    now = datetime.now(timezone.utc).isoformat()
+    await db.ingresos_varios.update_one(
+        {"id": ingreso_id},
+        {"$set": {
+            "eliminada": True,
+            "eliminada_at": now,
+            "eliminada_por": user.get("name", user.get("id", "sistema")),
+            "eliminada_por_id": user.get("id"),
+        }}
+    )
     return {"ok": True}

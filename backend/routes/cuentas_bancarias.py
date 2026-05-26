@@ -17,6 +17,7 @@ import uuid
 
 from config import db
 from auth import require_authenticated, has_permission, get_logos_acceso, apply_logo_filter, is_forbidden
+from routes.balance import _iva_factura_emitida, _norm_ruc, _norm_text, to_pyg
 
 router = APIRouter()
 
@@ -131,6 +132,7 @@ async def get_cuentas_bancarias(
 @router.get("/admin/cuentas-bancarias/saldos")
 async def get_saldos_cuentas(
     logo_tipo: Optional[str] = None,
+    desde: Optional[str] = None,
     hasta: Optional[str] = None,
     user: dict = Depends(require_authenticated),
 ):
@@ -151,6 +153,7 @@ async def get_saldos_cuentas(
 
     # Índices
     cid_set = {c["id"] for c in cuentas}
+    cuenta_moneda = {c["id"]: c.get("moneda", "PYG") for c in cuentas}
     fechas_ini: dict = {c["id"]: c.get("saldo_inicial_fecha") for c in cuentas}
 
     # Cuenta predeterminada por (logo_tipo, moneda) — fallback a la primera en lista
@@ -174,13 +177,28 @@ async def get_saldos_cuentas(
 
     def en_rango(cid, fp, use_fecha_ini=True):
         if not fp:
-            return True
+            return not desde and not hasta
         fp10 = fp[:10]
+        if desde and fp10 < desde:
+            return False
         if use_fecha_ini:
             fi = fechas_ini.get(cid)
             if fi and fp10 < fi:
                 return False
         return fp10 <= hasta_date
+
+    def to_float(value, default=0.0):
+        try:
+            return float(value if value is not None else default)
+        except (TypeError, ValueError):
+            return float(default)
+
+    def monto_real_movimiento(doc, monto_field="monto", moneda_default="PYG"):
+        moneda = doc.get("moneda") or moneda_default
+        tipo_cambio = to_float(doc.get("tipo_cambio"))
+        if moneda == "USD" and tipo_cambio > 0:
+            return "PYG", to_float(doc.get("monto_gs")) or (to_float(doc.get(monto_field)) * tipo_cambio)
+        return moneda, to_float(doc.get(monto_field))
 
     # Filtro de logo para colecciones de movimientos
     logos_acceso = await get_logos_acceso(user)
@@ -203,29 +221,81 @@ async def get_saldos_cuentas(
         saldos[cid] = si
         saldos_ini[cid] = si
 
+    empresas_retencion = await db.empresas.find(
+        {"aplica_retencion": True},
+        {"_id": 0, "id": 1, "razon_social": 1, "nombre": 1, "ruc": 1, "porcentaje_retencion": 1}
+    ).to_list(500)
+    retencion_map: dict = {}
+    for emp in empresas_retencion:
+        pct = emp.get("porcentaje_retencion") or 0
+        for key in (
+            f"id:{emp.get('id')}" if emp.get("id") else None,
+            f"ruc:{_norm_ruc(emp.get('ruc'))}" if emp.get("ruc") else None,
+            f"nombre:{_norm_text(emp.get('razon_social'))}" if emp.get("razon_social") else None,
+            f"nombre:{_norm_text(emp.get('nombre'))}" if emp.get("nombre") else None,
+        ):
+            if key:
+                retencion_map[key] = pct
+
+    def pct_retencion_factura(fac):
+        return (
+            retencion_map.get(f"id:{fac.get('empresa_id')}")
+            or retencion_map.get(f"ruc:{_norm_ruc(fac.get('ruc'))}")
+            or retencion_map.get(f"nombre:{_norm_text(fac.get('razon_social'))}")
+            or 0
+        )
+
+    def monto_cobro_factura(fac, monto, cid):
+        if cuenta_moneda.get(cid) != "PYG":
+            return to_float(monto)
+        moneda = fac.get("moneda", "PYG")
+        monto_pyg = to_pyg(monto or 0, moneda, fac.get("tipo_cambio"))
+        pct = pct_retencion_factura(fac)
+        if pct and monto:
+            retencion = _iva_factura_emitida(fac) * (pct / 100.0)
+            monto_pyg -= to_pyg(retencion, moneda, fac.get("tipo_cambio"))
+        return monto_pyg
+
     # ── INGRESOS: pagos de facturas ──────────────────────────────
     try:
         facturas = await db.facturas.find(
-            {**logo_filter, "eliminada": {"$ne": True}}, {"_id": 0, "pagos": 1, "logo_tipo": 1, "moneda": 1}
+            {**logo_filter, "tipo": "emitida", "estado": {"$in": ["pagada", "parcial"]}, "eliminada": {"$ne": True}},
+            {"_id": 0, "id": 1, "empresa_id": 1, "ruc": 1, "razon_social": 1, "numero": 1,
+             "estado": 1, "cuenta_id": 1, "pagos": 1, "logo_tipo": 1, "moneda": 1, "tipo_cambio": 1, "monto": 1,
+             "monto_pagado": 1, "fecha": 1, "fecha_pago": 1, "iva": 1, "tasa_iva": 1,
+             "conceptos": 1, "sin_factura": 1}
         ).to_list(10000)
         for fac in facturas:
             flogo = fac.get("logo_tipo", "")
-            fmoneda = fac.get("moneda", "PYG")
-            for p in (fac.get("pagos") or []):
+            pagos_fac = fac.get("pagos") or []
+            for p in pagos_fac:
                 tagged = p.get("cuenta_id")
-                cid = resolve(tagged, flogo, fmoneda)
+                moneda_real = "PYG" if p.get("tipo_cambio") else fac.get("moneda", "PYG")
+                cid = resolve(tagged, flogo, moneda_real)
                 if not cid:
                     continue
                 if not en_rango(cid, p.get("fecha") or "", use_fecha_ini=bool(tagged)):
                     continue
-                saldos[cid] += float(p.get("monto") or 0)
+                saldos[cid] += monto_cobro_factura(fac, p.get("monto") or 0, cid)
+
+            if pagos_fac:
+                continue
+            fecha_pago = fac.get("fecha_pago") or fac.get("fecha") or ""
+            tagged = fac.get("cuenta_id")
+            cid = resolve(tagged, flogo, fac.get("moneda", "PYG"))
+            if not cid:
+                continue
+            if not en_rango(cid, fecha_pago, use_fecha_ini=bool(tagged)):
+                continue
+            monto_base = fac.get("monto_pagado") if fac.get("estado") == "parcial" and fac.get("monto_pagado") is not None else fac.get("monto")
+            saldos[cid] += monto_cobro_factura(fac, monto_base or 0, cid)
     except Exception:
         pass
 
     # ── INGRESOS VARIOS ──────────────────────────────────────────
     try:
         ivs = await db.ingresos_varios.find(
-            logo_filter, {"_id": 0, "cuenta_id": 1, "monto": 1, "fecha": 1, "logo_tipo": 1, "moneda": 1}
+            {**logo_filter, "eliminada": {"$ne": True}}, {"_id": 0, "cuenta_id": 1, "monto": 1, "fecha": 1, "logo_tipo": 1, "moneda": 1}
         ).to_list(5000)
         for iv in ivs:
             tagged = iv.get("cuenta_id")
@@ -241,7 +311,7 @@ async def get_saldos_cuentas(
     # ── EGRESOS: pagos de IVA ───────────────────────────────────────
     try:
         pagos_iva = await db.pagos_iva.find(
-            logo_filter, {"_id": 0, "cuenta_id": 1, "monto": 1, "fecha_pago": 1, "logo_tipo": 1}
+            {**logo_filter, "eliminada": {"$ne": True}}, {"_id": 0, "cuenta_id": 1, "monto": 1, "fecha_pago": 1, "logo_tipo": 1}
         ).to_list(5000)
         for p in pagos_iva:
             tagged = p.get("cuenta_id")
@@ -257,41 +327,67 @@ async def get_saldos_cuentas(
     # ── EGRESOS: costos fijos ────────────────────────────────────
     try:
         pcf = await db.pagos_costos_fijos.find(
-            logo_filter, {"_id": 0, "cuenta_id": 1, "monto_pagado": 1, "fecha_pago": 1, "logo_tipo": 1}
+            {}, {"_id": 0, "costo_fijo_id": 1, "cuenta_id": 1, "monto_pagado": 1, "fecha_pago": 1, "logo_tipo": 1}
         ).to_list(5000)
+        cf_ids = list({p.get("costo_fijo_id") for p in pcf if p.get("costo_fijo_id")})
+        costos = await db.costos_fijos.find(
+            {**logo_filter, "id": {"$in": cf_ids}, "eliminada": {"$ne": True}},
+            {"_id": 0, "id": 1, "logo_tipo": 1, "moneda": 1, "tipo_cambio": 1}
+        ).to_list(5000) if cf_ids else []
+        costo_map = {c.get("id"): c for c in costos}
         for p in pcf:
+            costo = costo_map.get(p.get("costo_fijo_id"))
+            if not costo:
+                continue
             tagged = p.get("cuenta_id")
-            cid = resolve(tagged, p.get("logo_tipo", ""), "PYG")
+            moneda_real, monto_real = monto_real_movimiento(
+                {**p, "moneda": costo.get("moneda", "PYG"), "tipo_cambio": costo.get("tipo_cambio")},
+                "monto_pagado",
+                costo.get("moneda", "PYG"),
+            )
+            cid = resolve(tagged, costo.get("logo_tipo", ""), moneda_real)
             if not cid:
                 continue
             if not en_rango(cid, p.get("fecha_pago") or "", use_fecha_ini=bool(tagged)):
                 continue
-            saldos[cid] -= float(p.get("monto_pagado") or 0)
+            saldos[cid] -= monto_real
     except Exception:
         pass
 
-    # ── EGRESOS: compras ─────────────────────────────────────────
+    # ── EGRESOS: compras contado y pagos directos ────────────────
     try:
         compras = await db.compras.find(
-            {**logo_filter, "eliminada": {"$ne": True}}, {"_id": 0, "pagos": 1, "logo_tipo": 1, "moneda": 1}
+            {**logo_filter, "eliminada": {"$ne": True}},
+            {"_id": 0, "pagos": 1, "logo_tipo": 1, "moneda": 1, "tipo_cambio": 1,
+             "tipo_pago": 1, "solo_iva": 1, "monto_total": 1, "fecha": 1,
+             "fecha_pago": 1, "cuenta_id": 1, "cuenta_nombre": 1}
         ).to_list(5000)
         for comp in compras:
             clogo = comp.get("logo_tipo", "")
             cmoneda = comp.get("moneda", "PYG")
+            if (
+                not comp.get("solo_iva")
+                and (comp.get("tipo_pago") or "contado") == "contado"
+                and comp.get("cuenta_id")
+                and not (comp.get("pagos") or [])
+            ):
+                tagged = comp.get("cuenta_id")
+                moneda_real, monto_real = monto_real_movimiento(comp, "monto_total", cmoneda)
+                cid = resolve(tagged, clogo, moneda_real)
+                if cid and en_rango(cid, comp.get("fecha_pago") or comp.get("fecha") or "", use_fecha_ini=bool(tagged)):
+                    saldos[cid] -= monto_real
+
             for p in (comp.get("pagos") or []):
+                # Los pagos generados desde pagos_proveedores se descuentan desde
+                # esa colección para no duplicar el movimiento bancario.
+                if p.get("pago_proveedor_id"):
+                    continue
                 tagged = p.get("cuenta_id")
-                # Si el pago tiene tipo_cambio fue pagado en PYG aunque la compra sea en USD
-                tiene_tc = float(p.get("tipo_cambio") or 0) > 0
-                if tiene_tc:
-                    moneda_real = "PYG"
-                    monto_real = float(p.get("monto_gs") or 0) or (float(p.get("monto") or 0) * float(p.get("tipo_cambio") or 1))
-                else:
-                    moneda_real = p.get("moneda") or cmoneda
-                    monto_real = float(p.get("monto") or 0)
+                moneda_real, monto_real = monto_real_movimiento(p, "monto_pagado", cmoneda)
                 cid = resolve(tagged, clogo, moneda_real)
                 if not cid:
                     continue
-                if not en_rango(cid, p.get("fecha") or "", use_fecha_ini=bool(tagged)):
+                if not en_rango(cid, p.get("fecha_pago") or p.get("fecha") or "", use_fecha_ini=bool(tagged)):
                     continue
                 saldos[cid] -= monto_real
     except Exception:
@@ -300,7 +396,7 @@ async def get_saldos_cuentas(
     # ── EGRESOS: pagos a proveedores ─────────────────────────────
     try:
         pp = await db.pagos_proveedores.find(
-            logo_filter, {"_id": 0, "cuenta_id": 1, "monto": 1, "monto_gs": 1,
+            {**logo_filter, "eliminada": {"$ne": True}}, {"_id": 0, "cuenta_id": 1, "monto": 1, "monto_gs": 1,
                           "fecha": 1, "fecha_pago": 1, "logo_tipo": 1, "moneda": 1, "tipo_cambio": 1}
         ).to_list(5000)
         for p in pp:
@@ -318,6 +414,59 @@ async def get_saldos_cuentas(
                 continue
             fp = p.get("fecha_pago") or p.get("fecha") or ""
             if not en_rango(cid, fp, use_fecha_ini=bool(tagged)):
+                continue
+            saldos[cid] -= monto_real
+    except Exception:
+        pass
+
+    # ── EGRESOS: sueldos ─────────────────────────────────────────
+    try:
+        sueldos = await db.sueldos.find(
+            {}, {"_id": 0, "empleado_id": 1, "empleado_nombre": 1, "monto_pagado": 1,
+                 "moneda": 1, "tipo_cambio": 1, "fecha_pago": 1, "periodo": 1, "cuenta_id": 1}
+        ).to_list(10000)
+        emp_ids = list({s.get("empleado_id") for s in sueldos if s.get("empleado_id")})
+        empleados = await db.empleados.find(
+            {**logo_filter, "id": {"$in": emp_ids}}, {"_id": 0, "id": 1, "logo_tipo": 1}
+        ).to_list(5000) if emp_ids else []
+        emp_logo = {e.get("id"): e.get("logo_tipo", "") for e in empleados}
+        for sueldo in sueldos:
+            slogo = sueldo.get("logo_tipo") or emp_logo.get(sueldo.get("empleado_id"))
+            if not slogo:
+                continue
+            tagged = sueldo.get("cuenta_id")
+            moneda_real, monto_real = monto_real_movimiento(sueldo, "monto_pagado", sueldo.get("moneda", "PYG"))
+            cid = resolve(tagged, slogo, moneda_real)
+            if not cid:
+                continue
+            fp = sueldo.get("fecha_pago") or f"{sueldo.get('periodo', '')}-01"
+            if not en_rango(cid, fp, use_fecha_ini=bool(tagged)):
+                continue
+            saldos[cid] -= monto_real
+    except Exception:
+        pass
+
+    # ── EGRESOS: adelantos de sueldo ─────────────────────────────
+    try:
+        adelantos = await db.adelantos_sueldos.find(
+            {}, {"_id": 0, "empleado_id": 1, "monto": 1, "moneda": 1,
+                 "tipo_cambio": 1, "fecha": 1, "cuenta_id": 1}
+        ).to_list(10000)
+        emp_ids = list({a.get("empleado_id") for a in adelantos if a.get("empleado_id")})
+        empleados = await db.empleados.find(
+            {**logo_filter, "id": {"$in": emp_ids}}, {"_id": 0, "id": 1, "logo_tipo": 1}
+        ).to_list(5000) if emp_ids else []
+        emp_logo = {e.get("id"): e.get("logo_tipo", "") for e in empleados}
+        for adelanto in adelantos:
+            alogo = adelanto.get("logo_tipo") or emp_logo.get(adelanto.get("empleado_id"))
+            if not alogo:
+                continue
+            tagged = adelanto.get("cuenta_id")
+            moneda_real, monto_real = monto_real_movimiento(adelanto, "monto", adelanto.get("moneda", "PYG"))
+            cid = resolve(tagged, alogo, moneda_real)
+            if not cid:
+                continue
+            if not en_rango(cid, adelanto.get("fecha") or "", use_fecha_ini=bool(tagged)):
                 continue
             saldos[cid] -= monto_real
     except Exception:

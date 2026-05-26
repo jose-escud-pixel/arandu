@@ -110,13 +110,16 @@ async def _next_recibo_numero(logo_tipo: str) -> str:
         n += 1
     return f"REC-{n:04d}"
 
-@router.get("/admin/recibos", response_model=List[ReciboResponse])
+@router.get("/admin/recibos")
 async def get_recibos(
     logo_tipo: Optional[str] = None,
     mes: Optional[str] = None,
     factura_id: Optional[str] = None,
+    incluir_eliminadas: Optional[bool] = False,
     user: dict = Depends(require_authenticated)
 ):
+    if incluir_eliminadas and user.get("role") not in ("admin", "gerente", "super_admin") and not has_permission(user, "facturas.eliminar"):
+        raise HTTPException(status_code=403, detail="Sin permiso para ver recibos eliminados")
     query = {}
     logos_acceso = await get_logos_acceso(user)
     if logos_acceso is not None:
@@ -127,6 +130,8 @@ async def get_recibos(
         query["fecha_pago"] = {"$regex": f"^{mes}"}
     if factura_id:
         query["factura_id"] = factura_id
+    if not incluir_eliminadas:
+        query["eliminada"] = {"$ne": True}
     recibos = await db.recibos.find(query, {"_id": 0}).sort("fecha_pago", -1).to_list(2000)
     return recibos
 
@@ -177,7 +182,16 @@ async def delete_recibo(recibo_id: str, user: dict = Depends(require_authenticat
     r = await db.recibos.find_one({"id": recibo_id}, {"_id": 0})
     if not r:
         raise HTTPException(status_code=404, detail="Recibo no encontrado")
-    await db.recibos.delete_one({"id": recibo_id})
+    now = datetime.now(timezone.utc).isoformat()
+    await db.recibos.update_one(
+        {"id": recibo_id},
+        {"$set": {
+            "eliminada": True,
+            "eliminada_at": now,
+            "eliminada_por": user.get("name", user.get("id", "sistema")),
+            "eliminada_por_id": user.get("id"),
+        }}
+    )
     return {"ok": True}
 
 

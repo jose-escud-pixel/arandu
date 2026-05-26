@@ -191,10 +191,13 @@ async def get_pagos_proveedores(
     estado: Optional[str] = None,   # pendiente | pagado | vencido
     mes: Optional[str] = None,      # YYYY-MM
     anio: Optional[str] = None,     # YYYY
+    incluir_eliminadas: Optional[bool] = False,
     user: dict = Depends(require_authenticated)
 ):
     if not has_permission(user, "pagos_proveedores.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso")
+    if incluir_eliminadas and user.get("role") not in ("admin", "gerente", "super_admin") and not has_permission(user, "pagos_proveedores.eliminar"):
+        raise HTTPException(status_code=403, detail="Sin permiso para ver pagos eliminados")
 
     query = {}
     logo_q: dict = {}
@@ -202,6 +205,8 @@ async def get_pagos_proveedores(
     if is_forbidden(logo_q):
         return []
     query.update(logo_q)
+    if not incluir_eliminadas:
+        query["eliminada"] = {"$ne": True}
     if proveedor_id:
         query["proveedor_id"] = proveedor_id
     # Filtro por período (sobre fecha_pago para pagados, fecha_vencimiento para pendientes)
@@ -411,10 +416,19 @@ async def delete_pago_proveedor(pago_id: str, user: dict = Depends(require_authe
     if not existing:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
 
-    # Revertir los pagos aplicados a las compras antes de eliminar
+    # Revertir los pagos aplicados a las compras antes de ocultar el pago.
     await _revertir_pagos_compras(pago_id)
 
-    result = await db.pagos_proveedores.delete_one({"id": pago_id})
-    if result.deleted_count == 0:
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db.pagos_proveedores.update_one(
+        {"id": pago_id},
+        {"$set": {
+            "eliminada": True,
+            "eliminada_at": now,
+            "eliminada_por": user.get("name", user.get("id", "sistema")),
+            "eliminada_por_id": user.get("id"),
+        }}
+    )
+    if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Pago no encontrado")
     return {"success": True}

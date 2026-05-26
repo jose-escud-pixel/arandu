@@ -123,23 +123,28 @@ async def _revertir_credito_compra(doc: dict):
     )
 
 
-@router.get("/admin/notas-credito", response_model=List[NotaCreditoResponse])
+@router.get("/admin/notas-credito")
 async def get_notas_credito(
     logo_tipo: Optional[str] = None,
     mes: Optional[str] = None,
     anio: Optional[str] = None,
     tipo: Optional[str] = None,
     factura_id: Optional[str] = None,
+    incluir_eliminadas: Optional[bool] = False,
     user: dict = Depends(require_authenticated),
 ):
     if not has_permission(user, "notas_credito.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso")
+    if incluir_eliminadas and user.get("role") not in ("admin", "gerente", "super_admin") and not has_permission(user, "notas_credito.eliminar"):
+        raise HTTPException(status_code=403, detail="Sin permiso para ver notas eliminadas")
     query = {}
     logo_q: dict = {}
     await apply_logo_filter(logo_q, user, logo_tipo if logo_tipo and logo_tipo != "todas" else None)
     if is_forbidden(logo_q):
         return []
     query.update(logo_q)
+    if not incluir_eliminadas:
+        query["eliminada"] = {"$ne": True}
     if mes:
         query["fecha"] = {"$regex": f"^{mes}"}
     elif anio:
@@ -202,8 +207,17 @@ async def delete_nota_credito(nota_id: str, user: dict = Depends(require_authent
     if not has_permission(user, "notas_credito.eliminar"):
         raise HTTPException(status_code=403, detail="Sin permiso")
     existing = await db.notas_credito.find_one({"id": nota_id}, {"_id": 0})
-    result = await db.notas_credito.delete_one({"id": nota_id})
-    if result.deleted_count == 0:
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db.notas_credito.update_one(
+        {"id": nota_id},
+        {"$set": {
+            "eliminada": True,
+            "eliminada_at": now,
+            "eliminada_por": user.get("name", user.get("id", "sistema")),
+            "eliminada_por_id": user.get("id"),
+        }}
+    )
+    if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Nota de crédito no encontrada")
     if existing:
         await _revertir_credito_compra(existing)

@@ -158,10 +158,12 @@ async def create_presupuesto(data: PresupuestoCreate, user: dict = Depends(requi
     _normalize_presupuesto(response)
     return response
 
-@router.get("/admin/presupuestos", response_model=List[PresupuestoResponse])
-async def get_presupuestos(empresa_id: Optional[str] = None, estado: Optional[str] = None, logo_tipo: Optional[str] = None, mes: Optional[str] = None, anio: Optional[str] = None, user: dict = Depends(require_authenticated)):
+@router.get("/admin/presupuestos")
+async def get_presupuestos(empresa_id: Optional[str] = None, estado: Optional[str] = None, logo_tipo: Optional[str] = None, mes: Optional[str] = None, anio: Optional[str] = None, incluir_eliminadas: Optional[bool] = False, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "presupuestos.ver"):
         raise HTTPException(status_code=403, detail="No tiene permiso para ver presupuestos")
+    if incluir_eliminadas and user.get("role") not in ("admin", "gerente", "super_admin") and not has_permission(user, "presupuestos.eliminar"):
+        raise HTTPException(status_code=403, detail="Sin permiso para ver presupuestos eliminados")
     query = {}
     if empresa_id:
         if not can_access_empresa(user, empresa_id):
@@ -172,6 +174,8 @@ async def get_presupuestos(empresa_id: Optional[str] = None, estado: Optional[st
             return []
     if estado:
         query["estado"] = estado
+    if not incluir_eliminadas:
+        query["eliminada"] = {"$ne": True}
     # Filtro por período de tiempo
     if mes:
         # mes = "YYYY-MM" → filtra presupuestos cuya fecha empieza con ese mes
@@ -345,7 +349,16 @@ async def update_presupuesto(presupuesto_id: str, data: PresupuestoCreate, user:
 async def delete_presupuesto(presupuesto_id: str, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "presupuestos.eliminar"):
         raise HTTPException(status_code=403, detail="No tiene permiso para eliminar presupuestos")
-    result = await db.presupuestos.delete_one({"id": presupuesto_id})
-    if result.deleted_count == 0:
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db.presupuestos.update_one(
+        {"id": presupuesto_id},
+        {"$set": {
+            "eliminada": True,
+            "eliminada_at": now,
+            "eliminada_por": user.get("name", user.get("id", "sistema")),
+            "eliminada_por_id": user.get("id"),
+        }}
+    )
+    if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
     return {"success": True}

@@ -148,7 +148,7 @@ async def _pagos_iva_periodo(periodo: str, logo_tipo: Optional[str]) -> List[dic
         lt_query["logo_tipo"] = logo_tipo
 
     pagos = await db.pagos_iva.find(
-        {**lt_query, "periodo_iva": periodo},
+        {**lt_query, "periodo_iva": periodo, "eliminada": {"$ne": True}},
         {"_id": 0}
     ).sort("fecha_pago", -1).to_list(500)
 
@@ -188,6 +188,8 @@ async def get_superavit(
     """Devuelve el superávit inicial configurado (global o por empresa)."""
     if not has_permission(user, "balance.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso")
+    if incluir_eliminadas and user.get("role") not in ("admin", "gerente", "super_admin") and not has_permission(user, "balance.editar"):
+        raise HTTPException(status_code=403, detail="Sin permiso para ver pagos IVA eliminados")
     query = {}
     if logo_tipo and logo_tipo != "todas":
         query["logo_tipo"] = logo_tipo
@@ -451,12 +453,10 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
     # todavía no fue pagada.
     compras_bal = await db.compras.find(
         {"tipo_pago": {"$in": ["contado", None]},
+         "eliminada": {"$ne": True},
          "$or": [
              {"fecha_pago": {"$regex": mes_range(periodo)}},
-             {"$and": [
-                 {"$or": [{"fecha_pago": None}, {"fecha_pago": ""}, {"fecha_pago": {"$exists": False}}]},
-                 {"fecha": {"$regex": mes_range(periodo)}},
-             ]},
+             {"pagos": {"$elemMatch": {"fecha_pago": {"$regex": mes_range(periodo)}}}},
          ]},
         {"_id": 0}
     ).to_list(1000)
@@ -466,18 +466,34 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
         if logo_tipo and logo_tipo != "todas" and c.get("logo_tipo") != logo_tipo:
             continue
         moneda_c = c.get("moneda", "PYG")
+        proveedor = c.get("proveedor_nombre") or c.get("proveedor_id", "Compra")
+        pagos_compra = c.get("pagos") or []
+        if pagos_compra:
+            for pago in pagos_compra:
+                if pago.get("pago_proveedor_id"):
+                    continue
+                if not (pago.get("fecha_pago") or "").startswith(periodo):
+                    continue
+                moneda_pago = pago.get("moneda") or moneda_c
+                monto_pago = pago.get("monto_pagado") or pago.get("monto") or 0
+                monto_pyg_c = pago.get("monto_gs") or to_pyg(monto_pago, moneda_pago, pago.get("tipo_cambio") or c.get("tipo_cambio"))
+                if monto_pyg_c > 0 or moneda_pago == "PYG":
+                    egresos.append({"fuente": "Compras", "descripcion": proveedor, "monto_pyg": monto_pyg_c})
+                if moneda_pago == "USD":
+                    egresos_usd.append({"fuente": "Compras", "monto_usd": monto_pago})
+            continue
+
+        if not (c.get("fecha_pago") or "").startswith(periodo):
+            continue
         monto_compra = c.get("monto_total") or c.get("monto", 0)
         monto_pyg_c = to_pyg(monto_compra, moneda_c, c.get("tipo_cambio"))
-        proveedor = c.get("proveedor_nombre") or c.get("proveedor_id", "Compra")
-        # Solo agregamos egreso PYG si pudimos convertir (PYG real, o USD con TC).
-        # Una compra USD contado sin TC no afecta al total Gs (solo USD).
         if monto_pyg_c > 0 or moneda_c == "PYG":
             egresos.append({"fuente": "Compras", "descripcion": proveedor, "monto_pyg": monto_pyg_c})
         if moneda_c == "USD":
             egresos_usd.append({"fuente": "Compras", "monto_usd": monto_compra})
 
     notas_compra_bal = await db.notas_credito.find(
-        {"fecha": {"$regex": mes_range(periodo)}, "tipo": "compra", "estado": {"$ne": "anulada"}},
+        {"fecha": {"$regex": mes_range(periodo)}, "tipo": "compra", "estado": {"$ne": "anulada"}, "eliminada": {"$ne": True}},
         {"_id": 0}
     ).to_list(1000)
     for n in notas_compra_bal:
@@ -500,7 +516,7 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
     # duplicaba egresos en meses como marzo.
 
     # ── PAGOS A PROVEEDORES ──────────────────────────────────────
-    pagos_prov_query = {"fecha_pago": {"$regex": mes_range(periodo)}}
+    pagos_prov_query = {"fecha_pago": {"$regex": mes_range(periodo)}, "eliminada": {"$ne": True}}
     if logo_tipo and logo_tipo != "todas":
         pagos_prov_query["logo_tipo"] = logo_tipo
     pagos_prov = await db.pagos_proveedores.find(
@@ -545,7 +561,7 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
 
     # ── PAGOS DE IVA ───────────────────────────────────────────────
     pagos_iva_bal = await db.pagos_iva.find(
-        {**lt_query, "fecha_pago": {"$regex": mes_range(periodo)}},
+        {**lt_query, "fecha_pago": {"$regex": mes_range(periodo)}, "eliminada": {"$ne": True}},
         {"_id": 0}
     ).to_list(1000)
     for pago in pagos_iva_bal:
@@ -558,7 +574,7 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
 
     # ── INGRESOS VARIOS (sin factura) ────────────────────────────
     ingresos_varios = await db.ingresos_varios.find(
-        {**lt_query, "fecha": {"$regex": mes_range(periodo)}},
+        {**lt_query, "fecha": {"$regex": mes_range(periodo)}, "eliminada": {"$ne": True}},
         {"_id": 0}
     ).to_list(1000)
     for iv in ingresos_varios:
@@ -827,6 +843,7 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
 
     notas_venta = await db.notas_credito.find(
         {**lt_query, "estado": {"$ne": "anulada"}, "fecha": {"$regex": f"^{periodo}"},
+         "eliminada": {"$ne": True},
          "$or": [{"tipo": {"$exists": False}}, {"tipo": "venta"}]},
         {"_id": 0, "numero": 1, "razon_social": 1, "monto": 1, "monto_pyg": 1,
          "moneda": 1, "tipo_cambio": 1, "logo_tipo": 1}
@@ -845,7 +862,7 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
         })
 
     compras_f = await db.compras.find(
-        {**lt_query, "tiene_factura": True, "fecha": {"$regex": f"^{periodo}"}},
+        {**lt_query, "tiene_factura": True, "eliminada": {"$ne": True}, "fecha": {"$regex": f"^{periodo}"}},
         {"_id": 0, "numero_factura": 1, "proveedor_nombre": 1, "monto_total": 1,
          "items": 1,
          "monto_iva": 1, "tasa_iva": 1, "moneda": 1, "tipo_cambio": 1, "logo_tipo": 1}
@@ -872,7 +889,7 @@ async def _calc_iva_periodo(periodo: str, logo_tipo) -> dict:
         })
 
     notas_compra = await db.notas_credito.find(
-        {**lt_query, "tipo": "compra", "estado": {"$ne": "anulada"}, "fecha": {"$regex": f"^{periodo}"}},
+        {**lt_query, "tipo": "compra", "estado": {"$ne": "anulada"}, "eliminada": {"$ne": True}, "fecha": {"$regex": f"^{periodo}"}},
         {"_id": 0, "numero": 1, "proveedor_nombre": 1, "monto": 1, "monto_pyg": 1,
          "moneda": 1, "tipo_cambio": 1, "logo_tipo": 1}
     ).to_list(1000)
@@ -1053,8 +1070,8 @@ async def get_iva_resumen(
         fechas = []
         for collection, field, query_extra in [
             (db.facturas, "fecha", {"tipo": "emitida", "estado": {"$ne": "anulada"}, "eliminada": {"$ne": True}}),
-            (db.compras, "fecha", {"tiene_factura": True}),
-            (db.pagos_iva, "periodo_iva", {}),
+            (db.compras, "fecha", {"tiene_factura": True, "eliminada": {"$ne": True}}),
+            (db.pagos_iva, "periodo_iva", {"eliminada": {"$ne": True}}),
             (db.ingresos_varios, "fecha", {"categoria": "Pago IVA"}),
         ]:
             docs = await collection.find(
@@ -1090,6 +1107,30 @@ async def get_iva_resumen(
         "total_neto": sum(r["iva_neto"] for r in resultados),
         "total_pagado": sum(r["pagos_iva"] for r in resultados),
     }
+
+
+@router.get("/admin/balance/iva/pagos")
+async def get_pagos_iva(
+    logo_tipo: Optional[str] = None,
+    periodo: Optional[str] = None,
+    anio: Optional[str] = None,
+    incluir_eliminadas: Optional[bool] = False,
+    user: dict = Depends(require_authenticated),
+):
+    if not has_permission(user, "balance.ver"):
+        raise HTTPException(status_code=403, detail="Sin permiso")
+
+    query: dict = {}
+    if logo_tipo and logo_tipo != "todas":
+        query["logo_tipo"] = logo_tipo
+    if not incluir_eliminadas:
+        query["eliminada"] = {"$ne": True}
+    if periodo:
+        query["periodo_iva"] = periodo
+    elif anio:
+        query["periodo_iva"] = {"$regex": f"^{anio}"}
+
+    return await db.pagos_iva.find(query, {"_id": 0}).sort("fecha_pago", -1).to_list(1000)
 
 
 @router.post("/admin/balance/iva/pagos", status_code=201)
@@ -1175,7 +1216,16 @@ async def delete_pago_iva(
 ):
     if not has_permission(user, "balance.editar"):
         raise HTTPException(status_code=403, detail="Sin permiso")
-    result = await db.pagos_iva.delete_one({"id": pago_id})
-    if result.deleted_count == 0:
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db.pagos_iva.update_one(
+        {"id": pago_id},
+        {"$set": {
+            "eliminada": True,
+            "eliminada_at": now,
+            "eliminada_por": user.get("name", user.get("id", "sistema")),
+            "eliminada_por_id": user.get("id"),
+        }}
+    )
+    if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Pago IVA no encontrado")
     return {"success": True}

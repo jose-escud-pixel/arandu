@@ -89,7 +89,7 @@ const emptyCompra = () => ({
   afecta_stock: true,
   notas: "",
   fecha_vencimiento: "",
-  fecha_pago: hoy(),
+  fecha_pago: "",
 });
 
 const emptyItem = () => ({
@@ -458,6 +458,7 @@ const EgresosPage = () => {
   const { token, user, hasPermission, hasModule, activeEmpresaPropia } = useContext(AuthContext);
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = user?.role === "admin";
+  const canViewDeleted = (perm) => isAdmin || user?.role === "gerente" || user?.role === "super_admin" || hasPermission(perm);
   const puedeUsarStockProductos = hasModule?.("productos_stock");
   const puedeCambiarAfectaStockCompra = isAdmin || hasPermission("compras.afectar_stock");
 
@@ -525,6 +526,9 @@ const EgresosPage = () => {
   const [proveedores, setProveedores] = useState([]);
   const [loadingCompras, setLoadingCompras] = useState(false);
   const [mostrarEliminadasCompras, setMostrarEliminadasCompras] = useState(false);
+  const [mostrarEliminadasCostos, setMostrarEliminadasCostos] = useState(false);
+  const [mostrarEliminadasPagosProv, setMostrarEliminadasPagosProv] = useState(false);
+  const [mostrarEliminadasIva, setMostrarEliminadasIva] = useState(false);
   const [filtroMes, setFiltroMes] = useState(mesActual());
   const [filtroTipo, setFiltroTipo] = useState("mes"); // "todos" | "mes" | "anio"
   const [filtroAnio, setFiltroAnio] = useState(String(new Date().getFullYear()));
@@ -532,7 +536,7 @@ const EgresosPage = () => {
   const [editingCompra, setEditingCompra] = useState(null);
   const [compraForm, setCompraForm] = useState(emptyCompra());
   const [showPagoModal, setShowPagoModal] = useState(null); // compra object
-  const [pagoForm, setPagoForm] = useState({ monto_pagado: "", fecha_pago: hoy(), notas: "" });
+  const [pagoForm, setPagoForm] = useState({ monto_pagado: "", fecha_pago: hoy(), cuenta_id: "", cuenta_nombre: "", cuenta_moneda: "PYG", tipo_cambio: "", notas: "" });
   const [productos, setProductos] = useState([]);
   const [showProductoBrowser, setShowProductoBrowser] = useState(false);
   const [productoSearch, setProductoSearch] = useState("");
@@ -631,6 +635,13 @@ const EgresosPage = () => {
 
   // ── Cuentas bancarias ───────────────────────────────────────────────────────
   const [cuentasDisp, setCuentasDisp] = useState([]);
+  const cuentaPredeterminada = (moneda = "PYG", logo = activeEmpresaPropia?.slug) => (
+    cuentasDisp.find(c => c.activa !== false && c.moneda === moneda && c.es_predeterminada && (!logo || c.logo_tipo === logo))
+    || cuentasDisp.find(c => c.activa !== false && c.moneda === moneda && (!logo || c.logo_tipo === logo))
+    || cuentasDisp.find(c => c.activa !== false && c.es_predeterminada && (!logo || c.logo_tipo === logo))
+    || cuentasDisp.find(c => c.activa !== false && (!logo || c.logo_tipo === logo))
+    || cuentasDisp[0]
+  );
   const [planCuentas, setPlanCuentas] = useState([]);
 
   const addDays = (fecha, dias) => {
@@ -756,7 +767,7 @@ const EgresosPage = () => {
     if (tab === "sueldos") { fetchEmpleados(); fetchSueldosVenc(filtroMes); }
     if (tab === "proveedores-pagos") fetchTodosPagosProveedores();
     if (tab === "pago-iva") fetchIvaData();
-  }, [tab]);
+  }, [tab, mostrarEliminadasCompras, mostrarEliminadasCostos, mostrarEliminadasPagosProv, mostrarEliminadasIva]);
 
   useEffect(() => {
     const nuevo = searchParams.get("nuevo");
@@ -847,7 +858,10 @@ const EgresosPage = () => {
       if (activeEmpresaPropia?.slug) params.set("logo_tipo", activeEmpresaPropia.slug);
       if (mostrarEliminadasCompras) params.set("incluir_eliminadas", "true");
       const res = await fetch(`${API}/admin/compras?${params}`, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) setCompras(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setCompras(mostrarEliminadasCompras ? data.filter(c => c.eliminada) : data.filter(c => !c.eliminada));
+      }
     } catch (e) { toast.error("Error al cargar compras"); }
     finally { setLoadingCompras(false); }
   };
@@ -868,9 +882,14 @@ const EgresosPage = () => {
     setLoadingCostos(true);
     try {
       const logo = logoFilter || activeEmpresaPropia?.slug;
-      const q = logo ? `?logo_tipo=${logo}` : "";
-      const res = await fetch(`${API}/admin/costos-fijos${q}`, { headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) setCostos(await res.json());
+      const params = new URLSearchParams();
+      if (logo) params.set("logo_tipo", logo);
+      if (mostrarEliminadasCostos) params.set("incluir_eliminadas", "true");
+      const res = await fetch(`${API}/admin/costos-fijos?${params}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const data = await res.json();
+        setCostos(mostrarEliminadasCostos ? data.filter(c => c.eliminada) : data.filter(c => !c.eliminada));
+      }
     } catch (e) {}
     finally { setLoadingCostos(false); }
   };
@@ -1323,11 +1342,17 @@ const EgresosPage = () => {
       const logo = activeEmpresaPropia?.slug;
       const provParams = new URLSearchParams({ activo: "true" });
       if (logo) provParams.set("logo_tipo", logo);
+      const pagosParams = new URLSearchParams();
+      if (logo) pagosParams.set("logo_tipo", logo);
+      if (mostrarEliminadasPagosProv) pagosParams.set("incluir_eliminadas", "true");
       const [pagosRes, provRes] = await Promise.all([
-        fetch(`${API}/admin/pagos-proveedores${logo ? `?logo_tipo=${logo}` : ""}`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API}/admin/pagos-proveedores?${pagosParams}`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API}/admin/proveedores?${provParams}`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
-      if (pagosRes.ok) setTodosPagosProveedores(await pagosRes.json());
+      if (pagosRes.ok) {
+        const data = await pagosRes.json();
+        setTodosPagosProveedores(mostrarEliminadasPagosProv ? data.filter(p => p.eliminada) : data.filter(p => !p.eliminada));
+      }
       if (provRes.ok) setListaProveedores(await provRes.json());
     } catch (e) {}
     finally { setLoadingTodosPagos(false); }
@@ -1484,13 +1509,25 @@ const EgresosPage = () => {
 	    setLoadingIva(true);
 	    try {
 	      const logo = activeEmpresaPropia?.slug;
+	      const deletedParams = new URLSearchParams();
+	      if (logo) deletedParams.set("logo_tipo", logo);
+	      if (mostrarEliminadasIva) deletedParams.set("incluir_eliminadas", "true");
+	      if (mostrarEliminadasIva) {
+	        if (filtroTipo === "mes") deletedParams.set("periodo", periodoIva);
+	        if (filtroTipo === "anio") deletedParams.set("anio", filtroAnio);
+	        const pagosRes = await fetch(`${API}/admin/balance/iva/pagos?${deletedParams}`, { headers: { Authorization: `Bearer ${token}` } });
+	        if (pagosRes.ok) {
+	          const pagos = await pagosRes.json();
+	          setPagosIvaList(pagos.filter(p => p.eliminada));
+	        }
+	      }
 	      if (filtroTipo === "mes") {
 	        const ivaRes = await fetch(`${API}/admin/balance/iva?periodo=${periodoIva}${logo ? `&logo_tipo=${logo}` : ""}`, { headers: { Authorization: `Bearer ${token}` } });
 	        if (ivaRes.ok) {
 	          const iva = await ivaRes.json();
 	          setIvaBalance(iva);
 	          setIvaResumen(null);
-	          setPagosIvaList(iva.pagos_iva_detalle || []);
+	          if (!mostrarEliminadasIva) setPagosIvaList(iva.pagos_iva_detalle || []);
 	        }
 	      } else {
 	        const params = new URLSearchParams();
@@ -1502,7 +1539,7 @@ const EgresosPage = () => {
 	          const resumen = await res.json();
 	          setIvaResumen(resumen);
 	          setIvaBalance(null);
-	          setPagosIvaList((resumen.meses || []).flatMap(m => m.pagos_iva_detalle || []));
+	          if (!mostrarEliminadasIva) setPagosIvaList((resumen.meses || []).flatMap(m => m.pagos_iva_detalle || []));
 	        }
 	      }
 	    } catch (e) {}
@@ -1596,15 +1633,15 @@ const EgresosPage = () => {
 
   useEffect(() => {
     if (tab === "compras") { fetchCompras(); fetchNotasCompra(); }
-    if (tab === "costos") fetchVencimientos(filtroMes, filtroTipo, filtroAnio);
+    if (tab === "costos") { fetchCostos(); fetchVencimientos(filtroMes, filtroTipo, filtroAnio); }
     if (tab === "sueldos") fetchSueldosVenc(filtroMes);
     if (tab === "proveedores-pagos") fetchTodosPagosProveedores();
     if (tab === "pago-iva") fetchIvaData();
-  }, [filtroMes, filtroTipo, filtroAnio, activeEmpresaPropia?.slug]); // eslint-disable-line
+  }, [filtroMes, filtroTipo, filtroAnio, activeEmpresaPropia?.slug, mostrarEliminadasCompras, mostrarEliminadasCostos, mostrarEliminadasPagosProv, mostrarEliminadasIva]); // eslint-disable-line
 
   useEffect(() => {
     if (tab === "pago-iva") fetchIvaData();
-  }, [periodoIva]); // eslint-disable-line
+  }, [periodoIva, mostrarEliminadasIva]); // eslint-disable-line
 
   // ── Logos accesibles para selector ─────────────────────────────────────────
   const logosAccesibles = isAdmin
@@ -1639,15 +1676,15 @@ const EgresosPage = () => {
       monto_total: c.monto_total ?? "",
       moneda: c.moneda || "PYG",
       tipo_cambio: c.tipo_cambio || "",
-      cuenta_id: c.cuenta_id || "",
-      cuenta_nombre: c.cuenta_nombre || "",
+      cuenta_id: "",
+      cuenta_nombre: "",
       plan_cuenta_id: c.plan_cuenta_id || "",
       plan_cuenta_nombre: c.plan_cuenta_nombre || "",
       items: (c.items || []).map(it => ({ ...it, iva: it.iva ?? 10 })),
       afecta_stock: !!puedeUsarStockProductos && (puedeCambiarAfectaStockCompra ? c.afecta_stock !== false : true),
       notas: c.notas || "",
       fecha_vencimiento: c.fecha_vencimiento || "",
-      fecha_pago: c.fecha_pago || c.fecha || hoy(),
+      fecha_pago: "",
     });
     setEditingCompra(c);
     fetchProveedores(c.logo_tipo || activeEmpresaPropia?.slug || "arandujar");
@@ -1699,11 +1736,11 @@ const EgresosPage = () => {
       monto_iva: totalIvaAuto > 0 ? totalIvaAuto : null,
       tasa_iva: null, // ahora es por ítem
       afecta_stock: compraForm.solo_iva ? false : (!!puedeUsarStockProductos && (puedeCambiarAfectaStockCompra ? compraForm.afecta_stock : true)),
-      cuenta_id: compraForm.solo_iva ? null : compraForm.cuenta_id,
-      cuenta_nombre: compraForm.solo_iva ? null : compraForm.cuenta_nombre,
+      cuenta_id: null,
+      cuenta_nombre: null,
       plan_cuenta_id: compraForm.solo_iva ? null : compraForm.plan_cuenta_id,
       plan_cuenta_nombre: compraForm.solo_iva ? null : compraForm.plan_cuenta_nombre,
-      fecha_pago: compraForm.tipo_pago === "contado" && compraForm.cuenta_id ? (compraForm.fecha_pago || compraForm.fecha) : null,
+      fecha_pago: null,
       tipo_cambio: compraForm.tipo_cambio !== "" ? Number(compraForm.tipo_cambio) : null,
       numero_factura: compraForm.tiene_factura ? String(compraForm.numero_factura || "").trim() : null,
       nro_timbrado: compraForm.tiene_factura ? (compraForm.nro_timbrado || null) : null,
@@ -1823,16 +1860,25 @@ const EgresosPage = () => {
   const handlePagoCompra = async (e) => {
     e.preventDefault();
     if (!pagoForm.monto_pagado || !pagoForm.fecha_pago) { toast.error("Completá monto y fecha"); return; }
+    if (!pagoForm.cuenta_id) { toast.error("Seleccioná la cuenta bancaria"); return; }
+    const cuentaSeleccionada = cuentasDisp.find(c => c.id === pagoForm.cuenta_id);
+    const necesitaTc = showPagoModal?.moneda === "USD" && cuentaSeleccionada?.moneda === "PYG";
+    if (necesitaTc && !pagoForm.tipo_cambio) { toast.error("Ingresá el tipo de cambio"); return; }
     try {
       const res = await fetch(`${API}/admin/compras/${showPagoModal.id}/pagos`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...pagoForm, monto_pagado: Number(pagoForm.monto_pagado) }),
+        body: JSON.stringify({
+          ...pagoForm,
+          monto_pagado: Number(pagoForm.monto_pagado),
+          tipo_cambio: necesitaTc ? Number(pagoForm.tipo_cambio) : null,
+          cuenta_nombre: cuentaSeleccionada?.nombre || pagoForm.cuenta_nombre || null,
+        }),
       });
       if (res.ok) {
         toast.success("Pago registrado");
         setShowPagoModal(null);
-        setPagoForm({ monto_pagado: "", fecha_pago: hoy(), notas: "" });
+        setPagoForm({ monto_pagado: "", fecha_pago: hoy(), cuenta_id: "", cuenta_nombre: "", cuenta_moneda: "PYG", tipo_cambio: "", notas: "" });
         fetchCompras();
       }
     } catch (e) { toast.error("Error"); }
@@ -2105,7 +2151,7 @@ const EgresosPage = () => {
               });
               // Toggle ver eliminadas (dentro del render de compras)
               const toggleVerEliminadas = (
-                hasPermission("compras.eliminar") && (
+                canViewDeleted("compras.eliminar") && (
                   <button
                     onClick={() => setMostrarEliminadasCompras(v => !v)}
                     className={`px-3 py-1.5 rounded-lg text-xs border flex items-center gap-1.5 ${mostrarEliminadasCompras ? "bg-red-500/20 border-red-500/40 text-red-300" : "border-white/10 text-slate-400 hover:text-white"}`}
@@ -2119,15 +2165,18 @@ const EgresosPage = () => {
               }
               if (compras.length === 0) {
                 return (
-                  <div className="text-center py-16 bg-arandu-dark-light border border-white/5 rounded-xl">
-                    <ShoppingCart className="w-14 h-14 text-slate-700 mx-auto mb-3" />
-                    <p className="text-slate-400 mb-4">No hay compras registradas</p>
-                    {hasPermission("compras.crear") && (
-                      <Button onClick={openNewCompra} className="bg-orange-500 hover:bg-orange-600 text-white">
-                        <Plus className="w-4 h-4 mr-2" /> Registrar primera compra
-                      </Button>
-                    )}
-                  </div>
+                  <>
+                    <div className="flex justify-end mb-2">{toggleVerEliminadas}</div>
+                    <div className="text-center py-16 bg-arandu-dark-light border border-white/5 rounded-xl">
+                      <ShoppingCart className="w-14 h-14 text-slate-700 mx-auto mb-3" />
+                      <p className="text-slate-400 mb-4">{mostrarEliminadasCompras ? "No hay compras eliminadas" : "No hay compras registradas"}</p>
+                      {!mostrarEliminadasCompras && hasPermission("compras.crear") && (
+                        <Button onClick={openNewCompra} className="bg-orange-500 hover:bg-orange-600 text-white">
+                          <Plus className="w-4 h-4 mr-2" /> Registrar primera compra
+                        </Button>
+                      )}
+                    </div>
+                  </>
                 );
               }
               return (
@@ -2206,27 +2255,56 @@ const EgresosPage = () => {
                                 </td>
                                 <td className="px-4 py-3 text-right">
                                   <p className="text-white font-bold whitespace-nowrap">{fmt(c.monto_total, c.moneda)}</p>
-                                  {c.saldo_pendiente > 0 && (
+                                  {!c.solo_iva && c.saldo_pendiente > 0 && (
                                     <p className="text-red-400 text-xs">Debe {fmt(c.saldo_pendiente, c.moneda)}</p>
                                   )}
                                 </td>
                                 <td className="px-4 py-3 text-center">
-                                  <span className={`px-2 py-0.5 rounded-full text-xs border ${ESTADO_STYLES[c.estado_pago]}`}>
-                                    {ESTADO_LABELS[c.estado_pago]}
-                                  </span>
+                                  {(() => {
+                                    const pagoConFecha = (c.pagos || []).find(p => p.fecha_pago || p.fecha);
+                                    const fechaPago = c.fecha_pago || pagoConFecha?.fecha_pago || pagoConFecha?.fecha;
+                                    const fechaInferida = !!(c.fecha_pago_inferida || pagoConFecha?.fecha_pago_inferida);
+                                    return (
+                                      <div className="inline-flex flex-col items-center gap-1">
+                                        <span className={`px-2 py-0.5 rounded-full text-xs border ${ESTADO_STYLES[c.estado_pago]}`}>
+                                          {ESTADO_LABELS[c.estado_pago]}
+                                        </span>
+                                        {c.estado_pago === "pagado" && fechaPago && (
+                                          <span
+                                            className={`text-[11px] whitespace-nowrap ${fechaInferida ? "text-amber-400" : "text-emerald-400"}`}
+                                            title={fechaInferida ? "Fecha completada automáticamente desde la fecha de compra" : "Fecha de pago registrada"}
+                                          >
+                                            {fechaPago}
+                                          </span>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
                                 </td>
                                 <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                                   <div className="flex items-center justify-center gap-1">
-                                    {c.estado_pago !== "pagado" && !c.solo_iva && (
+                                    {!mostrarEliminadasCompras && !c.eliminada && c.estado_pago !== "pagado" && !c.solo_iva && (
                                       <button
-                                        onClick={() => { setShowPagoModal(c); setPagoForm({ monto_pagado: c.saldo_pendiente || "", fecha_pago: hoy(), notas: "" }); }}
+                                        onClick={() => {
+                                          const cuenta = cuentaPredeterminada(c.moneda || "PYG", c.logo_tipo || activeEmpresaPropia?.slug);
+                                          setShowPagoModal(c);
+                                          setPagoForm({
+                                            monto_pagado: c.saldo_pendiente || "",
+                                            fecha_pago: hoy(),
+                                            cuenta_id: cuenta?.id || "",
+                                            cuenta_nombre: cuenta?.nombre || "",
+                                            cuenta_moneda: cuenta?.moneda || "PYG",
+                                            tipo_cambio: "",
+                                            notas: "",
+                                          });
+                                        }}
                                         className="flex items-center gap-1 px-2 py-1 bg-emerald-600/30 text-emerald-300 rounded-lg hover:bg-emerald-600/50 transition-colors text-xs"
                                       >
                                         <Banknote className="w-3.5 h-3.5" /> Pagar
                                       </button>
                                     )}
 {/* editar compra deshabilitado */}
-                                    {hasPermission("compras.eliminar") && (
+                                    {!mostrarEliminadasCompras && !c.eliminada && hasPermission("compras.eliminar") && (
                                       <button onClick={() => handleDeleteCompra(c.id)}
                                         className="text-slate-400 hover:text-red-400 transition-colors p-1">
                                         <Trash2 className="w-4 h-4" />
@@ -2278,10 +2356,22 @@ const EgresosPage = () => {
 
         {/* ═══════════════ TAB: COSTOS FIJOS ══════════════════════════════════ */}
         {tab === "costos" && (() => {
-          const vencFiltradas = vencimientos.filter(v => {
+          const costosEliminados = costos
+            .filter(c => c.eliminada)
+            .map(c => ({ ...c, costo_id: c.id, estado: "eliminado" }));
+          const baseCostos = mostrarEliminadasCostos ? costosEliminados : vencimientos;
+          const vencFiltradas = baseCostos.filter(v => {
             const texto = [v.nombre, v.logo_tipo, LOGO_LABEL_MAP[v.logo_tipo]||"", v.categoria, String(v.monto||""), v.moneda, v.estado, v.frecuencia].filter(Boolean).join(" ");
             return matchChips(costosChips, costosInput, texto);
           });
+          const toggleEliminadasCostos = canViewDeleted("costos_fijos.eliminar") ? (
+            <button
+              onClick={() => setMostrarEliminadasCostos(v => !v)}
+              className={`px-3 py-2 rounded-lg text-xs border flex items-center gap-1.5 ${mostrarEliminadasCostos ? "bg-red-500/20 border-red-500/40 text-red-300" : "border-white/10 text-slate-400 hover:text-white"}`}
+            >
+              <Trash2 className="w-3.5 h-3.5" /> {mostrarEliminadasCostos ? "Ocultar eliminadas" : "Ver eliminadas"}
+            </button>
+          ) : null;
           return (
             <div>
               {/* Buscador + botón nuevo */}
@@ -2291,12 +2381,17 @@ const EgresosPage = () => {
                   inputVal={costosInput} setInputVal={setCostosInput}
                   placeholder="Buscar por nombre, categoría, empresa, monto, estado… (Enter para filtrar)"
                   accentColor="blue"
-                  actionButton={hasPermission("costos_fijos.crear") ? (
-                    <Button onClick={() => { setEditingCostoId(null); setCostoFormData({ logo_tipo: activeEmpresaPropia?.slug || "arandujar", nombre: "", descripcion: "", categoria: "", monto: "", moneda: "PYG", tipo_cambio: "", frecuencia: "mensual", dia_vencimiento: 1, fecha_inicio: new Date().toISOString().slice(0,10), fecha_fin: "", activo: true, notas: "" }); setShowCostoForm(true); }}
-                      className="bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap">
-                      <Plus className="w-4 h-4 mr-2" /> Nuevo Gasto
-                    </Button>
-                  ) : null}
+                  actionButton={(
+                    <div className="flex gap-2">
+                      {toggleEliminadasCostos}
+                      {!mostrarEliminadasCostos && hasPermission("costos_fijos.crear") && (
+                        <Button onClick={() => { setEditingCostoId(null); setCostoFormData({ logo_tipo: activeEmpresaPropia?.slug || "arandujar", nombre: "", descripcion: "", categoria: "", monto: "", moneda: "PYG", tipo_cambio: "", frecuencia: "mensual", dia_vencimiento: 1, fecha_inicio: new Date().toISOString().slice(0,10), fecha_fin: "", activo: true, notas: "" }); setShowCostoForm(true); }}
+                          className="bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap">
+                          <Plus className="w-4 h-4 mr-2" /> Nuevo Gasto
+                        </Button>
+                      )}
+                    </div>
+                  )}
                 />
               </div>
 
@@ -2309,7 +2404,7 @@ const EgresosPage = () => {
                   ) : vencFiltradas.length === 0 ? (
                     <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
                       <Calendar className="w-12 h-12 text-slate-700 mx-auto mb-2" />
-                      <p className="text-slate-400">Sin vencimientos para este período</p>
+                      <p className="text-slate-400">{mostrarEliminadasCostos ? "No hay gastos eliminados" : "Sin vencimientos para este período"}</p>
                     </div>
                   ) : (
                     <div className="bg-arandu-dark-light border border-white/5 rounded-xl overflow-hidden">
@@ -2343,7 +2438,11 @@ const EgresosPage = () => {
                               <td className="px-4 py-3 text-right font-bold text-white">{fmt(v.monto, v.moneda)}</td>
                               <td className="px-4 py-3 text-center text-slate-400 text-xs">{v.dia_vencimiento}</td>
                               <td className="px-4 py-3 text-center">
-                                {v.estado === "pagado" ? (
+                                {v.estado === "eliminado" ? (
+                                  <span className="flex items-center justify-center gap-1 text-red-300 text-xs font-semibold">
+                                    <Trash2 className="w-3.5 h-3.5" /> Eliminado
+                                  </span>
+                                ) : v.estado === "pagado" ? (
                                   <span className="flex items-center justify-center gap-1 text-emerald-400 text-xs font-semibold">
                                     <Check className="w-3.5 h-3.5" /> Pagado
                                   </span>
@@ -2361,7 +2460,7 @@ const EgresosPage = () => {
                                 )}
                               </td>
                               <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
-                                {v.estado === "pagado" ? (
+                                {v.estado === "eliminado" ? null : v.estado === "pagado" ? (
                                   hasPermission("costos_fijos.editar") && (
                                     <button onClick={() => handleAnularPagoCosto(v)}
                                       className="flex items-center gap-1 mx-auto px-3 py-1 bg-red-600/20 text-red-400 rounded-lg hover:bg-red-600/40 transition-colors text-xs">
@@ -2380,7 +2479,7 @@ const EgresosPage = () => {
                               <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                                 <div className="flex items-center justify-center gap-2">
 {/* editar costo fijo deshabilitado */}
-                                  {hasPermission("costos_fijos.eliminar") && (
+                                  {!mostrarEliminadasCostos && hasPermission("costos_fijos.eliminar") && (
                                     <button onClick={() => { const src=costos.find(c=>c.id===v.costo_id)||v; if(src) handleDeleteCosto({...src, id: src.id||src.costo_id}); }}
                                       className="text-slate-400 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4" /></button>
                                   )}
@@ -3034,10 +3133,18 @@ const EgresosPage = () => {
                     {filtroTipo === "anio" ? `IVA del año ${filtroAnio}` : "IVA de todo el tiempo"}
                   </span>
                 )}
-                {hasPermission("balance.editar") && (
+                {canViewDeleted("balance.editar") && (
+                  <button
+                    onClick={() => setMostrarEliminadasIva(v => !v)}
+                    className={`ml-auto flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-lg border transition-all ${mostrarEliminadasIva ? "bg-red-500/20 border-red-500/40 text-red-300" : "border-white/10 text-slate-400 hover:text-white hover:bg-white/5"}`}
+                  >
+                    <Trash2 className="w-4 h-4" /> {mostrarEliminadasIva ? "Ocultar eliminadas" : "Ver eliminadas"}
+                  </button>
+                )}
+                {!mostrarEliminadasIva && hasPermission("balance.editar") && (
                   <button
                     onClick={openNewPagoIva}
-                    className="ml-auto flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all"
+                    className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all"
                   >
                     <Plus className="w-4 h-4" /> Registrar pago IVA
                   </button>
@@ -3191,7 +3298,7 @@ const EgresosPage = () => {
                   </div>
                   {pagosIvaList.length === 0 ? (
                     <div className="text-center py-8 text-slate-500 text-sm">
-                      <p>No hay pagos IVA registrados para este período</p>
+                      <p>{mostrarEliminadasIva ? "No hay pagos IVA eliminados para este período" : "No hay pagos IVA registrados para este período"}</p>
                       {ivaBalance?.iva_neto > 0 && (
                         <p className="text-amber-500 text-xs mt-1">Tenés {fmtPYG(ivaBalance.iva_neto)} a pagar a la SET</p>
                       )}
@@ -3202,9 +3309,10 @@ const EgresosPage = () => {
 	                        const texto = [pago.descripcion, pago.fecha_pago, pago.periodo_iva, pago.cuenta_nombre, String(Math.abs(pago.monto)||""), pago.notas].filter(Boolean).join(" ");
 	                        return matchChips(ivaChips, ivaInput, texto);
 	                      }).map(pago => (
-	                        <div key={pago.id} className="flex items-center justify-between gap-3 px-4 py-3">
+	                        <div key={pago.id} className={`flex items-center justify-between gap-3 px-4 py-3 ${pago.eliminada ? "bg-red-900/10" : ""}`}>
 	                          <div>
 	                            <p className="text-white text-sm font-medium">{pago.descripcion}</p>
+	                            {pago.eliminada && <span className="inline-flex mt-1 text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30">Eliminado</span>}
 	                            <p className="text-slate-500 text-xs">{pago.fecha_pago} · IVA {pago.periodo_iva || periodoIva}</p>
 	                            {pago.cuenta_nombre && <p className="text-slate-600 text-xs">{pago.cuenta_nombre}</p>}
 	                          </div>
@@ -3213,7 +3321,7 @@ const EgresosPage = () => {
                               <p className="text-red-300 font-heading font-semibold">{fmtPYG(Math.abs(pago.monto))}</p>
                               {pago.notas && <p className="text-slate-500 text-xs">{pago.notas}</p>}
                             </div>
-                            {hasPermission("balance.editar") && (
+                            {!mostrarEliminadasIva && hasPermission("balance.editar") && (
                               <div className="flex gap-1">
                                 {/* editar pago IVA deshabilitado — para corregir, eliminar y recrear */}
                                 <button onClick={() => handleDeletePagoIva(pago.id)} className="p-1.5 text-slate-400 hover:text-red-300" title="Eliminar pago IVA">
@@ -3317,19 +3425,31 @@ const EgresosPage = () => {
                 inputVal={pagoProvInput} setInputVal={setPagoProvInput}
                 placeholder="Buscar por proveedor, concepto, monto, fecha, pagado, pendiente, vencido… (Enter para agregar filtro)"
                 accentColor="violet"
-                actionButton={hasPermission("pagos_proveedores.crear") ? (
-                  <button
-                    onClick={() => {
-                      setPagoProvForm(emptyPagoProvForm());
-                      setEditingPagoProv(null);
-                      setComprasProvList([]);
-                      setShowPagoProvForm(true);
-                    }}
-                    className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all whitespace-nowrap"
-                  >
-                    <Plus className="w-4 h-4" /> Nuevo pago
-                  </button>
-                ) : null}
+                actionButton={(
+                  <div className="flex gap-2">
+                    {canViewDeleted("pagos_proveedores.eliminar") && (
+                      <button
+                        onClick={() => setMostrarEliminadasPagosProv(v => !v)}
+                        className={`px-3 py-2 rounded-lg text-xs border flex items-center gap-1.5 ${mostrarEliminadasPagosProv ? "bg-red-500/20 border-red-500/40 text-red-300" : "border-white/10 text-slate-400 hover:text-white"}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> {mostrarEliminadasPagosProv ? "Ocultar eliminadas" : "Ver eliminadas"}
+                      </button>
+                    )}
+                    {!mostrarEliminadasPagosProv && hasPermission("pagos_proveedores.crear") && (
+                      <button
+                        onClick={() => {
+                          setPagoProvForm(emptyPagoProvForm());
+                          setEditingPagoProv(null);
+                          setComprasProvList([]);
+                          setShowPagoProvForm(true);
+                        }}
+                        className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all whitespace-nowrap"
+                      >
+                        <Plus className="w-4 h-4" /> Nuevo pago
+                      </button>
+                    )}
+                  </div>
+                )}
               />
             </div>
 
@@ -3355,10 +3475,10 @@ const EgresosPage = () => {
                       <Wallet className="w-14 h-14 text-slate-700 mx-auto mb-3" />
                       <p className="text-slate-400 mb-2">
                         {todosPagosProveedores.length === 0
-                          ? "No hay pagos a proveedores registrados"
+                          ? (mostrarEliminadasPagosProv ? "No hay pagos a proveedores eliminados" : "No hay pagos a proveedores registrados")
                           : `No hay pagos en este período (${filtroTipo === "mes" ? mesLabel(filtroMes) : filtroTipo === "anio" ? filtroAnio : "todo el tiempo"})`}
                       </p>
-                      {hasPermission("pagos_proveedores.crear") && todosPagosProveedores.length === 0 && (
+                      {!mostrarEliminadasPagosProv && hasPermission("pagos_proveedores.crear") && todosPagosProveedores.length === 0 && (
                         <button onClick={() => setShowPagoProvForm(true)} className="text-sm text-violet-400 hover:underline">
                           Registrar primer pago
                         </button>
@@ -3387,7 +3507,7 @@ const EgresosPage = () => {
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
                         onClick={() => setSelectedPagoView(pago)}
-                        className="bg-arandu-dark-light border border-white/5 rounded-xl p-4 hover:border-violet-500/40 hover:bg-white/[0.03] cursor-pointer transition-all"
+                        className={`bg-arandu-dark-light border rounded-xl p-4 hover:bg-white/[0.03] cursor-pointer transition-all ${pago.eliminada ? "border-red-500/20 bg-red-900/10" : "border-white/5 hover:border-violet-500/40"}`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -3396,6 +3516,7 @@ const EgresosPage = () => {
                             </div>
                             <div className="min-w-0">
                               <p className="text-white font-medium truncate">{pago.proveedor_nombre}</p>
+                              {pago.eliminada && <span className="inline-flex mt-1 text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30">Eliminado</span>}
                               <p className="text-slate-400 text-sm truncate">{pago.concepto}</p>
                               <p className="text-slate-600 text-xs mt-0.5">
                                 Vence: {pago.fecha_vencimiento}
@@ -3412,7 +3533,7 @@ const EgresosPage = () => {
                             </div>
                             <div className="flex flex-col gap-1" onClick={e => e.stopPropagation()}>
 {/* editar pago proveedor deshabilitado */}
-                              {hasPermission("pagos_proveedores.eliminar") && (
+                              {!mostrarEliminadasPagosProv && hasPermission("pagos_proveedores.eliminar") && (
                                 <button
                                   onClick={() => handleDeletePagoProv(pago.id)}
                                   className="text-slate-500 hover:text-red-400 transition-colors"
@@ -3421,7 +3542,7 @@ const EgresosPage = () => {
                                   <Trash2 className="w-4 h-4" />
                                 </button>
                               )}
-                              {(pago.estado === "pendiente" || pago.estado === "vencido") && (
+                              {!mostrarEliminadasPagosProv && (pago.estado === "pendiente" || pago.estado === "vencido") && (
                                 <button
                                   onClick={() => handleMarcarPagado(pago.id)}
                                   className="text-slate-500 hover:text-emerald-400 transition-colors"
@@ -3880,7 +4001,7 @@ const EgresosPage = () => {
                         onClick={() => setCompraForm(p => ({
                           ...p,
                           tipo_pago: tipo,
-                          fecha_pago: tipo === "contado" ? (p.fecha_pago || p.fecha) : "",
+                          fecha_pago: "",
                           plan_cuenta_id: "",
                           plan_cuenta_nombre: "",
                           fecha_vencimiento: "",
@@ -3919,42 +4040,6 @@ const EgresosPage = () => {
                     </div>
                   </div>
                 )}
-
-                {/* Cuenta bancaria — pago inmediato opcional para contado */}
-                {compraForm.tipo_pago === "contado" && !compraForm.solo_iva && (
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div>
-                    <label className="text-slate-400 text-sm mb-1 block">Cuenta bancaria *</label>
-                    {cuentasDisp.length > 0 ? (
-                      <select
-                        value={compraForm.cuenta_id}
-                        onChange={e => {
-                          const c = cuentasDisp.find(c => c.id === e.target.value);
-                          setCompraForm(p => ({ ...p, cuenta_id: e.target.value, cuenta_nombre: c?.nombre || "" }));
-                        }}
-                        className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-orange-500/50"
-                      >
-                        <option value="">Seleccionar cuenta...</option>
-                        {cuentasDisp
-                          .filter(c => !compraForm.logo_tipo || c.logo_tipo === compraForm.logo_tipo || c.logo_tipo === "arandujar")
-                          .map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.moneda}){c.es_predeterminada ? " ★" : ""}</option>)}
-                      </select>
-                    ) : (
-                      <Input value={compraForm.cuenta_nombre}
-                        onChange={e => setCompraForm(p => ({ ...p, cuenta_nombre: e.target.value }))}
-                        className="bg-arandu-dark border-white/10 text-white" placeholder="Nombre de la cuenta" />
-                    )}
-                    </div>
-                    <div>
-                      <label className="text-slate-400 text-sm mb-1 block">Fecha de pago</label>
-                      <Input type="date" value={compraForm.fecha_pago}
-                        onChange={e => setCompraForm(p => ({ ...p, fecha_pago: e.target.value }))}
-                        className="bg-arandu-dark border-white/10 text-white" />
-                      <p className="text-slate-500 text-xs mt-1">Si no seleccionás banco/caja, queda pendiente en la cuenta contado.</p>
-                    </div>
-                  </div>
-                )}
-
 
                 {/* Factura */}
                 <div className="bg-arandu-dark rounded-lg p-3 border border-white/5">
@@ -4147,6 +4232,38 @@ const EgresosPage = () => {
                     onChange={e => setPagoForm(p => ({ ...p, fecha_pago: e.target.value }))}
                     className="bg-arandu-dark border-white/10 text-white" />
                 </div>
+                <div>
+                  <label className="text-slate-400 text-sm mb-1 block">Cuenta bancaria *</label>
+                  <select
+                    value={pagoForm.cuenta_id}
+                    onChange={e => {
+                      const c = cuentasDisp.find(c => c.id === e.target.value);
+                      setPagoForm(p => ({
+                        ...p,
+                        cuenta_id: e.target.value,
+                        cuenta_nombre: c?.nombre || "",
+                        cuenta_moneda: c?.moneda || "PYG",
+                        tipo_cambio: "",
+                      }));
+                    }}
+                    className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500/50"
+                  >
+                    <option value="">Seleccionar cuenta...</option>
+                    {cuentasDisp
+                      .filter(c => !showPagoModal?.logo_tipo || c.logo_tipo === showPagoModal.logo_tipo)
+                      .map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.moneda}){c.es_predeterminada ? " ★" : ""}</option>)}
+                  </select>
+                </div>
+                {showPagoModal?.moneda === "USD" && pagoForm.cuenta_moneda === "PYG" && (
+                  <div>
+                    <label className="text-slate-400 text-sm mb-1 block">Tipo de cambio *</label>
+                    <Input type="number" min="0" step="any"
+                      value={pagoForm.tipo_cambio}
+                      onChange={e => setPagoForm(p => ({ ...p, tipo_cambio: e.target.value }))}
+                      className="bg-arandu-dark border-white/10 text-white"
+                      placeholder="Gs por USD" />
+                  </div>
+                )}
                 <div>
                   <label className="text-slate-400 text-sm mb-1 block">Notas</label>
                   <Input value={pagoForm.notas}
@@ -4541,7 +4658,7 @@ const EgresosPage = () => {
               )}
 
               {/* Acción marcar pagado */}
-              {(selectedPagoView.estado === "pendiente" || selectedPagoView.estado === "vencido") && (
+              {!selectedPagoView.eliminada && (selectedPagoView.estado === "pendiente" || selectedPagoView.estado === "vencido") && (
                 <button
                   onClick={() => { handleMarcarPagado(selectedPagoView.id); setSelectedPagoView(null); }}
                   className="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-all flex items-center justify-center gap-2 mb-2"
@@ -4553,7 +4670,7 @@ const EgresosPage = () => {
               {/* Editar / Eliminar */}
               <div className="flex gap-2 mb-2">
 {/* editar pago proveedor deshabilitado */}
-                {hasPermission("pagos_proveedores.eliminar") && (
+                {!selectedPagoView.eliminada && hasPermission("pagos_proveedores.eliminar") && (
                   <button
                     onClick={() => handleDeletePagoProv(selectedPagoView.id)}
                     className="flex-1 py-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm hover:bg-red-500/20 transition-all flex items-center justify-center gap-2"
@@ -4729,6 +4846,14 @@ const EgresosPage = () => {
                   const cuentaNombre = selectedCompraView.cuenta_nombre
                     || (selectedCompraView.pagos || []).find(p => p.cuenta_nombre)?.cuenta_nombre;
                   const pagosConCuenta = (selectedCompraView.pagos || []).filter(p => p.cuenta_nombre);
+                  const fechasPago = [
+                    selectedCompraView.fecha_pago,
+                    ...pagosConCuenta.map(p => p.fecha_pago || p.fecha),
+                  ].filter(Boolean);
+                  const fechaInferida = !!(
+                    selectedCompraView.fecha_pago_inferida
+                    || pagosConCuenta.some(p => p.fecha_pago_inferida)
+                  );
                   if (!cuentaNombre) return null;
                   return (
                     <div className="bg-arandu-dark/60 rounded-xl p-3 col-span-2">
@@ -4736,6 +4861,12 @@ const EgresosPage = () => {
                         <Banknote className="w-3 h-3" /> Pagado desde
                       </p>
                       <p className="text-white text-sm font-medium">{cuentaNombre}</p>
+                      {fechasPago.length > 0 && (
+                        <p className={`${fechaInferida ? "text-amber-400" : "text-emerald-400"} text-xs mt-0.5`}>
+                          Fecha de pago: {fechasPago[0]}
+                          {fechaInferida ? " (completada automaticamente)" : ""}
+                        </p>
+                      )}
                       {pagosConCuenta.length > 1 && (
                         <p className="text-slate-500 text-xs mt-0.5">+ {pagosConCuenta.length - 1} pago{pagosConCuenta.length > 2 ? "s" : ""} más</p>
                       )}
@@ -4775,7 +4906,7 @@ const EgresosPage = () => {
                   </p>
                 )}
                 {selectedCompraView.monto_iva > 0 && (
-                  <p className="text-slate-500 text-xs mt-1">IVA incluido: {fmt(selectedCompraView.monto_iva)}</p>
+                  <p className="text-slate-500 text-xs mt-1">IVA incluido: {fmt(selectedCompraView.monto_iva, selectedCompraView.moneda)}</p>
                 )}
               </div>
 
@@ -4831,11 +4962,20 @@ const EgresosPage = () => {
               )}
 
               {/* Acciones */}
-              {selectedCompraView.estado_pago !== "pagado" && !selectedCompraView.solo_iva && (
+              {!selectedCompraView.eliminada && selectedCompraView.estado_pago !== "pagado" && !selectedCompraView.solo_iva && (
                 <button
                   onClick={() => {
+                    const cuenta = cuentaPredeterminada(selectedCompraView.moneda || "PYG", selectedCompraView.logo_tipo || activeEmpresaPropia?.slug);
                     setShowPagoModal(selectedCompraView);
-                    setPagoForm({ monto_pagado: selectedCompraView.saldo_pendiente || "", fecha_pago: hoy(), notas: "" });
+                    setPagoForm({
+                      monto_pagado: selectedCompraView.saldo_pendiente || "",
+                      fecha_pago: hoy(),
+                      cuenta_id: cuenta?.id || "",
+                      cuenta_nombre: cuenta?.nombre || "",
+                      cuenta_moneda: cuenta?.moneda || "PYG",
+                      tipo_cambio: "",
+                      notas: "",
+                    });
                     setSelectedCompraView(null);
                   }}
                   className="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium transition-all flex items-center justify-center gap-2 mb-2"
@@ -4846,7 +4986,7 @@ const EgresosPage = () => {
 
               <div className="flex gap-2 mb-2">
 {/* editar compra deshabilitado */}
-                {hasPermission("compras.eliminar") && (
+                {!selectedCompraView.eliminada && hasPermission("compras.eliminar") && (
                   <button
                     onClick={() => { handleDeleteCompra(selectedCompraView.id); setSelectedCompraView(null); }}
                     className="flex-1 py-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm hover:bg-red-500/20 transition-all flex items-center justify-center gap-2"
@@ -5043,7 +5183,7 @@ const EgresosPage = () => {
               )}
 
               {/* Acciones */}
-              {selectedCostoView.estado !== "pagado" && hasPermission("costos_fijos.editar") && (
+              {selectedCostoView.estado !== "eliminado" && selectedCostoView.estado !== "pagado" && hasPermission("costos_fijos.editar") && (
                 <button
                   onClick={() => {
                     setPagoCostoForm({ monto_pagado: selectedCostoView.monto, fecha_pago: hoy(), notas: "", tiene_factura: false, nro_factura: "", cuenta_id: "", cuenta_nombre: "" });
@@ -5056,7 +5196,7 @@ const EgresosPage = () => {
                   <Check className="w-4 h-4" /> Registrar pago
                 </button>
               )}
-              {selectedCostoView.estado === "pagado" && hasPermission("costos_fijos.editar") && (
+              {selectedCostoView.estado !== "eliminado" && selectedCostoView.estado === "pagado" && hasPermission("costos_fijos.editar") && (
                 <button
                   onClick={() => { handleAnularPagoCosto(selectedCostoView); setSelectedCostoView(null); }}
                   className="w-full py-2.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm hover:bg-red-500/20 transition-all flex items-center justify-center gap-2 mb-2"
@@ -5067,7 +5207,7 @@ const EgresosPage = () => {
 
               <div className="flex gap-2 mb-2">
 {/* editar costo fijo deshabilitado */}
-                {hasPermission("costos_fijos.eliminar") && (
+                {selectedCostoView.estado !== "eliminado" && hasPermission("costos_fijos.eliminar") && (
                   <button
                     onClick={() => {
                       const src = costos.find(c => c.id === selectedCostoView.costo_id) || selectedCostoView;

@@ -166,7 +166,7 @@ async def _reservar_numero_timbrado_si_corresponde(doc_data: dict):
             detail="No se pudo reservar el número por concurrencia. Actualizá el número sugerido e intentá de nuevo.",
         )
 
-@router.get("/admin/facturas", response_model=List[FacturaResponse])
+@router.get("/admin/facturas")
 async def get_facturas(
     logo_tipo: Optional[str] = None,
     tipo: Optional[str] = None,          # emitida | recibida
@@ -178,6 +178,8 @@ async def get_facturas(
 ):
     if not has_permission(user, "facturas.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso para ver facturas")
+    if incluir_eliminadas and user.get("role") not in ("admin", "gerente", "super_admin") and not has_permission(user, "facturas.eliminar"):
+        raise HTTPException(status_code=403, detail="Sin permiso para ver facturas eliminadas")
     query = {}
     logo_q: dict = {}
     await apply_logo_filter(logo_q, user, logo_tipo if logo_tipo and logo_tipo != "todas" else None)
