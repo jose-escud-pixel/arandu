@@ -16,6 +16,7 @@ export const EMPRESA_MODULOS = {
     desc: "Cuentas por cobrar y pagar para ventas/compras contado y crédito",
     permisos: ["plan_cuentas"],
     obligatorio: true,
+    acciones: ["ver", "crear", "editar", "eliminar", "asignar_cuentas"],
   },
   ventas_base: {
     label: "Ventas base",
@@ -71,6 +72,7 @@ export const EMPRESA_MODULOS = {
     label: "Administración delegada",
     desc: "Usuarios y auditoría limitados a las empresas asignadas",
     permisos: ["usuarios", "auditoria"],
+    obligatorio: true,
   },
   mensajes: {
     label: "Mensajes",

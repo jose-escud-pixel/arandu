@@ -209,18 +209,23 @@ export default function BancosPage() {
   };
 
   const handleDelete = async (c) => {
-    if (!window.confirm(`¿Desactivar la cuenta "${c.nombre}"?`)) return;
+    if (!window.confirm(`¿Eliminar la cuenta "${c.nombre}"? Esta acción no se puede deshacer.`)) return;
     try {
       const res = await fetch(`${API}/admin/cuentas-bancarias/${c.id}`, { method: "DELETE", headers });
-      if (!res.ok) throw new Error();
-      toast.success("Cuenta desactivada");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Error ${res.status}`);
+      }
+      toast.success("Cuenta eliminada");
       fetchCuentas();
-    } catch { toast.error("Error"); }
+    } catch (err) {
+      toast.error(err.message || "Error al eliminar la cuenta");
+    }
   };
 
-  // Totales reales: vienen del mismo cálculo que Balance page (evita recalcular dos veces)
-  const totalPYG = balanceTotales?.saldo_acumulado ?? cuentas.filter(c => c.moneda === "PYG").reduce((s, c) => s + (c.saldo_actual || 0), 0);
-  const totalUSD = balanceTotales?.saldo_acumulado_usd ?? cuentas.filter(c => c.moneda === "USD").reduce((s, c) => s + (c.saldo_actual || 0), 0);
+  // Totales reales: suma de saldo_actual de cada cuenta por moneda
+  const totalPYG = cuentas.filter(c => c.moneda === "PYG").reduce((s, c) => s + (c.saldo_actual || 0), 0);
+  const totalUSD = cuentas.filter(c => c.moneda === "USD").reduce((s, c) => s + (c.saldo_actual || 0), 0);
 
   return (
     <div className="min-h-screen">
@@ -447,16 +452,20 @@ export default function BancosPage() {
                   <label className="text-slate-400 text-xs block mb-1">Saldo inicial</label>
                   <input type="number" step="any" value={formData.saldo_inicial}
                     onChange={e => setFormData(f => ({ ...f, saldo_inicial: e.target.value }))}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                    disabled={!!editingId}
+                    className={`w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 ${editingId ? "opacity-50 cursor-not-allowed" : ""}`}
                     placeholder="0"
                   />
+                  {editingId && <p className="text-xs text-slate-500 mt-1">El saldo inicial no se puede modificar una vez creada la cuenta.</p>}
                 </div>
                 <div>
                   <label className="text-slate-400 text-xs block mb-1">Desde fecha</label>
                   <input type="date" value={formData.saldo_inicial_fecha || ""}
                     onChange={e => setFormData(f => ({ ...f, saldo_inicial_fecha: e.target.value }))}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500"
+                    disabled={!!editingId}
+                    className={`w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 ${editingId ? "opacity-50 cursor-not-allowed" : ""}`}
                   />
+                  {editingId && <p className="text-xs text-slate-500 mt-1">El saldo inicial no se puede modificar una vez creada la cuenta.</p>}
                 </div>
               </div>
               <label className="flex items-center gap-2 cursor-pointer pt-1">

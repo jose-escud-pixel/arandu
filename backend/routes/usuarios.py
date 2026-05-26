@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import uuid
 from typing import List
 
-from config import db, DEFAULT_EMPRESA_MODULOS, PERMISO_A_MODULO_EMPRESA
+from config import db, DEFAULT_EMPRESA_MODULOS, PERMISO_A_MODULO_EMPRESA, EMPRESA_MODULOS_OBLIGATORIOS
 from auth import require_authenticated, has_permission, hash_password, log_auditoria
 from models.schemas import AdminUserCreate, UserResponse
 
@@ -50,9 +50,16 @@ async def _filtrar_permisos_por_empresas_propias(permisos: List[str], logos_asig
         {"id": {"$in": list(map(str, logos_asignados))}},
         {"_id": 0, "modulos_habilitados": 1},
     ).to_list(100)
-    modulos_habilitados = set()
-    for ep in propias:
-        modulos_habilitados.update(ep.get("modulos_habilitados") if ep.get("modulos_habilitados") is not None else DEFAULT_EMPRESA_MODULOS)
+    # Si no se encontró ninguna empresa propia con esos logos, usar todos los módulos por defecto
+    # (evita bloquear permisos cuando los IDs aún no coinciden en la colección empresas_propias)
+    if not propias:
+        modulos_habilitados = set(DEFAULT_EMPRESA_MODULOS)
+    else:
+        modulos_habilitados = set()
+        for ep in propias:
+            modulos_habilitados.update(ep.get("modulos_habilitados") if ep.get("modulos_habilitados") is not None else DEFAULT_EMPRESA_MODULOS)
+    # Los módulos obligatorios siempre están habilitados independientemente de la configuración
+    modulos_habilitados.update(EMPRESA_MODULOS_OBLIGATORIOS)
     filtrados = []
     for permiso in permisos or []:
         if permiso in _PERMISOS_EXENTOS_MODULO:

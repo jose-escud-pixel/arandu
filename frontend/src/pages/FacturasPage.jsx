@@ -100,6 +100,7 @@ export default function FacturasPage() {
   const [estadoFilter, setEstadoFilter] = useState("todas");
   const [mes, setMes] = useState(getMesActual());
   const [filtrarMes, setFiltrarMes] = useState(false);  // Por defecto muestra todos los meses
+  const [mostrarEliminadas, setMostrarEliminadas] = useState(false);
 
   const [facturas, setFacturas] = useState([]);
   const [resumen, setResumen] = useState(null);
@@ -126,6 +127,7 @@ export default function FacturasPage() {
   const [cuentaPago, setCuentaPago] = useState("");   // cuenta bancaria destino
   const [cuentasDisp, setCuentasDisp] = useState([]); // cuentas disponibles
 
+  const canDelete = hasPermission("facturas.eliminar");
   const headers = { Authorization: `Bearer ${token}` };
 
   // ── Fetch ──────────────────────────────────────────────────
@@ -137,6 +139,7 @@ export default function FacturasPage() {
       q.set("tipo", "emitida");
       if (estadoFilter !== "todas") q.set("estado", estadoFilter);
       if (filtrarMes) q.set("mes", mes);
+      if (mostrarEliminadas) q.set("incluir_eliminadas", "true");
 
       let qR = new URLSearchParams();
       if (logoFilter !== "todas") qR.set("logo_tipo", logoFilter);
@@ -167,7 +170,7 @@ export default function FacturasPage() {
       if (resRes.ok) setResumen(await resRes.json());
     } catch { toast.error("Error al cargar facturas"); }
     finally { setLoading(false); }
-  }, [logoFilter, estadoFilter, mes, filtrarMes, activeEmpresaPropia]); // eslint-disable-line
+  }, [logoFilter, estadoFilter, mes, filtrarMes, mostrarEliminadas, activeEmpresaPropia]); // eslint-disable-line
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -462,6 +465,13 @@ export default function FacturasPage() {
             ))}
           </div>
 
+          {/* Ver eliminadas */}
+          {canDelete && (
+            <button onClick={() => setMostrarEliminadas(v => !v)} className={`px-3 py-1.5 rounded-lg text-xs border flex items-center gap-1.5 ${mostrarEliminadas ? "bg-red-500/20 border-red-500/40 text-red-300" : "border-white/10 text-slate-400 hover:text-white"}`}>
+              <Trash2 className="w-3 h-3" /> {mostrarEliminadas ? "Ocultar eliminadas" : "Ver eliminadas"}
+            </button>
+          )}
+
           {/* Mes */}
           <div className="flex items-center gap-2 ml-auto">
             <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none">
@@ -577,9 +587,12 @@ export default function FacturasPage() {
               </thead>
               <tbody>
                 {facturas.map(fac => (
-                  <tr key={fac.id} className={`border-b border-white/5 transition-colors hover:bg-white/3 ${fac.estado === "anulada" ? "opacity-40" : ""}`}>
+                  <tr key={fac.id} className={`border-b border-white/5 transition-colors hover:bg-white/3 ${fac.eliminada ? "bg-red-900/20" : fac.estado === "anulada" ? "opacity-40" : ""}`}>
                     <td className="px-4 py-3">
                       <span className="text-white text-sm font-mono">{fac.numero}</span>
+                      {fac.eliminada && (
+                        <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30">Eliminada</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <p className="text-white text-sm">{fac.razon_social}</p>

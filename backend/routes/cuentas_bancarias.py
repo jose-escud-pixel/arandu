@@ -206,7 +206,7 @@ async def get_saldos_cuentas(
     # ── INGRESOS: pagos de facturas ──────────────────────────────
     try:
         facturas = await db.facturas.find(
-            logo_filter, {"_id": 0, "pagos": 1, "logo_tipo": 1, "moneda": 1}
+            {**logo_filter, "eliminada": {"$ne": True}}, {"_id": 0, "pagos": 1, "logo_tipo": 1, "moneda": 1}
         ).to_list(10000)
         for fac in facturas:
             flogo = fac.get("logo_tipo", "")
@@ -273,7 +273,7 @@ async def get_saldos_cuentas(
     # ── EGRESOS: compras ─────────────────────────────────────────
     try:
         compras = await db.compras.find(
-            logo_filter, {"_id": 0, "pagos": 1, "logo_tipo": 1, "moneda": 1}
+            {**logo_filter, "eliminada": {"$ne": True}}, {"_id": 0, "pagos": 1, "logo_tipo": 1, "moneda": 1}
         ).to_list(5000)
         for comp in compras:
             clogo = comp.get("logo_tipo", "")
@@ -499,23 +499,6 @@ async def update_cuenta_bancaria(
     if not c:
         raise HTTPException(status_code=404, detail="Cuenta bancaria no encontrada")
 
-    # Parsear saldo_inicial de forma robusta
-    si_raw = data.get("saldo_inicial")
-    if si_raw is not None and si_raw != "":
-        try:
-            saldo_ini = float(si_raw)
-        except (TypeError, ValueError):
-            saldo_ini = float(c.get("saldo_inicial") or 0)
-    else:
-        saldo_ini = float(c.get("saldo_inicial") or 0)
-
-    # saldo_inicial_fecha: respetar None si viene vacío
-    si_fecha = data.get("saldo_inicial_fecha")
-    if si_fecha == "":
-        si_fecha = None
-    elif si_fecha is None:
-        si_fecha = c.get("saldo_inicial_fecha")
-
     updates = {
         "nombre": data.get("nombre", c["nombre"]).strip(),
         "banco": data.get("banco", c.get("banco", "")).strip(),
@@ -525,8 +508,9 @@ async def update_cuenta_bancaria(
         "es_predeterminada": bool(data.get("es_predeterminada", c.get("es_predeterminada", False))),
         "activa": bool(data.get("activa", c.get("activa", True))),
         "descripcion": data.get("descripcion", c.get("descripcion", "")),
-        "saldo_inicial": saldo_ini,
-        "saldo_inicial_fecha": si_fecha,
+        # Saldo inicial: NO modificable después de la creación — siempre se preserva el valor original
+        "saldo_inicial": c.get("saldo_inicial", 0.0),
+        "saldo_inicial_fecha": c.get("saldo_inicial_fecha"),
         "notas": data.get("notas") if data.get("notas") is not None else c.get("notas") or "",
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -665,12 +649,35 @@ async def delete_cuenta_bancaria(
     if not c:
         raise HTTPException(status_code=404, detail="Cuenta bancaria no encontrada")
 
-    # Verificar si tiene pagos vinculados
-    pagos_vinculados = await db.facturas.count_documents({"pagos.cuenta_id": cuenta_id})
-    if pagos_vinculados > 0:
+    # Verificar si es predeterminada
+    if c.get("es_predeterminada"):
         raise HTTPException(
             status_code=400,
-            detail=f"No se puede eliminar: tiene {pagos_vinculados} factura(s) con pagos vinculados. Desvinculá los pagos primero."
+            detail="No se puede eliminar la cuenta predeterminada. Primero asigná otra cuenta como predeterminada y luego eliminá esta."
+        )
+
+    # Verificar si tiene pagos vinculados (excluir facturas eliminadas o anuladas)
+    pagos_facturas = await db.facturas.count_documents({
+        "pagos.cuenta_id": cuenta_id,
+        "eliminada": {"$ne": True},
+        "estado": {"$ne": "anulada"},
+    })
+    pagos_compras = await db.compras.count_documents({
+        "pagos.cuenta_id": cuenta_id,
+        "eliminada": {"$ne": True},
+    })
+    pagos_ingresos = await db.ingresos_varios.count_documents({"cuenta_id": cuenta_id})
+    pagos_proveedores = await db.pagos_proveedores.count_documents({"cuenta_id": cuenta_id})
+    pagos_vinculados = pagos_facturas + pagos_compras + pagos_ingresos + pagos_proveedores
+    if pagos_vinculados > 0:
+        partes = []
+        if pagos_facturas:    partes.append(f"{pagos_facturas} venta(s)")
+        if pagos_compras:     partes.append(f"{pagos_compras} compra(s)")
+        if pagos_ingresos:    partes.append(f"{pagos_ingresos} ingreso(s) varios")
+        if pagos_proveedores: partes.append(f"{pagos_proveedores} pago(s) a proveedores")
+        raise HTTPException(
+            status_code=400,
+            detail=f"No se puede eliminar: esta cuenta tiene movimientos activos ({', '.join(partes)}). Las eliminadas y anuladas no cuentan."
         )
 
     await db.cuentas_bancarias.delete_one({"id": cuenta_id})

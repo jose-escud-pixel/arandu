@@ -594,6 +594,9 @@ async def update_estado_factura(
     fac = await db.facturas.find_one({"id": factura_id}, {"_id": 0})
     if not fac:
         raise HTTPException(status_code=404, detail="Factura no encontrada")
+    # Revertir stock si se anula una factura que afectaba stock
+    if estado == "anulada" and _debe_afectar_stock(fac):
+        await _registrar_stock_factura(fac, "entrada", "anulacion_factura", user)
     updates: dict = {"estado": estado}
     if estado in ("pagada", "parcial"):
         updates["fecha_pago"] = fecha_pago or datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -602,6 +605,12 @@ async def update_estado_factura(
         updates["monto_pagado"] = None
         updates["pagos"] = []        # limpiar historial de pagos al revertir
     await db.facturas.update_one({"id": factura_id}, {"$set": updates})
+    # Mover pagos a pagos_anulados para que no cuenten en saldos bancarios
+    if estado == "anulada":
+        await db.facturas.update_one(
+            {"id": factura_id},
+            {"$set": {"pagos_anulados": fac.get("pagos", []), "pagos": []}}
+        )
 
     # Presupuestos vinculados
     pids = list(fac.get("presupuesto_ids") or [])

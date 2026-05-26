@@ -49,7 +49,7 @@ PERMISOS_DISPONIBLES = {
     "inventario_productos": ["ver", "crear", "editar", "eliminar", "crear_servicio", "stock_inicial", "ajustar_stock"],
     "historial_stock": ["ver"],
     "bancos": ["ver", "crear", "editar", "eliminar", "asignar_acceso_reporte"],
-    "plan_cuentas": ["ver", "crear", "editar", "eliminar"],
+    "plan_cuentas": ["ver", "crear", "editar", "eliminar", "asignar_cuentas"],
     "usuarios": ["ver", "crear", "editar", "eliminar"],
     "auditoria": ["ver"],
 }
@@ -75,7 +75,7 @@ EMPRESA_MODULOS_DISPONIBLES = {
 }
 
 DEFAULT_EMPRESA_MODULOS = list(EMPRESA_MODULOS_DISPONIBLES.keys())
-EMPRESA_MODULOS_OBLIGATORIOS = ["clientes", "bancos", "plan_cuentas"]
+EMPRESA_MODULOS_OBLIGATORIOS = ["clientes", "bancos", "plan_cuentas", "administracion"]
 
 PERMISO_A_MODULO_EMPRESA = {
     permiso_modulo: modulo_empresa

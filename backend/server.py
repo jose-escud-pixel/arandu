@@ -5,7 +5,7 @@ import os
 import logging
 import uuid
 
-from config import db, client
+from config import db, client, EMPRESA_MODULOS_OBLIGATORIOS, DEFAULT_EMPRESA_MODULOS
 from auth import hash_password
 
 from routes.auth import router as auth_router
@@ -97,9 +97,58 @@ async def init_admin_user():
         logging.info(f"Admin user created: {admin_email}")
 
 
+async def marcar_plan_cuentas_sistema():
+    """
+    Marca con sistema=True las 4 cuentas base del plan de cuentas en todas las empresas.
+    Retrocompat: documentos creados antes de que existiera el campo 'sistema'.
+    """
+    from routes.plan_cuentas import DEFAULT_PLAN_CUENTAS
+    actualizadas = 0
+    for cfg in DEFAULT_PLAN_CUENTAS:
+        result = await db.plan_cuentas.update_many(
+            {
+                "nombre": cfg["nombre"],
+                "uso": cfg["uso"],
+                "sistema": {"$ne": True},
+            },
+            {"$set": {"sistema": True, "predeterminada": True}},
+        )
+        actualizadas += result.modified_count
+    if actualizadas:
+        logging.info(f"[startup] {actualizadas} cuenta(s) base del plan de cuentas marcadas como sistema=True")
+
+
+async def sincronizar_modulos_obligatorios():
+    """
+    Al iniciar, recorre todas las empresas propias y se asegura de que cada una
+    tenga en modulos_habilitados todos los módulos marcados como OBLIGATORIOS.
+    Así, si se agrega un nuevo módulo obligatorio en config.py, se propaga
+    automáticamente a todas las empresas existentes sin intervención manual.
+    """
+    propias = await db.empresas_propias.find({}, {"_id": 0, "id": 1, "modulos_habilitados": 1}).to_list(1000)
+    actualizadas = 0
+    for ep in propias:
+        modulos_actuales = ep.get("modulos_habilitados")
+        # Si no tiene lista explícita, no hace falta tocarla (el runtime usa DEFAULT)
+        if not isinstance(modulos_actuales, list):
+            continue
+        modulos_faltantes = [m for m in EMPRESA_MODULOS_OBLIGATORIOS if m not in modulos_actuales]
+        if modulos_faltantes:
+            nuevos_modulos = modulos_actuales + modulos_faltantes
+            await db.empresas_propias.update_one(
+                {"id": ep["id"]},
+                {"$set": {"modulos_habilitados": nuevos_modulos}}
+            )
+            actualizadas += 1
+    if actualizadas:
+        logging.info(f"[startup] Módulos obligatorios sincronizados en {actualizadas} empresa(s) propia(s): {EMPRESA_MODULOS_OBLIGATORIOS}")
+
+
 @app.on_event("startup")
 async def startup_event():
     await init_admin_user()
+    await marcar_plan_cuentas_sistema()
+    await sincronizar_modulos_obligatorios()
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

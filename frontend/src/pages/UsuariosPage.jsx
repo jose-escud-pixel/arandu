@@ -34,6 +34,7 @@ const MODULOS_LABELS = {
   inventario_productos: "Inventario productos",
   historial_stock: "Historial de stock",
   bancos: "Bancos",
+  plan_cuentas: "Plan de cuentas",
   usuarios: "Usuarios",
   auditoria: "Auditoría",
 };
@@ -51,6 +52,8 @@ const ACCIONES_LABELS = {
   modo_libre: "Modo libre",
   caja_banco: "Caja / Banco",
   asignar_acceso_reporte: "Asignar acceso reporte",
+  asignar_cuentas: "Asignar acceso a cuentas",
+  anular: "Anular",
 };
 
 function ChipSearch({ chips, setChips, inputVal, setInputVal, placeholder }) {
@@ -124,6 +127,9 @@ const UsuariosPage = () => {
     const ids = (logos || []).map(String);
     if (!ids.length) return [];
     const seleccionadas = empresasPropias.filter(ep => ids.includes(String(ep.id)));
+    // Si los logos asignados no coinciden con ninguna empresa propia cargada (aún no se cargaron
+    // o los IDs son de otra colección), asumir todos los módulos habilitados para no bloquear permisos.
+    if (!seleccionadas.length) return DEFAULT_EMPRESA_MODULOS;
     return [...new Set(seleccionadas.flatMap(ep => modulosHabilitadosEmpresa(ep) || DEFAULT_EMPRESA_MODULOS))];
   };
 

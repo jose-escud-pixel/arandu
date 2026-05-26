@@ -623,10 +623,12 @@ export default function ProductosPage() {
                 <div>
                   <label className="block text-slate-400 text-xs mb-1 font-body">Categoría <span className="text-red-400">*</span></label>
                   <select value={formData.categoria} onChange={e => handleCategoriaChange(e.target.value)}
-                    className={`w-full bg-white/5 border rounded-lg px-3 py-2 text-slate-300 text-sm font-body focus:outline-none focus:border-cyan-500 ${!formData.categoria ? "border-red-500/50" : "border-white/10"}`}>
-                    <option value="">— Seleccioná una categoría —</option>
+                    style={{ colorScheme: 'dark' }}
+                    className={`w-full bg-arandu-dark border rounded-lg px-3 py-2 text-slate-300 text-sm font-body focus:outline-none focus:border-cyan-500 ${!formData.categoria ? "border-red-500/50" : "border-white/10"}`}>
+                    <option value="" className="bg-arandu-dark text-slate-200">— Seleccioná una categoría —</option>
                     {CATEGORIAS_PRODUCTO.map(c => (
-                      <option key={c} value={c} disabled={c === "Servicios" && !puedeCrearServicio}>
+                      <option key={c} value={c} disabled={c === "Servicios" && !puedeCrearServicio}
+                        className="bg-arandu-dark text-slate-200">
                         {c}{c === "Servicios" && !puedeCrearServicio ? " (sin permiso)" : ""}
                       </option>
                     ))}

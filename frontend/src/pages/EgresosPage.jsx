@@ -524,6 +524,7 @@ const EgresosPage = () => {
   const [compras, setCompras] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [loadingCompras, setLoadingCompras] = useState(false);
+  const [mostrarEliminadasCompras, setMostrarEliminadasCompras] = useState(false);
   const [filtroMes, setFiltroMes] = useState(mesActual());
   const [filtroTipo, setFiltroTipo] = useState("mes"); // "todos" | "mes" | "anio"
   const [filtroAnio, setFiltroAnio] = useState(String(new Date().getFullYear()));
@@ -844,6 +845,7 @@ const EgresosPage = () => {
       if (filtroTipo === "mes" && filtroMes) params.set("mes", filtroMes);
       if (filtroTipo === "anio" && filtroAnio) params.set("anio", filtroAnio);
       if (activeEmpresaPropia?.slug) params.set("logo_tipo", activeEmpresaPropia.slug);
+      if (mostrarEliminadasCompras) params.set("incluir_eliminadas", "true");
       const res = await fetch(`${API}/admin/compras?${params}`, { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) setCompras(await res.json());
     } catch (e) { toast.error("Error al cargar compras"); }
@@ -1729,8 +1731,14 @@ const EgresosPage = () => {
     if (!window.confirm("¿Eliminar esta compra?")) return;
     try {
       const res = await fetch(`${API}/admin/compras/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) { toast.success("Compra eliminada"); fetchCompras(); }
-    } catch (e) { toast.error("Error"); }
+      if (res.ok) {
+        toast.success("Compra eliminada");
+        fetchCompras();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || "No se puede eliminar esta compra");
+      }
+    } catch (e) { toast.error("Error al eliminar la compra"); }
   };
 
   const openNewNotaCompra = () => {
@@ -2095,6 +2103,17 @@ const EgresosPage = () => {
                 ].filter(Boolean).join(" ");
                 return matchChips(comprasChips, comprasInput, texto);
               });
+              // Toggle ver eliminadas (dentro del render de compras)
+              const toggleVerEliminadas = (
+                hasPermission("compras.eliminar") && (
+                  <button
+                    onClick={() => setMostrarEliminadasCompras(v => !v)}
+                    className={`px-3 py-1.5 rounded-lg text-xs border flex items-center gap-1.5 ${mostrarEliminadasCompras ? "bg-red-500/20 border-red-500/40 text-red-300" : "border-white/10 text-slate-400 hover:text-white"}`}
+                  >
+                    <Trash2 className="w-3 h-3" /> {mostrarEliminadasCompras ? "Ocultar eliminadas" : "Ver eliminadas"}
+                  </button>
+                )
+              );
               if (loadingCompras) {
                 return <div className="text-center py-12 text-orange-400 animate-pulse">Cargando...</div>;
               }
@@ -2113,6 +2132,9 @@ const EgresosPage = () => {
               }
               return (
                 <>
+                  {/* Toggle ver eliminadas */}
+                  <div className="flex justify-end mb-2">{toggleVerEliminadas}</div>
+
                   {/* Tabla */}
                   {comprasFiltradas.length === 0 ? (
                     <div className="text-center py-12 bg-arandu-dark-light border border-white/5 rounded-xl">
@@ -2146,9 +2168,14 @@ const EgresosPage = () => {
                             return (
                               <tr key={c.id}
                                 onClick={() => setSelectedCompraView(c)}
-                                className="border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors"
+                                className={`border-b border-white/5 hover:bg-white/5 cursor-pointer transition-colors ${c.eliminada ? "bg-red-900/20" : ""}`}
                               >
-                                <td className="px-4 py-3 text-slate-300 text-xs whitespace-nowrap">{c.fecha}</td>
+                                <td className="px-4 py-3 text-slate-300 text-xs whitespace-nowrap">
+                                  {c.fecha}
+                                  {c.eliminada && (
+                                    <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/30">Eliminada</span>
+                                  )}
+                                </td>
                                 <td className="px-4 py-3">
                                   <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-slate-300">
                                     {LOGO_LABEL_MAP[c.logo_tipo] || c.logo_tipo}

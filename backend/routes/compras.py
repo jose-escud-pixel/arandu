@@ -194,12 +194,15 @@ async def get_compras(
     estado_pago: Optional[str] = None,    # pendiente | pagado | vencido | parcial
     tiene_factura: Optional[bool] = None,
     search: Optional[str] = None,
+    incluir_eliminadas: Optional[bool] = False,
     user: dict = Depends(require_authenticated)
 ):
     if not has_permission(user, "compras.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso para ver compras")
 
     query = {}
+    if not incluir_eliminadas:
+        query["eliminada"] = {"$ne": True}
     if proveedor_id:
         query["proveedor_id"] = proveedor_id
 
@@ -585,27 +588,36 @@ async def delete_compra(compra_id: str, user: dict = Depends(require_authenticat
         raise HTTPException(status_code=403, detail="Sin permiso")
     # Buscar antes de borrar para revertir stock
     compra = await db.compras.find_one({"id": compra_id}, {"_id": 0})
-    result = await db.compras.delete_one({"id": compra_id})
-    if result.deleted_count == 0:
+    if not compra:
         raise HTTPException(status_code=404, detail="Compra no encontrada")
-    await log_auditoria(user, "compras", "eliminar", f"Compra eliminada: {compra_id}", compra_id)
     # Revertir movimientos de stock originados por esta compra
-    if compra:
-        from routes.productos import registrar_movimiento
-        for item in (compra.get("items") or []):
-            pid = item.get("producto_id")
-            if pid:
-                await registrar_movimiento(
-                    producto_id=pid,
-                    tipo="salida",
-                    cantidad=item.get("cantidad", 0),
-                    motivo="devolucion",
-                    referencia_id=compra_id,
-                    referencia_tipo="compra_eliminada",
-                    notas=f"Reversión por eliminación de compra",
-                    usuario_id=user.get("id"),
-                    usuario_nombre=user.get("name"),
-                )
+    from routes.productos import registrar_movimiento
+    for item in (compra.get("items") or []):
+        pid = item.get("producto_id")
+        if pid:
+            await registrar_movimiento(
+                producto_id=pid,
+                tipo="salida",
+                cantidad=item.get("cantidad", 0),
+                motivo="devolucion",
+                referencia_id=compra_id,
+                referencia_tipo="compra_eliminada",
+                notas=f"Reversión por eliminación de compra",
+                usuario_id=user.get("id"),
+                usuario_nombre=user.get("name"),
+            )
+    # Soft-delete (igual que facturas)
+    now = datetime.now(timezone.utc).isoformat()
+    await db.compras.update_one(
+        {"id": compra_id},
+        {"$set": {
+            "eliminada": True,
+            "eliminada_at": now,
+            "eliminada_por": user.get("name", user.get("id", "sistema")),
+            "eliminada_por_id": user.get("id"),
+        }}
+    )
+    await log_auditoria(user, "compras", "eliminar", f"Compra eliminada: {compra_id}", compra_id)
     return {"ok": True}
 
 
