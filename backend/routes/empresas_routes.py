@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from datetime import datetime, timezone
 import uuid
 from typing import List, Optional
@@ -9,7 +9,8 @@ from auth import require_admin, require_authenticated, has_permission, can_acces
 from models.schemas import (
     ContactMessage, ContactMessageResponse,
     EmpresaCreate, EmpresaResponse,
-    EmpresaPropiaCreate, EmpresaPropiaResponse
+    EmpresaPropiaCreate, EmpresaPropiaResponse,
+    EmpresaLogoConfigUpdate, EmpresaLogoItemUpdate,
 )
 
 router = APIRouter()
@@ -55,6 +56,21 @@ async def delete_message(message_id: str, admin: dict = Depends(require_admin)):
 
 # ================== EMPRESAS PROPIAS ==================
 
+def _migrate_logo_url(doc: dict) -> dict:
+    """Migración lazy: si la empresa tiene logo_url pero su librería está vacía,
+    agrega el logo_url como entrada 'general' en la librería. No toca la DB
+    (la persistencia ocurre al primer guardado desde el frontend). """
+    if doc.get("logo_url") and not doc.get("logos"):
+        doc["logos"] = [{
+            "id": str(uuid.uuid4()),
+            "url": doc["logo_url"],
+            "nombre": "Logo",
+            "etiqueta": "general",
+            "created_at": doc.get("created_at", datetime.now(timezone.utc).isoformat()),
+        }]
+    return doc
+
+
 @router.get("/admin/empresas-propias", response_model=List[EmpresaPropiaResponse])
 async def get_empresas_propias(user: dict = Depends(require_authenticated)):
     propias = await db.empresas_propias.find({}, {"_id": 0}).sort("nombre", 1).to_list(100)
@@ -69,7 +85,7 @@ async def get_empresas_propias(user: dict = Depends(require_authenticated)):
         await db.empresas_propias.insert_many(defaults)
         propias = await db.empresas_propias.find({}, {"_id": 0}).sort("nombre", 1).to_list(100)
 
-    return propias
+    return [_migrate_logo_url(p) for p in propias]
 
 @router.post("/admin/empresas-propias", response_model=EmpresaPropiaResponse)
 async def create_empresa_propia(data: EmpresaPropiaCreate, admin: dict = Depends(require_admin)):
@@ -118,6 +134,7 @@ async def update_empresa_propia(empresa_id: str, data: EmpresaPropiaCreate, admi
 
 @router.post("/admin/empresas-propias/{empresa_id}/logo")
 async def upload_logo_empresa_propia(empresa_id: str, file: UploadFile = File(...), admin: dict = Depends(require_admin)):
+    """Endpoint legacy — mantiene compatibilidad. Sube logo a logo_url."""
     content = await file.read()
     b64 = base64.b64encode(content).decode()
     logo_url = f"data:{file.content_type};base64,{b64}"
@@ -125,6 +142,110 @@ async def upload_logo_empresa_propia(empresa_id: str, file: UploadFile = File(..
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Empresa propia no encontrada")
     return {"logo_url": logo_url}
+
+
+# ── Librería de logos ─────────────────────────────────────────────────────────
+
+@router.post("/admin/empresas-propias/{empresa_id}/logos")
+async def add_logo_to_library(
+    empresa_id: str,
+    file: UploadFile = File(...),
+    etiqueta: str = Form("general"),
+    nombre: str = Form(""),
+    admin: dict = Depends(require_admin),
+):
+    """Agrega un logo a la librería de la empresa. etiqueta: oscuro | claro | general."""
+    empresa = await db.empresas_propias.find_one({"id": empresa_id})
+    if not empresa:
+        raise HTTPException(status_code=404, detail="Empresa propia no encontrada")
+    content = await file.read()
+    b64 = base64.b64encode(content).decode()
+    logo_url = f"data:{file.content_type};base64,{b64}"
+    logo_item = {
+        "id": str(uuid.uuid4()),
+        "url": logo_url,
+        "nombre": nombre or file.filename or "Logo",
+        "etiqueta": etiqueta if etiqueta in ("oscuro", "claro", "general") else "general",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.empresas_propias.update_one(
+        {"id": empresa_id},
+        {"$push": {"logos": logo_item}}
+    )
+    # Devolver el documento actualizado para que el frontend refresque la librería
+    doc = await db.empresas_propias.find_one({"id": empresa_id}, {"_id": 0})
+    return _migrate_logo_url(doc)
+
+
+@router.put("/admin/empresas-propias/{empresa_id}/logos/{logo_id}")
+async def update_logo_in_library(
+    empresa_id: str,
+    logo_id: str,
+    data: EmpresaLogoItemUpdate,
+    admin: dict = Depends(require_admin),
+):
+    """Actualiza etiqueta o nombre de un logo en la librería (body JSON)."""
+    set_fields: dict = {}
+    if data.etiqueta is not None:
+        if data.etiqueta not in ("oscuro", "claro", "general"):
+            raise HTTPException(status_code=400, detail="etiqueta debe ser oscuro, claro o general")
+        set_fields["logos.$[el].etiqueta"] = data.etiqueta
+    if data.nombre is not None:
+        set_fields["logos.$[el].nombre"] = data.nombre
+    if not set_fields:
+        raise HTTPException(status_code=400, detail="Nada que actualizar")
+    result = await db.empresas_propias.update_one(
+        {"id": empresa_id},
+        {"$set": set_fields},
+        array_filters=[{"el.id": logo_id}],
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Empresa o logo no encontrado")
+    # Devolver el documento actualizado para que el frontend refresque la librería
+    doc = await db.empresas_propias.find_one({"id": empresa_id}, {"_id": 0})
+    return _migrate_logo_url(doc)
+
+
+@router.delete("/admin/empresas-propias/{empresa_id}/logos/{logo_id}")
+async def delete_logo_from_library(
+    empresa_id: str,
+    logo_id: str,
+    admin: dict = Depends(require_admin),
+):
+    """Elimina un logo de la librería."""
+    result = await db.empresas_propias.update_one(
+        {"id": empresa_id},
+        {"$pull": {"logos": {"id": logo_id}}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Empresa propia no encontrada")
+    # Devolver el documento actualizado para que el frontend refresque la librería
+    doc = await db.empresas_propias.find_one({"id": empresa_id}, {"_id": 0})
+    return _migrate_logo_url(doc)
+
+
+@router.put("/admin/empresas-propias/{empresa_id}/logo-config")
+async def update_logo_config(
+    empresa_id: str,
+    data: EmpresaLogoConfigUpdate,
+    admin: dict = Depends(require_admin),
+):
+    """Guarda la configuración de logos por contexto (panel y documentos)."""
+    empresa = await db.empresas_propias.find_one({"id": empresa_id})
+    if not empresa:
+        raise HTTPException(status_code=404, detail="Empresa propia no encontrada")
+    update_fields = {
+        "logo_panel_mode": data.logo_panel_mode,
+        "logo_panel_id":   data.logo_panel_id,
+        "logo_panel_size": data.logo_panel_size,
+        "logo_docs_mode":  data.logo_docs_mode,
+        "logo_docs_id":    data.logo_docs_id,
+        "logo_docs_size":  data.logo_docs_size,
+    }
+    await db.empresas_propias.update_one({"id": empresa_id}, {"$set": update_fields})
+    doc = await db.empresas_propias.find_one({"id": empresa_id}, {"_id": 0})
+    return _migrate_logo_url(doc)
+
 
 @router.delete("/admin/empresas-propias/{empresa_id}")
 async def delete_empresa_propia(empresa_id: str, admin: dict = Depends(require_admin)):

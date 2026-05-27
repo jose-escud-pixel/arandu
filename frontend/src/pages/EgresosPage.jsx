@@ -1052,7 +1052,9 @@ const EgresosPage = () => {
   const fetchEmpleados = async () => {
     setLoadingEmpleados(true);
     try {
-      const res = await fetch(`${API}/admin/empleados`, { headers: { Authorization: `Bearer ${token}` } });
+      const logo = activeEmpresaPropia?.slug;
+      const q = logo ? `?logo_tipo=${logo}` : "";
+      const res = await fetch(`${API}/admin/empleados${q}`, { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) setEmpleados(await res.json());
     } catch (e) {}
     finally { setLoadingEmpleados(false); }
@@ -1062,7 +1064,9 @@ const EgresosPage = () => {
     setLoadingSueldos(true);
     try {
       const hdrs = { Authorization: `Bearer ${token}` };
-      const res = await fetch(`${API}/admin/empleados/sueldos?periodo=${periodo}`, { headers: hdrs });
+      const logo = activeEmpresaPropia?.slug;
+      const logoParam = logo ? `&logo_tipo=${logo}` : "";
+      const res = await fetch(`${API}/admin/empleados/sueldos?periodo=${periodo}${logoParam}`, { headers: hdrs });
       if (res.ok) {
         const data = await res.json();
         setSueldosVenc(data);
@@ -1634,7 +1638,7 @@ const EgresosPage = () => {
   useEffect(() => {
     if (tab === "compras") { fetchCompras(); fetchNotasCompra(); }
     if (tab === "costos") { fetchCostos(); fetchVencimientos(filtroMes, filtroTipo, filtroAnio); }
-    if (tab === "sueldos") fetchSueldosVenc(filtroMes);
+    if (tab === "sueldos") { fetchEmpleados(); fetchSueldosVenc(filtroMes); }
     if (tab === "proveedores-pagos") fetchTodosPagosProveedores();
     if (tab === "pago-iva") fetchIvaData();
   }, [filtroMes, filtroTipo, filtroAnio, activeEmpresaPropia?.slug, mostrarEliminadasCompras, mostrarEliminadasCostos, mostrarEliminadasPagosProv, mostrarEliminadasIva]); // eslint-disable-line

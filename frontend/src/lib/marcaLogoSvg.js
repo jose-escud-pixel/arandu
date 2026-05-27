@@ -176,7 +176,18 @@ export function svgPrintLogoName(logoTipo, uid, { darkHeader = false } = {}) {
   return `<img src="${dataUrl}" alt="${BRAND_TEXT[marca] || ""}" style="display:inline-block;vertical-align:middle;height:${cssH}px;width:auto"/>`;
 }
 
-export function svgLogoMarcaRow(logoTipo) {
+/**
+ * Fila de logo para HTML embebido (encabezado de presupuesto impreso, fondo oscuro).
+ * Si se pasa logoUrl (empresa nueva con logo propio), usa la imagen directamente.
+ * Si no, usa el SVG/PNG de marca (arandu / jar / arandujar). No rompe empresas existentes.
+ */
+export function svgLogoMarcaRow(logoTipo, logoUrl) {
+  // Empresa con logo propio (nueva): mostrar imagen centrada
+  if (logoUrl) {
+    return `<div style="display:flex;align-items:center;gap:8px">
+      <img src="${logoUrl}" alt="Logo" style="max-height:52px;max-width:160px;object-fit:contain;display:block"/>
+    </div>`;
+  }
   const uid = Math.random().toString(36).slice(2, 11);
   const marca = normalizeLogoTipo(logoTipo);
   const icon = svgMarcaIcon(marca, uid);
@@ -191,8 +202,18 @@ export function svgLogoMarcaRow(logoTipo) {
   </div>`;
 }
 
-/** Logo completo para impresión en fondo claro (factura, recibo) */
-export function svgDocumentHeaderLogoHtml(logoTipo) {
+/**
+ * Logo completo para impresión en fondo claro (factura, recibo).
+ * Si se pasa logoUrl (empresa nueva con logo propio), usa la imagen directamente.
+ * Si no, usa el SVG/PNG de marca. No rompe empresas existentes.
+ */
+export function svgDocumentHeaderLogoHtml(logoTipo, logoUrl) {
+  // Empresa con logo propio (nueva): mostrar imagen centrada
+  if (logoUrl) {
+    return `<div style="display:flex;align-items:center;gap:12px">
+      <img src="${logoUrl}" alt="Logo" style="max-height:60px;max-width:180px;object-fit:contain;display:block"/>
+    </div>`;
+  }
   const uid = Math.random().toString(36).slice(2, 11);
   const marca = normalizeLogoTipo(logoTipo);
   return `<div style="display:flex;align-items:center;gap:12px">

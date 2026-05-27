@@ -2,7 +2,7 @@ import React, { useState, useEffect, useContext } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  Home, Mail, MailOpen, Trash2, LogOut, Menu, X,
+  Mail, MailOpen, Trash2, LogOut, Menu, X,
   MessageSquare, CheckCircle, Clock, User, Phone,
   ChevronRight, BarChart3, Inbox, Building2, FileText, Users, Shield, Eye, Server,
   ClipboardList, DollarSign, AlertCircle, Truck, TrendingDown, UserCheck, Receipt, Scale, TrendingUp, ShoppingBag, Package,
@@ -13,6 +13,7 @@ import { AuthContext } from "../App";
 import { toast } from "sonner";
 import EmpresaSwitcher from "../components/EmpresaSwitcher";
 import { LogoMarcaArandu, LogoMarcaJar, LogoMarcaAranduJar } from "../components/MarcaLogos";
+import { resolveLogoForContext, logoSizePx } from "../lib/logoUtils";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -23,19 +24,22 @@ const LogoAranduJAR = () => <LogoMarcaAranduJar compact sublabelClass={subCompac
 
 // Logo dinámico según empresa activa
 const LogoDisplay = ({ activeEmpresaPropia }) => {
-  // Si tiene logo_url: mostrar la imagen
-  if (activeEmpresaPropia?.logo_url) {
+  // Resolver logo usando la configuración de contexto "panel"
+  const logoUrl = resolveLogoForContext(activeEmpresaPropia, "panel");
+  const sizePx  = logoSizePx(activeEmpresaPropia?.logo_panel_size || "m");
+
+  if (logoUrl) {
     return (
-      <div className="h-14 w-full max-w-[190px] flex items-center">
+      <div className="flex items-center" style={{ height: sizePx, maxWidth: 190 }}>
         <img
-          src={activeEmpresaPropia.logo_url}
-          alt={activeEmpresaPropia.nombre}
-          className="max-h-14 max-w-full object-contain"
+          src={logoUrl}
+          alt={activeEmpresaPropia?.nombre || "Logo"}
+          style={{ maxHeight: sizePx, maxWidth: 190, objectFit: "contain" }}
         />
       </div>
     );
   }
-  // Sin logo_url: logo de texto según slug
+  // Sin logo resuelto: logo de texto de marca según slug
   const slug = activeEmpresaPropia?.slug;
   if (slug === "jar") {
     return <LogoMarcaJar compact sublabelClass={subCompact} />;
@@ -203,9 +207,9 @@ const AdminDashboard = () => {
       <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-arandu-dark-light border-r border-white/5 transform transition-transform duration-300 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="h-full flex flex-col">
           <div className="p-6 border-b border-white/5">
-            <Link to="/" className="flex items-center gap-3">
+            <div className="flex items-center gap-3">
               <LogoDisplay activeEmpresaPropia={activeEmpresaPropia} />
-            </Link>
+            </div>
           </div>
           {/* Empresa switcher */}
           <div className="pt-3 border-b border-white/5">
@@ -443,13 +447,7 @@ const AdminDashboard = () => {
                 </p>
               </div>
             </div>
-            <Link 
-              to="/"
-              className="flex items-center gap-2 text-slate-400 hover:text-arandu-blue transition-colors"
-            >
-              <Home className="w-5 h-5" />
-              <span className="hidden md:inline font-body">Ver Sitio</span>
-            </Link>
+            {/* Botón "Ver Sitio" eliminado */}
           </div>
         </header>
 
@@ -463,9 +461,9 @@ const AdminDashboard = () => {
                 borderColor: `${activeEmpresaPropia.color || "#3b82f6"}30`,
               }}
             >
-              {activeEmpresaPropia.logo_url ? (
+              {resolveLogoForContext(activeEmpresaPropia, "panel") ? (
                 <span className="w-10 h-7 flex items-center justify-center flex-shrink-0 rounded bg-white/85">
-                  <img src={activeEmpresaPropia.logo_url} alt={activeEmpresaPropia.nombre} className="max-w-full max-h-full object-contain" />
+                  <img src={resolveLogoForContext(activeEmpresaPropia, "panel")} alt={activeEmpresaPropia.nombre} className="max-w-full max-h-full object-contain" />
                 </span>
               ) : (
                 <span className="w-3 h-3 rounded-full" style={{ backgroundColor: activeEmpresaPropia.color || "#3b82f6" }} />

@@ -3,13 +3,15 @@ import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, Building2, Plus, Edit, Trash2, Save, X,
-  Upload, Image, Palette, Check, Globe, RefreshCw
+  Upload, Image, Palette, Check, Globe, RefreshCw,
+  Download, FileText
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { AuthContext } from "../App";
 import { toast } from "sonner";
 import { DEFAULT_EMPRESA_MODULOS, EMPRESA_MODULOS, EMPRESA_MODULOS_OBLIGATORIOS, modulosHabilitadosEmpresa } from "../lib/modulosEmpresa";
+import { resolveLogoForContext, logoSizePx } from "../lib/logoUtils";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -93,6 +95,366 @@ const TemaPreview = ({ tema, selected, onClick }) => (
   </button>
 );
 
+// ── Constantes para gestión de logos ─────────────────────────────────────────
+const SIZE_OPTIONS = [
+  { key: "xs", label: "XS", px: 32 },
+  { key: "s",  label: "S",  px: 44 },
+  { key: "m",  label: "M",  px: 56 },
+  { key: "l",  label: "L",  px: 72 },
+  { key: "xl", label: "XL", px: 88 },
+];
+const ETIQUETA_OPTS = [
+  { value: "general", label: "General" },
+  { value: "oscuro",  label: "Oscuro"  },
+  { value: "claro",   label: "Claro"   },
+];
+
+// ── ContextConfig: configuración por contexto (panel / docs) ──────────────────
+const ContextConfig = ({ title, icon, mode, setMode, selectedId, setSelectedId, size, setSize, logos, preferEtiqueta }) => {
+  const previewUrl = (() => {
+    if (mode === "manual" && selectedId) return logos.find(l => l.id === selectedId)?.url || null;
+    if (logos.length === 0) return null;
+    return logos.find(l => l.etiqueta === preferEtiqueta)?.url
+      || logos.find(l => l.etiqueta === "general")?.url
+      || logos[0]?.url
+      || null;
+  })();
+  const previewPx = logoSizePx(size);
+
+  return (
+    <div className="bg-arandu-dark/60 border border-white/10 rounded-xl p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-slate-400">{icon}</span>
+        <h4 className="text-slate-200 text-sm font-semibold">{title}</h4>
+      </div>
+
+      {/* Mode toggle */}
+      <div className="flex gap-2 mb-4">
+        {["auto", "manual"].map(m => (
+          <button key={m} type="button"
+            onClick={() => setMode(m)}
+            className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              mode === m
+                ? "bg-arandu-blue text-white"
+                : "bg-arandu-dark text-slate-400 hover:text-slate-200 border border-white/10"
+            }`}
+          >
+            {m === "auto" ? "Auto (por etiqueta)" : "Manual (elegir logo)"}
+          </button>
+        ))}
+      </div>
+
+      {/* Auto: info */}
+      {mode === "auto" && (
+        <p className="text-slate-500 text-xs mb-4">
+          Buscará logo con etiqueta <span className="text-slate-300 font-mono">"{preferEtiqueta}"</span>, luego "general", luego el primero disponible.
+        </p>
+      )}
+
+      {/* Manual: logo picker */}
+      {mode === "manual" && (
+        <div className="mb-4">
+          {logos.length === 0 ? (
+            <p className="text-slate-500 text-xs">Primero subí logos a la librería de arriba.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {logos.map(l => (
+                <button key={l.id} type="button"
+                  onClick={() => setSelectedId(l.id)}
+                  title={l.nombre || l.etiqueta}
+                  className={`rounded-xl border p-1.5 transition-all ${
+                    selectedId === l.id
+                      ? "border-arandu-blue ring-1 ring-arandu-blue"
+                      : "border-white/10 hover:border-white/30"
+                  }`}
+                >
+                  <img src={l.url} alt={l.nombre} className="w-12 h-12 object-contain rounded" />
+                  <p className="text-[10px] text-slate-500 mt-1 text-center w-12 truncate">{l.etiqueta}</p>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Size selector */}
+      <div className="mb-3">
+        <p className="text-slate-400 text-xs mb-2">Tamaño:</p>
+        <div className="flex gap-1.5">
+          {SIZE_OPTIONS.map(s => (
+            <button key={s.key} type="button"
+              onClick={() => setSize(s.key)}
+              className={`w-9 py-1 rounded text-xs font-medium transition-all ${
+                size === s.key
+                  ? "bg-arandu-blue text-white"
+                  : "bg-arandu-dark text-slate-400 border border-white/10 hover:border-white/30"
+              }`}
+            >{s.label}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* Preview */}
+      <div className="flex items-center gap-3 p-3 bg-arandu-dark rounded-lg border border-white/5">
+        <div className="flex-shrink-0 flex items-center justify-center rounded-lg overflow-hidden"
+          style={{ width: previewPx, height: previewPx }}>
+          {previewUrl ? (
+            <img src={previewUrl} alt="preview"
+              style={{ maxWidth: previewPx, maxHeight: previewPx, objectFit: "contain" }} />
+          ) : (
+            <div className="w-full h-full rounded-lg bg-slate-700/40 flex items-center justify-center">
+              <Image className="w-5 h-5 text-slate-600" />
+            </div>
+          )}
+        </div>
+        <div>
+          <p className="text-slate-400 text-xs">{previewUrl ? "Vista previa del logo" : "Sin logo (usará marca de texto)"}</p>
+          <p className="text-slate-600 text-[11px]">{previewPx}px de alto</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── LogoManagerModal ──────────────────────────────────────────────────────────
+const LogoManagerModal = ({ empresa, token, onClose, onSaved }) => {
+  const [logos, setLogos] = useState(empresa.logos || []);
+  const [panelMode, setPanelMode] = useState(empresa.logo_panel_mode || "auto");
+  const [panelLogoId, setPanelLogoId] = useState(empresa.logo_panel_id || null);
+  const [panelSize, setPanelSize] = useState(empresa.logo_panel_size || "m");
+  const [docsMode, setDocsMode] = useState(empresa.logo_docs_mode || "auto");
+  const [docsLogoId, setDocsLogoId] = useState(empresa.logo_docs_id || null);
+  const [docsSize, setDocsSize] = useState(empresa.logo_docs_size || "m");
+  const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editingLogo, setEditingLogo] = useState(null); // { id, nombre, etiqueta }
+  const fileRef = useRef(null);
+
+  const handleUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { toast.error("Máximo 2 MB"); return; }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("nombre", file.name.replace(/\.[^.]+$/, ""));
+      fd.append("etiqueta", "general");
+      const res = await fetch(`${API}/admin/empresas-propias/${empresa.id}/logos`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      if (res.ok) { const data = await res.json(); setLogos(data.logos || []); toast.success("Logo subido"); }
+      else toast.error("Error al subir logo");
+    } catch { toast.error("Error de conexión"); }
+    finally { setUploading(false); e.target.value = ""; }
+  };
+
+  const handleDeleteLogo = async (logoId) => {
+    if (!window.confirm("¿Eliminar este logo de la librería?")) return;
+    try {
+      const res = await fetch(`${API}/admin/empresas-propias/${empresa.id}/logos/${logoId}`, {
+        method: "DELETE", headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setLogos(data.logos || []);
+        if (panelLogoId === logoId) setPanelLogoId(null);
+        if (docsLogoId === logoId) setDocsLogoId(null);
+        toast.success("Logo eliminado");
+      }
+    } catch { toast.error("Error"); }
+  };
+
+  const handleSaveLogoEdit = async () => {
+    if (!editingLogo) return;
+    try {
+      const res = await fetch(`${API}/admin/empresas-propias/${empresa.id}/logos/${editingLogo.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ nombre: editingLogo.nombre, etiqueta: editingLogo.etiqueta }),
+      });
+      if (res.ok) { const data = await res.json(); setLogos(data.logos || []); setEditingLogo(null); toast.success("Actualizado"); }
+    } catch { toast.error("Error"); }
+  };
+
+  const handleDownload = (logo) => {
+    const a = document.createElement("a");
+    a.href = logo.url;
+    a.download = `${logo.nombre || "logo"}.png`;
+    a.click();
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`${API}/admin/empresas-propias/${empresa.id}/logo-config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          logo_panel_mode: panelMode,
+          logo_panel_id: panelLogoId || null,
+          logo_panel_size: panelSize,
+          logo_docs_mode: docsMode,
+          logo_docs_id: docsLogoId || null,
+          logo_docs_size: docsSize,
+        }),
+      });
+      if (res.ok) { toast.success("Configuración guardada"); onSaved(); onClose(); }
+      else toast.error("Error al guardar");
+    } catch { toast.error("Error de conexión"); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/80 z-50 flex items-start justify-center p-4 overflow-y-auto"
+      onClick={e => e.target === e.currentTarget && onClose()}
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+        className="bg-arandu-dark-light border border-white/10 rounded-2xl w-full max-w-2xl p-6 my-8"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <Image className="w-5 h-5 text-arandu-blue" />
+            <div>
+              <h2 className="font-heading text-xl font-bold text-white">Gestionar logos</h2>
+              <p className="text-slate-400 text-xs mt-0.5">{empresa.nombre}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white"><X className="w-6 h-6" /></button>
+        </div>
+
+        {/* ── Librería de logos ── */}
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-slate-300 text-sm font-semibold">Librería de logos</h3>
+            <div>
+              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleUpload} />
+              <Button type="button" size="sm" onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+                className="bg-arandu-blue hover:bg-arandu-blue-dark text-white text-xs">
+                <Upload className="w-3.5 h-3.5 mr-1.5" />
+                {uploading ? "Subiendo..." : "Subir logo"}
+              </Button>
+            </div>
+          </div>
+
+          {logos.length === 0 ? (
+            <div className="text-center py-8 border border-dashed border-white/10 rounded-xl">
+              <Image className="w-10 h-10 text-slate-700 mx-auto mb-2" />
+              <p className="text-slate-500 text-sm">No hay logos en la librería</p>
+              <p className="text-slate-600 text-xs mt-1">Subí imágenes para asignarlas a cada contexto</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {logos.map(logo => (
+                <div key={logo.id}
+                  className="flex items-center gap-3 bg-arandu-dark/60 border border-white/10 rounded-xl p-3">
+                  {/* Thumbnail */}
+                  <div className="w-14 h-14 rounded-lg border border-white/10 bg-arandu-dark flex items-center justify-center overflow-hidden flex-shrink-0">
+                    <img src={logo.url} alt={logo.nombre} className="w-full h-full object-contain p-1" />
+                  </div>
+
+                  {editingLogo?.id === logo.id ? (
+                    <div className="flex-1 flex items-center gap-2 flex-wrap">
+                      <Input value={editingLogo.nombre}
+                        onChange={e => setEditingLogo(prev => ({ ...prev, nombre: e.target.value }))}
+                        className="bg-arandu-dark border-white/10 text-white text-sm h-8 flex-1 min-w-0"
+                        placeholder="Nombre" />
+                      <select value={editingLogo.etiqueta}
+                        onChange={e => setEditingLogo(prev => ({ ...prev, etiqueta: e.target.value }))}
+                        className="bg-arandu-dark border border-white/10 rounded-lg text-slate-300 text-xs px-2 h-8">
+                        {ETIQUETA_OPTS.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                      <button onClick={handleSaveLogoEdit} className="text-emerald-400 hover:text-emerald-300">
+                        <Check className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => setEditingLogo(null)} className="text-slate-500 hover:text-slate-300">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-slate-200 text-sm truncate">{logo.nombre || "Logo"}</p>
+                        <span className={`inline-block text-[10px] rounded px-1.5 py-0.5 mt-1 font-medium ${
+                          logo.etiqueta === "oscuro" ? "bg-slate-700 text-slate-300"
+                          : logo.etiqueta === "claro" ? "bg-amber-500/20 text-amber-300"
+                          : "bg-slate-600/40 text-slate-400"
+                        }`}>{logo.etiqueta}</span>
+                      </div>
+                      <div className="flex gap-1 flex-shrink-0">
+                        <button type="button" title="Editar etiqueta/nombre"
+                          onClick={() => setEditingLogo({ id: logo.id, nombre: logo.nombre || "", etiqueta: logo.etiqueta })}
+                          className="text-slate-400 hover:text-yellow-400 p-1.5 rounded hover:bg-yellow-500/10 transition-colors">
+                          <Edit className="w-3.5 h-3.5" />
+                        </button>
+                        <button type="button" title="Descargar"
+                          onClick={() => handleDownload(logo)}
+                          className="text-slate-400 hover:text-arandu-blue p-1.5 rounded hover:bg-arandu-blue/10 transition-colors">
+                          <Download className="w-3.5 h-3.5" />
+                        </button>
+                        <button type="button" title="Eliminar"
+                          onClick={() => handleDeleteLogo(logo.id)}
+                          className="text-slate-400 hover:text-red-400 p-1.5 rounded hover:bg-red-500/10 transition-colors">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Configuración por contexto ── */}
+        <div className="space-y-4 mb-6">
+          <h3 className="text-slate-300 text-sm font-semibold">Uso por contexto</h3>
+          <ContextConfig
+            title="Panel / Sidebar"
+            icon={<Globe className="w-4 h-4" />}
+            mode={panelMode} setMode={setPanelMode}
+            selectedId={panelLogoId} setSelectedId={setPanelLogoId}
+            size={panelSize} setSize={setPanelSize}
+            logos={logos}
+            preferEtiqueta="oscuro"
+          />
+          <ContextConfig
+            title="Documentos impresos (facturas, presupuestos)"
+            icon={<FileText className="w-4 h-4" />}
+            mode={docsMode} setMode={setDocsMode}
+            selectedId={docsLogoId} setSelectedId={setDocsLogoId}
+            size={docsSize} setSize={setDocsSize}
+            logos={logos}
+            preferEtiqueta="claro"
+          />
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-3">
+          <Button type="button" variant="outline" onClick={onClose}
+            className="flex-1 border-white/10 text-slate-400">
+            <X className="w-4 h-4 mr-2" /> Cancelar
+          </Button>
+          <Button type="button" disabled={saving} onClick={handleSave}
+            className="flex-1 bg-arandu-blue hover:bg-arandu-blue-dark text-white">
+            <Save className="w-4 h-4 mr-2" />
+            {saving ? "Guardando..." : "Guardar configuración"}
+          </Button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+};
+
 // ── Componente principal ──────────────────────────────────────────────────────
 const EmpresasPropiasPage = () => {
   const { token, refreshEmpresasPropias, user } = useContext(AuthContext);
@@ -104,6 +466,8 @@ const EmpresasPropiasPage = () => {
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const fileInputRef = useRef(null);
+  const [showLogoManager, setShowLogoManager] = useState(false);
+  const [logoManagerEmpresa, setLogoManagerEmpresa] = useState(null);
 
   const emptyForm = () => ({
     nombre: "",
@@ -317,14 +681,19 @@ const EmpresasPropiasPage = () => {
                   <div className="p-5">
                     <div className="flex items-start gap-4">
                       {/* Logo */}
-                      <div className="w-16 h-16 rounded-xl border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden"
-                        style={{ backgroundColor: `${ep.color || "#3b82f6"}18` }}>
-                        {ep.logo_url ? (
-                          <img src={ep.logo_url} alt={ep.nombre} className="w-full h-full object-contain p-1" />
-                        ) : (
-                          <Building2 className="w-8 h-8" style={{ color: ep.color || "#3b82f6" }} />
-                        )}
-                      </div>
+                      {(() => {
+                        const panelLogoUrl = resolveLogoForContext(ep, "panel");
+                        return (
+                          <div className="w-16 h-16 rounded-xl border border-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden"
+                            style={{ backgroundColor: `${ep.color || "#3b82f6"}18` }}>
+                            {panelLogoUrl ? (
+                              <img src={panelLogoUrl} alt={ep.nombre} className="w-full h-full object-contain p-1" />
+                            ) : (
+                              <Building2 className="w-8 h-8" style={{ color: ep.color || "#3b82f6" }} />
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {/* Info */}
                       <div className="flex-1 min-w-0">
@@ -349,6 +718,11 @@ const EmpresasPropiasPage = () => {
 
                       {/* Acciones */}
                       <div className="flex gap-1 flex-shrink-0">
+                        <Button onClick={() => { setLogoManagerEmpresa(ep); setShowLogoManager(true); }}
+                          variant="ghost" title="Gestionar logos"
+                          className="text-slate-400 hover:text-arandu-blue hover:bg-arandu-blue/10">
+                          <Image className="w-4 h-4" />
+                        </Button>
                         <Button onClick={() => openEdit(ep)} variant="ghost"
                           className="text-slate-400 hover:text-yellow-400 hover:bg-yellow-500/10">
                           <Edit className="w-4 h-4" />
@@ -490,36 +864,27 @@ const EmpresasPropiasPage = () => {
                   </div>
                 </div>
 
-                {/* Logo upload */}
-                <div>
-                  <label className="text-slate-400 text-sm mb-2 block">Logo de la empresa</label>
-                  <div className="flex items-start gap-4">
-                    {/* Preview */}
-                    <div className="w-20 h-20 rounded-xl border border-white/10 bg-arandu-dark flex items-center justify-center overflow-hidden flex-shrink-0">
-                      {logoPreview ? (
-                        <img src={logoPreview} alt="Logo" className="w-full h-full object-contain p-1" />
-                      ) : (
-                        <Image className="w-8 h-8 text-slate-400" />
-                      )}
+                {/* Logo → remitir al gestor */}
+                {editingId && (
+                  <div className="bg-arandu-dark/60 border border-white/10 rounded-xl p-4 flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-slate-300 text-sm font-medium">Logos de la empresa</p>
+                      <p className="text-slate-500 text-xs mt-0.5">
+                        Subí, etiquetá y asigná logos para el panel y los documentos impresos.
+                      </p>
                     </div>
-                    <div className="flex-1">
-                      <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
-                        onChange={handleFileSelect} />
-                      <Button type="button" onClick={() => fileInputRef.current?.click()}
-                        variant="outline" className="border-white/10 text-slate-300 hover:text-white mb-2">
-                        <Upload className="w-4 h-4 mr-2" />
-                        {logoPreview ? "Cambiar imagen" : "Subir logo (JPG/PNG)"}
-                      </Button>
-                      {logoPreview && (
-                        <button type="button" onClick={() => setLogoPreview(null)}
-                          className="ml-2 text-slate-500 hover:text-red-400 text-xs underline">
-                          Quitar logo
-                        </button>
-                      )}
-                      <p className="text-slate-400 text-xs mt-1">Máximo 2 MB. Se mostrará en el panel y en los presupuestos.</p>
-                    </div>
+                    <Button type="button"
+                      onClick={() => {
+                        const ep = empresas.find(e => e.id === editingId);
+                        if (ep) { setLogoManagerEmpresa(ep); setShowLogoManager(true); }
+                      }}
+                      variant="outline"
+                      className="border-white/10 text-slate-300 hover:text-white whitespace-nowrap flex-shrink-0">
+                      <Image className="w-4 h-4 mr-2" />
+                      Gestionar logos
+                    </Button>
                   </div>
-                </div>
+                )}
 
                 {/* Selector de tema */}
                 <div>
@@ -606,6 +971,19 @@ const EmpresasPropiasPage = () => {
               </form>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ══ MODAL: Gestionar logos ═══════════════════════════════════════════════ */}
+      <AnimatePresence>
+        {showLogoManager && logoManagerEmpresa && (
+          <LogoManagerModal
+            key={logoManagerEmpresa.id}
+            empresa={logoManagerEmpresa}
+            token={token}
+            onClose={() => { setShowLogoManager(false); setLogoManagerEmpresa(null); }}
+            onSaved={() => { fetchEmpresas(); refreshEmpresasPropias(); }}
+          />
         )}
       </AnimatePresence>
     </div>

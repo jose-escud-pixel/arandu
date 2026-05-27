@@ -180,6 +180,31 @@ class EmpresaResponse(BaseModel):
 
 # ================== EMPRESA PROPIA MODELS ==================
 
+class EmpresaLogoItem(BaseModel):
+    """Un logo individual dentro de la librería de logos de una empresa propia."""
+    id: str
+    url: str
+    nombre: str = ""
+    etiqueta: str = "general"   # "oscuro" | "claro" | "general"
+    created_at: str
+
+
+class EmpresaLogoItemUpdate(BaseModel):
+    """Payload para actualizar etiqueta o nombre de un logo en la librería (body JSON)."""
+    nombre: Optional[str] = None
+    etiqueta: Optional[str] = None   # "oscuro" | "claro" | "general"
+
+
+class EmpresaLogoConfigUpdate(BaseModel):
+    """Payload para guardar la configuración de logos por contexto."""
+    logo_panel_mode: str = "auto"        # "auto" | "manual"
+    logo_panel_id: Optional[str] = None  # id del logo elegido (solo si manual)
+    logo_panel_size: str = "m"           # xs | s | m | l | xl
+    logo_docs_mode: str = "auto"
+    logo_docs_id: Optional[str] = None
+    logo_docs_size: str = "m"
+
+
 class EmpresaPropiaCreate(BaseModel):
     nombre: str
     slug: Optional[str] = None  # e.g. "arandu", "jar", "arandujar" — auto-generated if omitted
@@ -218,6 +243,14 @@ class EmpresaPropiaResponse(BaseModel):
     tema: str = "oscuro-azul"
     modulos_habilitados: List[str] = []
     created_at: str
+    # Librería de logos y configuración por contexto
+    logos: List[EmpresaLogoItem] = []
+    logo_panel_mode: str = "auto"
+    logo_panel_id: Optional[str] = None
+    logo_panel_size: str = "m"
+    logo_docs_mode: str = "auto"
+    logo_docs_id: Optional[str] = None
+    logo_docs_size: str = "m"
 
 
 # ================== PRESUPUESTO MODELS ==================

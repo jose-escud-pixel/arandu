@@ -17,6 +17,7 @@ import PresupuestoCostosModal from "../components/PresupuestoCostosModal";
 import FacturaFormModal from "../components/FacturaFormModal";
 import { LogoMarcaArandu, LogoMarcaJar, LogoMarcaAranduJar } from "../components/MarcaLogos";
 import { normalizeLogoTipo, svgMarcaIcon, svgPrintLogoName, svgLogoMarcaRow, svgDocumentHeaderLogoHtml } from "../lib/marcaLogoSvg";
+import { resolveLogoForContext } from "../lib/logoUtils";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -2601,7 +2602,7 @@ function PresupuestoDocModal({
       </div>
     </section>` : "";
 
-  const buildLogoHTML = (logoTipo) => svgLogoMarcaRow(logoTipo);
+  const buildLogoHTML = (logoTipo) => svgLogoMarcaRow(logoTipo, resolveLogoForContext(empresaEmisora, "docs"));
 
   // ── Imprimir por partes: máx 15 ítems por hoja (diseño colorido) ─────────
   const handlePrintPorPartes = () => {
@@ -2621,8 +2622,11 @@ function PresupuestoDocModal({
     const headerAccent = isJar ? "#ef4444" : "#3b82f6";
     const printUid = Math.random().toString(36).slice(2, 11);
     const marca = normalizeLogoTipo(p.logo_tipo);
-    const iconBox = `<div style="width:44px;height:44px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;margin-right:8px">${svgMarcaIcon(marca, printUid, 44)}</div>`;
-    const logoName = `<div style="line-height:1">${svgPrintLogoName(p.logo_tipo, printUid, { darkHeader: true })}</div>`;
+    const _docsUrl1 = resolveLogoForContext(empresaEmisora, "docs");
+    const iconBox = _docsUrl1
+      ? `<div style="flex-shrink:0;margin-right:8px"><img src="${_docsUrl1}" alt="Logo" style="max-height:52px;max-width:140px;object-fit:contain;display:block"/></div>`
+      : `<div style="width:44px;height:44px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;margin-right:8px">${svgMarcaIcon(marca, printUid, 44)}</div>`;
+    const logoName = _docsUrl1 ? `` : `<div style="line-height:1">${svgPrintLogoName(p.logo_tipo, printUid, { darkHeader: true })}</div>`;
 
     const pagesHTML = chunks.map((chunkItems, idx) => {
       const partNum = idx + 1;
@@ -2745,8 +2749,11 @@ function PresupuestoDocModal({
     const headerAccent = isJar ? "#ef4444" : "#3b82f6";
     const printUid2 = Math.random().toString(36).slice(2, 11);
     const marca2 = normalizeLogoTipo(p.logo_tipo);
-    const iconBox = `<div style="width:46px;height:46px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;margin-right:10px">${svgMarcaIcon(marca2, printUid2, 46)}</div>`;
-    const logoName = `<div style="line-height:1">${svgPrintLogoName(p.logo_tipo, printUid2, { darkHeader: true })}</div>`;
+    const _docsUrl2 = resolveLogoForContext(empresaEmisora, "docs");
+    const iconBox = _docsUrl2
+      ? `<div style="flex-shrink:0;margin-right:10px"><img src="${_docsUrl2}" alt="Logo" style="max-height:54px;max-width:145px;object-fit:contain;display:block"/></div>`
+      : `<div style="width:46px;height:46px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;margin-right:10px">${svgMarcaIcon(marca2, printUid2, 46)}</div>`;
+    const logoName = _docsUrl2 ? `` : `<div style="line-height:1">${svgPrintLogoName(p.logo_tipo, printUid2, { darkHeader: true })}</div>`;
     const rows = (p.items || []).map((item, idx) => `
       <tr style="background:${idx % 2 === 0 ? "white" : "#f8fafc"};page-break-inside:avoid">
         <td style="border:1px solid #e2e8f0;padding:6px 9px;color:#1e293b;font-size:11.5px">
@@ -3438,7 +3445,7 @@ function FacturaDocModal({ factura: f, activeEmpresaPropia = null, presupuestos 
   const handlePrint = () => {
     const w = window.open("", "_blank");
     if (!w) return;
-    const docLogo = svgDocumentHeaderLogoHtml(f.logo_tipo);
+    const docLogo = svgDocumentHeaderLogoHtml(f.logo_tipo, resolveLogoForContext(empresaEmisora, "docs"));
     const esBoleta = !!f.sin_factura;
     const docRef = esBoleta ? (f.numero_boleta || f.numero || "—") : (f.numero || "—");
     const docTitle = esBoleta ? "COMPROBANTE DE VENTA" : "FACTURA";
@@ -4370,7 +4377,7 @@ function ReciboDocModal({ recibo: r, activeEmpresaPropia = null, onClose, fmtMon
   const handlePrint = () => {
     const w = window.open("", "_blank");
     if (!w) return;
-    const docLogo = svgDocumentHeaderLogoHtml(r.logo_tipo);
+    const docLogo = svgDocumentHeaderLogoHtml(r.logo_tipo, resolveLogoForContext(empresaEmisora, "docs"));
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Recibo ${r.numero}</title>
       <style>body{font-family:Arial,sans-serif;color:#111;padding:20px;max-width:600px;margin:0 auto;border:2px solid ${accentColor};border-radius:8px}</style></head><body>
       <div style="display:flex;justify-content:center;margin-bottom:16px">${docLogo}</div>
