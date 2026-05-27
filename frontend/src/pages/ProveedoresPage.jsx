@@ -116,7 +116,7 @@ export default function ProveedoresPage() {
   const [pagosProvMap, setPagosProvMap] = useState({}); // proveedor_id → monto pagado directo
 
   // Filtro de período
-  const [filtroTipo, setFiltroTipo] = useState("todos"); // "todos" | "mes" | "anio"
+  const [filtroTipo, setFiltroTipo] = useState("mes"); // "todos" | "mes" | "anio"
   const [mes, setMes] = useState(new Date().toISOString().slice(0, 7));
   const [anio, setAnio] = useState(String(new Date().getFullYear()));
 

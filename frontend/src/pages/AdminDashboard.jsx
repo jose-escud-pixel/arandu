@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useContext } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { 
+import {
   Home, Mail, MailOpen, Trash2, LogOut, Menu, X,
   MessageSquare, CheckCircle, Clock, User, Phone,
   ChevronRight, BarChart3, Inbox, Building2, FileText, Users, Shield, Eye, Server,
   ClipboardList, DollarSign, AlertCircle, Truck, TrendingDown, UserCheck, Receipt, Scale, TrendingUp, ShoppingBag, Package,
-  ChevronLeft, Bell, BookOpen
+  ChevronLeft, Bell, BookOpen, PackageX, PackageCheck
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { AuthContext } from "../App";
@@ -548,6 +548,102 @@ const AdminDashboard = () => {
               );
             })}
           </div>
+
+          {/* Widget Control de Stock */}
+          {hasPermission("inventario_productos.ver") && resumen?.stock && (resumen.stock.sin_stock > 0 || resumen.stock.en_minimo > 0) && (
+            <motion.div
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.05 }}
+              className="mb-8 bg-arandu-dark-light border border-white/5 rounded-xl p-4"
+            >
+              {/* Header */}
+              <div className="flex items-center gap-3 mb-4 flex-wrap">
+                <Package className="w-5 h-5 text-cyan-400 shrink-0" />
+                <span className="text-white font-heading font-semibold text-base">Control de Stock</span>
+                <div className="flex items-center gap-4 ml-auto flex-wrap">
+                  {resumen.stock.sin_stock > 0 && (
+                    <span className="flex items-center gap-1.5 text-sm">
+                      <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+                      <span className="text-red-400 font-semibold">{resumen.stock.sin_stock}</span>
+                      <span className="text-slate-500 text-xs">sin stock</span>
+                    </span>
+                  )}
+                  {resumen.stock.en_minimo > 0 && (
+                    <span className="flex items-center gap-1.5 text-sm">
+                      <span className="w-2 h-2 rounded-full bg-orange-400 shrink-0" />
+                      <span className="text-orange-400 font-semibold">{resumen.stock.en_minimo}</span>
+                      <span className="text-slate-500 text-xs">en mínimo</span>
+                    </span>
+                  )}
+                  <span className="flex items-center gap-1.5 text-sm">
+                    <span className="w-2 h-2 rounded-full bg-slate-600 shrink-0" />
+                    <span className="text-slate-400 font-semibold">{resumen.stock.total_activos}</span>
+                    <span className="text-slate-500 text-xs">total activos</span>
+                  </span>
+                  <Link
+                    to="/sistema/productos"
+                    className="text-xs text-arandu-blue hover:underline ml-2 flex items-center gap-1"
+                  >
+                    Ver catálogo <ChevronRight className="w-3 h-3" />
+                  </Link>
+                </div>
+              </div>
+
+              {/* Dos columnas */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Sin stock */}
+                {resumen.stock.sin_stock > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="w-2 h-2 rounded-full bg-red-500" />
+                      <span className="text-red-400 text-xs font-semibold uppercase tracking-wider">Sin stock</span>
+                    </div>
+                    <div className="space-y-1">
+                      {resumen.stock.sin_stock_lista.slice(0, 8).map((p, i) => (
+                        <div key={i} className="flex items-center gap-2 py-1.5 border-b border-white/5 last:border-0">
+                          <PackageX className="w-3.5 h-3.5 text-red-500 shrink-0" />
+                          <span className="text-slate-300 text-xs flex-1 truncate">{p.nombre}</span>
+                          <span className="text-red-400 text-xs font-semibold bg-red-500/10 px-2 py-0.5 rounded-full whitespace-nowrap">
+                            {Math.round(p.stock_actual ?? 0)} unid.
+                          </span>
+                        </div>
+                      ))}
+                      {resumen.stock.sin_stock > 8 && (
+                        <p className="text-slate-600 text-xs pt-1">+ {resumen.stock.sin_stock - 8} productos más...</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* En mínimo */}
+                {resumen.stock.en_minimo > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="w-2 h-2 rounded-full bg-orange-400" />
+                      <span className="text-orange-400 text-xs font-semibold uppercase tracking-wider">En mínimo / crítico</span>
+                    </div>
+                    <div className="space-y-1">
+                      {resumen.stock.en_minimo_lista.slice(0, 8).map((p, i) => (
+                        <div key={i} className="flex items-center gap-2 py-1.5 border-b border-white/5 last:border-0">
+                          <PackageCheck className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                          <span className="text-slate-300 text-xs flex-1 truncate">{p.nombre}</span>
+                          <span className="text-orange-400 text-xs font-semibold bg-orange-500/10 px-2 py-0.5 rounded-full whitespace-nowrap">
+                            {Math.round(p.stock_actual ?? 0)} / mín. {Math.round(p.stock_minimo ?? 0)}
+                          </span>
+                        </div>
+                      ))}
+                      {resumen.stock.en_minimo > 8 && (
+                        <p className="text-slate-600 text-xs pt-1">+ {resumen.stock.en_minimo - 8} productos más...</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Si solo hay un tipo, ocupar las dos columnas (ya lo hace grid-cols-1 en mobile; en md se centra solo) */}
+              </div>
+            </motion.div>
+          )}
 
           {/* Accesos Directos */}
           <div className="space-y-5">

@@ -8,7 +8,17 @@ load_dotenv(ROOT_DIR / '.env')
 
 # MongoDB
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
+client = AsyncIOMotorClient(
+    mongo_url,
+    maxPoolSize=200,      # 16GB RAM — sin problema con conexiones altas
+    minPoolSize=20,       # mantener conexiones "calientes" listas
+    maxIdleTimeMS=60000,  # cerrar conexiones ociosas >60s
+    serverSelectionTimeoutMS=5000,
+    connectTimeoutMS=5000,
+    socketTimeoutMS=30000,
+    retryWrites=True,
+    retryReads=True,
+)
 db = client[os.environ['DB_NAME']]
 
 # JWT

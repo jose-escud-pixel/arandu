@@ -259,7 +259,7 @@ export default function VentasPage() {
 	    return t && ["presupuestos", "facturas", "ingresos", "recibos", "notas"].includes(t) ? t : "presupuestos";
   });
   // Filtro temporal: "todos" | "mes" | "anio"
-  const [filtroTipo, setFiltroTipo] = useState("todos");
+  const [filtroTipo, setFiltroTipo] = useState("mes");
   const [mes, setMes] = useState(getMesActual());
   const [anio, setAnio] = useState(String(new Date().getFullYear()));
   const [search, setSearch] = useState("");
@@ -379,7 +379,7 @@ export default function VentasPage() {
     if (!window.confirm("¿Eliminar este presupuesto?")) return;
     try {
       const res = await fetch(`${API}/admin/presupuestos/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) { toast.success("Presupuesto eliminado"); fetchAll(); if (presDoc?.id === id) setPresDoc(null); }
+      if (res.ok) { toast.success("Presupuesto eliminado"); fetchPresupuestos(); if (presDoc?.id === id) setPresDoc(null); }
       else toast.error("Error al eliminar");
     } catch (e) { toast.error("Error de red"); }
   };
@@ -396,7 +396,7 @@ export default function VentasPage() {
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      if (createRes.ok) { toast.success("Presupuesto duplicado"); fetchAll(); }
+      if (createRes.ok) { toast.success("Presupuesto duplicado"); fetchPresupuestos(); }
       else toast.error("Error al duplicar");
     } catch (e) { toast.error("Error de red"); }
   };
@@ -473,37 +473,57 @@ export default function VentasPage() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const fetchAll = async () => {
-    setLoading(true);
+  // ── Helper buildQ ─────────────────────────────────────────────
+  const buildQ = (params) => {
+    const p = Object.entries(params).filter(([,v]) => v != null && v !== "").map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+    return p ? `?${p}` : "";
+  };
+
+  // ── Datos compartidos: empresas, proveedores, productos, cuentas, plan ──
+  const fetchShared = async () => {
     try {
       const logoQc = logoFilter !== "todas" ? `?logo_tipo=${logoFilter}` : "";
-      const mesParam = filtroTipo === "mes" ? mes : "";
-      const anioParam = filtroTipo === "anio" ? anio : "";
-      const buildQ = (params) => { const p = Object.entries(params).filter(([,v]) => v != null && v !== "").map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join("&"); return p ? `?${p}` : ""; };
-	      const [rPres, rFac, rIng, rEmp, rProv, rProd, rCuentas, rPlan, rRecibos, rNotas] = await Promise.all([
-	        hasPermission("presupuestos.ver")
-            ? fetch(`${API}/admin/presupuestos${buildQ({ mes: mesParam || null, anio: anioParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.presupuestos ? "true" : null })}`, { headers })
-            : Promise.resolve({ ok: true, json: async () => [] }),
-	        fetch(`${API}/admin/facturas${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.facturas ? "true" : null })}`, { headers }),
-	        fetch(`${API}/admin/ingresos-varios${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.ingresos ? "true" : null })}`, { headers }),
+      const [rEmp, rProv, rProd, rCuentas, rPlan] = await Promise.all([
         fetch(`${API}/admin/empresas${logoQc}`, { headers }),
         hasPermission("proveedores.ver") ? fetch(`${API}/admin/proveedores?activo=true`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
-	        hasModule?.("productos_stock") ? fetch(`${API}/admin/productos`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
-	        fetch(`${API}/admin/cuentas-bancarias${logoQc}`, { headers }),
-	        fetch(`${API}/admin/plan-cuentas${logoQc}`, { headers }),
-	        fetch(`${API}/admin/recibos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.recibos ? "true" : null })}`, { headers }),
-	        hasPermission("notas_credito.ver")
-	          ? fetch(`${API}/admin/notas-credito${buildQ({ tipo: "venta", mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.notas ? "true" : null })}`, { headers })
-	          : Promise.resolve({ ok: false }),
-	      ]);
-      if (rPres.ok) {
-        const data = await rPres.json();
+        hasModule?.("productos_stock") ? fetch(`${API}/admin/productos`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
+        fetch(`${API}/admin/cuentas-bancarias${logoQc}`, { headers }),
+        fetch(`${API}/admin/plan-cuentas${logoQc}`, { headers }),
+      ]);
+      if (rEmp.ok) setEmpresas(await rEmp.json());
+      if (rProv.ok) setProveedores(await rProv.json());
+      if (rProd.ok) { const d = await rProd.json(); setProductos(Array.isArray(d) ? d : []); }
+      if (rCuentas.ok) setCuentasDisp(await rCuentas.json());
+      if (rPlan.ok) setPlanCuentas(await rPlan.json());
+    } catch (e) {
+      console.error("Error al cargar datos compartidos", e);
+    }
+  };
+
+  // ── Fetch por tab ──────────────────────────────────────────────
+  const fetchPresupuestos = async () => {
+    setLoading(true);
+    try {
+      const mesParam = filtroTipo === "mes" ? mes : "";
+      const anioParam = filtroTipo === "anio" ? anio : "";
+      const r = hasPermission("presupuestos.ver")
+        ? await fetch(`${API}/admin/presupuestos${buildQ({ mes: mesParam || null, anio: anioParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.presupuestos ? "true" : null })}`, { headers })
+        : { ok: true, json: async () => [] };
+      if (r.ok) {
+        const data = await r.json();
         setPresupuestos(mostrarEliminadas.presupuestos ? data.filter(x => x.eliminada) : data.filter(x => !x.eliminada));
-      }
-      else setPresupuestos([]);
-      if (rFac.ok) {
-        const data = await rFac.json();
-        // Sanitize dates
+      } else setPresupuestos([]);
+    } catch (e) { toast.error("Error al cargar presupuestos"); }
+    setLoading(false);
+  };
+
+  const fetchFacturas = async () => {
+    setLoading(true);
+    try {
+      const mesParam = filtroTipo === "mes" ? mes : "";
+      const r = await fetch(`${API}/admin/facturas${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.facturas ? "true" : null })}`, { headers });
+      if (r.ok) {
+        const data = await r.json();
         const visibles = mostrarEliminadas.facturas ? data.filter(f => f.eliminada) : data.filter(f => !f.eliminada);
         setFacturas(visibles.map(f => ({
           ...f,
@@ -512,24 +532,61 @@ export default function VentasPage() {
           fecha_pago: f.fecha_pago ? f.fecha_pago.slice(0, 10) : null,
         })));
       }
-      if (rIng.ok) { const dIng = await rIng.json(); const arr = Array.isArray(dIng) ? dIng : []; setIngresos(mostrarEliminadas.ingresos ? arr.filter(x => x.eliminada) : arr.filter(x => !x.eliminada)); }
-      if (rEmp.ok) setEmpresas(await rEmp.json());
-      if (rProv.ok) setProveedores(await rProv.json());
-      if (rProd.ok) {
-        const d = await rProd.json();
-        setProductos(Array.isArray(d) ? d : []);
-      }
-	      if (rCuentas.ok) setCuentasDisp(await rCuentas.json());
-      if (rPlan.ok) setPlanCuentas(await rPlan.json());
-	      if (rRecibos.ok) { const data = await rRecibos.json(); setRecibos(mostrarEliminadas.recibos ? data.filter(x => x.eliminada) : data.filter(x => !x.eliminada)); }
-	      if (rNotas.ok) { const data = await rNotas.json(); setNotasCredito(mostrarEliminadas.notas ? data.filter(x => x.eliminada) : data.filter(x => !x.eliminada)); }
-    } catch (e) {
-      toast.error("Error al cargar datos");
-    }
+    } catch (e) { toast.error("Error al cargar facturas"); }
     setLoading(false);
   };
 
-  useEffect(() => { fetchAll(); }, [mes, filtroTipo, activeEmpresaPropia, mostrarEliminadas]); // eslint-disable-line
+  const fetchIngresos = async () => {
+    setLoading(true);
+    try {
+      const mesParam = filtroTipo === "mes" ? mes : "";
+      const r = await fetch(`${API}/admin/ingresos-varios${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.ingresos ? "true" : null })}`, { headers });
+      if (r.ok) { const dIng = await r.json(); const arr = Array.isArray(dIng) ? dIng : []; setIngresos(mostrarEliminadas.ingresos ? arr.filter(x => x.eliminada) : arr.filter(x => !x.eliminada)); }
+    } catch (e) { toast.error("Error al cargar ingresos"); }
+    setLoading(false);
+  };
+
+  const fetchRecibos = async () => {
+    setLoading(true);
+    try {
+      const mesParam = filtroTipo === "mes" ? mes : "";
+      const r = await fetch(`${API}/admin/recibos${buildQ({ mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.recibos ? "true" : null })}`, { headers });
+      if (r.ok) { const data = await r.json(); setRecibos(mostrarEliminadas.recibos ? data.filter(x => x.eliminada) : data.filter(x => !x.eliminada)); }
+    } catch (e) { toast.error("Error al cargar recibos"); }
+    setLoading(false);
+  };
+
+  const fetchNotas = async () => {
+    setLoading(true);
+    try {
+      const mesParam = filtroTipo === "mes" ? mes : "";
+      if (!hasPermission("notas_credito.ver")) { setNotasCredito([]); setLoading(false); return; }
+      const r = await fetch(`${API}/admin/notas-credito${buildQ({ tipo: "venta", mes: mesParam || null, logo_tipo: logoFilter !== "todas" ? logoFilter : null, incluir_eliminadas: mostrarEliminadas.notas ? "true" : null })}`, { headers });
+      if (r.ok) { const data = await r.json(); setNotasCredito(mostrarEliminadas.notas ? data.filter(x => x.eliminada) : data.filter(x => !x.eliminada)); }
+    } catch (e) { toast.error("Error al cargar notas de crédito"); }
+    setLoading(false);
+  };
+
+  // ── Helper: recargar solo el tab activo (para usar después de CRUD) ──
+  const fetchActiveTab = () => {
+    if (tab === "presupuestos") fetchPresupuestos();
+    else if (tab === "facturas") fetchFacturas();
+    else if (tab === "ingresos") fetchIngresos();
+    else if (tab === "recibos") fetchRecibos();
+    else if (tab === "notas") fetchNotas();
+  };
+
+  // ── Cargar datos compartidos al cambiar empresa ────────────────
+  useEffect(() => { fetchShared(); }, [activeEmpresaPropia?.slug]); // eslint-disable-line
+
+  // ── Cargar tab activo cuando cambia tab/filtros/empresa ───────
+  useEffect(() => {
+    if (tab === "presupuestos") fetchPresupuestos();
+    else if (tab === "facturas") fetchFacturas();
+    else if (tab === "ingresos") fetchIngresos();
+    else if (tab === "recibos") fetchRecibos();
+    else if (tab === "notas") fetchNotas();
+  }, [tab, mes, filtroTipo, anio, mostrarEliminadas, activeEmpresaPropia?.slug, logoFilter]); // eslint-disable-line
 
   const visibleTabs = TABS.filter(t => hasPermission(TAB_PERMISOS[t.id]));
   const deletePermByTab = {
@@ -664,7 +721,7 @@ export default function VentasPage() {
       }
       toast.success("Factura creada");
       setPresFacturarItem(null);
-      fetchAll();
+      fetchActiveTab();
     } catch { toast.error("Error al facturar"); }
     finally { setSavingFactura(false); }
   };
@@ -690,7 +747,7 @@ export default function VentasPage() {
       }
       toast.success("Factura vinculada");
       setPresFacturarItem(null);
-      fetchAll();
+      fetchActiveTab();
     } catch { toast.error("Error al vincular"); }
     finally { setSavingFactura(false); }
   };
@@ -719,7 +776,7 @@ export default function VentasPage() {
       if (!res.ok) throw new Error();
       toast.success("Factura eliminada");
       if (facDoc?.id === fac.id) setFacDoc(null);
-      fetchAll();
+      fetchFacturas();
     } catch { toast.error("Error al eliminar"); }
   };
 
@@ -738,7 +795,7 @@ export default function VentasPage() {
         await fetch(`${API}/admin/facturas/${fac.id}/estado?estado=pendiente`, { method: "PATCH", headers });
       }
       toast.success("Pago deshecho");
-      fetchAll();
+      fetchFacturas();
     } catch { toast.error("Error"); }
   };
 
@@ -749,7 +806,7 @@ export default function VentasPage() {
       const res = await fetch(`${API}/admin/facturas/${fac.id}/estado?estado=anulada`, { method: "PATCH", headers });
       if (!res.ok) throw new Error();
       toast.success("Factura anulada");
-      fetchAll();
+      fetchFacturas();
     } catch { toast.error("Error al anular"); }
   };
 
@@ -813,7 +870,7 @@ export default function VentasPage() {
       const data = await res.json();
       toast.success(`Pagada · Recibo ${data.recibo?.numero || ""}`);
       setShowPagoModal(false);
-      fetchAll();
+      fetchFacturas();
     } catch (e) { toast.error(e.message || "Error al registrar pago"); }
   };
 
@@ -842,7 +899,7 @@ export default function VentasPage() {
         : `Pago parcial registrado · Recibo ${data.recibo?.numero || ""}`;
       toast.success(msg);
       setShowPagoParcialModal(false);
-      fetchAll();
+      fetchFacturas();
     } catch (e) { toast.error(e.message || "Error al registrar pago"); }
   };
 
@@ -897,7 +954,7 @@ export default function VentasPage() {
     setBulkLoading(false);
     setShowBulkPagoModal(false);
     setSelectedFacIds(new Set());
-    fetchAll();
+    fetchFacturas();
   };
 
   // ── Editar pago individual ────────────────────────────────────
@@ -911,7 +968,7 @@ export default function VentasPage() {
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || "Error"); }
       toast.success("Pago actualizado");
       setEditPagoCtx(null);
-      fetchAll();
+      fetchFacturas();
     } catch (e) { toast.error(e.message || "Error al editar pago"); }
   };
 
@@ -930,7 +987,7 @@ export default function VentasPage() {
         ...prev,
         pagos: (prev.pagos || []).filter(p => p.id !== pago.id),
       } : prev);
-      fetchAll();
+      fetchFacturas();
     } catch (e) { toast.error(e.message || "Error al eliminar pago"); }
   };
 
@@ -1761,7 +1818,7 @@ export default function VentasPage() {
                               <button onClick={async () => {
                                 if (!window.confirm("¿Eliminar este ingreso?")) return;
                                 const res = await fetch(`${API}/admin/ingresos-varios/${i.id}`, { method: "DELETE", headers });
-                                if (res.ok) { toast.success("Ingreso eliminado"); fetchAll(); }
+                                if (res.ok) { toast.success("Ingreso eliminado"); fetchIngresos(); }
                                 else toast.error("Error al eliminar");
                               }} className="text-slate-400 hover:text-red-400 transition-colors" title="Eliminar">
                                 <Trash2 className="w-4 h-4" />
@@ -1890,7 +1947,7 @@ export default function VentasPage() {
 	                              <button onClick={async () => {
 	                                if (!window.confirm("¿Eliminar esta nota de crédito?")) return;
 	                                const res = await fetch(`${API}/admin/notas-credito/${n.id}`, { method: "DELETE", headers });
-	                                if (res.ok) { toast.success("Nota eliminada"); fetchAll(); }
+	                                if (res.ok) { toast.success("Nota eliminada"); fetchNotas(); }
 	                                else toast.error("Error al eliminar");
 	                              }} className="text-slate-400 hover:text-red-400 transition-colors" title="Eliminar">
 	                                <Trash2 className="w-4 h-4" />
@@ -1945,7 +2002,7 @@ export default function VentasPage() {
           token={token}
           API={API}
           onClose={() => { setShowIngForm(false); setIngFormItem(null); }}
-          onSaved={() => { setShowIngForm(false); setIngFormItem(null); fetchAll(); toast.success("Ingreso guardado"); }}
+          onSaved={() => { setShowIngForm(false); setIngFormItem(null); fetchIngresos(); toast.success("Ingreso guardado"); }}
 	        />
 	      )}
 
@@ -1957,7 +2014,7 @@ export default function VentasPage() {
 	          token={token}
 	          API={API}
 	          onClose={() => { setShowNotaForm(false); setNotaFormItem(null); }}
-	          onSaved={() => { setShowNotaForm(false); setNotaFormItem(null); setTab("notas"); fetchAll(); toast.success("Nota de crédito guardada"); }}
+	          onSaved={() => { setShowNotaForm(false); setNotaFormItem(null); setTab("notas"); fetchNotas(); toast.success("Nota de crédito guardada"); }}
 	        />
 	      )}
 
@@ -1968,7 +2025,7 @@ export default function VentasPage() {
           onClose={closePreview}
           navigate={navigate}
           token={token}
-          onUpdated={() => { closePreview(); fetchAll(); }}
+          onUpdated={() => { closePreview(); fetchActiveTab(); }}
           cuentasDisp={cuentasDisp}
         />
       )}
@@ -1993,7 +2050,7 @@ export default function VentasPage() {
                 return [saved, ...prev];
               });
             }
-            fetchAll();
+            fetchPresupuestos();
           }}
           token={token}
           API={API}
@@ -2012,7 +2069,7 @@ export default function VentasPage() {
         <PresupuestoCostosModal
           presupuesto={presCostosItem}
           onClose={() => setPresCostosItem(null)}
-          onSaved={() => { setPresCostosItem(null); fetchAll(); }}
+          onSaved={() => { setPresCostosItem(null); fetchPresupuestos(); }}
           token={token}
           API={API}
           proveedores={proveedores}
@@ -2403,7 +2460,7 @@ export default function VentasPage() {
           factura={facFormItem || null}
           sinFactura={facFormItem ? !!facFormItem.sin_factura : facSinFactura}
           onClose={() => { setShowFacForm(false); setFacFormItem(null); setFacSinFactura(false); }}
-          onSaved={() => { setShowFacForm(false); setFacFormItem(null); setFacSinFactura(false); fetchAll(); }}
+          onSaved={() => { setShowFacForm(false); setFacFormItem(null); setFacSinFactura(false); fetchFacturas(); }}
           token={token}
           API={API}
           empresas={empresas}

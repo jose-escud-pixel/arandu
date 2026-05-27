@@ -109,7 +109,7 @@ async def get_dashboard_resumen(
     per_periodo = _period_query("periodo", periodo_tipo, mes, anio)
     per_periodo_iva = _period_query("periodo_iva", periodo_tipo, mes, anio)
 
-    presupuestos = await _docs(db.presupuestos, {**logo_q, **per_fecha}, {"_id": 0, "estado": 1, "total": 1, "moneda": 1, "tipo_cambio": 1})
+    presupuestos = await _docs(db.presupuestos, {**logo_q, **per_fecha, "eliminada": {"$ne": True}}, {"_id": 0, "estado": 1, "total": 1, "moneda": 1, "tipo_cambio": 1})
     pres_estados = {}
     for p in presupuestos:
         estado = p.get("estado") or "borrador"
@@ -150,10 +150,10 @@ async def get_dashboard_resumen(
     fact_total = _sum_pyg(facturas, "monto")
     fact_total_usd = _sum_usd(facturas, "monto")
 
-    ingresos = await _docs(db.ingresos_varios, {**logo_q, **per_fecha, "categoria": {"$ne": "Pago IVA"}}, {"_id": 0, "monto": 1, "moneda": 1, "tipo_cambio": 1})
-    recibos = await _docs(db.recibos, {**logo_q, **per_fecha_pago}, {"_id": 0, "monto": 1, "moneda": 1, "tipo_cambio": 1})
+    ingresos = await _docs(db.ingresos_varios, {**logo_q, **per_fecha, "categoria": {"$ne": "Pago IVA"}, "eliminada": {"$ne": True}}, {"_id": 0, "monto": 1, "moneda": 1, "tipo_cambio": 1})
+    recibos = await _docs(db.recibos, {**logo_q, **per_fecha_pago, "eliminada": {"$ne": True}}, {"_id": 0, "monto": 1, "moneda": 1, "tipo_cambio": 1})
 
-    compras = await _docs(db.compras, {**logo_q, **per_fecha}, {"_id": 0, "monto_total": 1, "monto_iva": 1, "tasa_iva": 1, "moneda": 1, "tipo_cambio": 1, "tipo_pago": 1, "pagos": 1, "fecha_vencimiento": 1})
+    compras = await _docs(db.compras, {**logo_q, **per_fecha, "eliminada": {"$ne": True}}, {"_id": 0, "monto_total": 1, "monto_iva": 1, "tasa_iva": 1, "moneda": 1, "tipo_cambio": 1, "tipo_pago": 1, "pagos": 1, "fecha_vencimiento": 1})
     compras_total = _sum_pyg(compras, "monto_total")
     compras_total_usd = _sum_usd(compras, "monto_total")
     compras_contado = [c for c in compras if (c.get("tipo_pago") or "contado") == "contado"]
@@ -185,7 +185,7 @@ async def get_dashboard_resumen(
     sueldos_adelantos = _sum_pyg(sueldos, "total_adelantos")
     sueldos_descuentos = round(sum((s.get("descuento_ips") or 0) + (s.get("descuentos_adicionales") or 0) for s in sueldos))
 
-    notas = await _docs(db.notas_credito, {**logo_q, **per_fecha, "estado": {"$ne": "anulada"}}, {"_id": 0, "tipo": 1, "monto": 1, "monto_pyg": 1, "moneda": 1, "tipo_cambio": 1})
+    notas = await _docs(db.notas_credito, {**logo_q, **per_fecha, "estado": {"$ne": "anulada"}, "eliminada": {"$ne": True}}, {"_id": 0, "tipo": 1, "monto": 1, "monto_pyg": 1, "moneda": 1, "tipo_cambio": 1})
     notas_venta = [n for n in notas if (n.get("tipo") or "venta") == "venta"]
     notas_compra = [n for n in notas if n.get("tipo") == "compra"]
     notas_total = round(sum(n.get("monto_pyg") if n.get("monto_pyg") is not None else _to_pyg(n.get("monto"), n.get("moneda", "PYG"), n.get("tipo_cambio")) for n in notas))
@@ -235,9 +235,9 @@ async def get_dashboard_resumen(
         periods = set()
         for col, field, extra in [
             (db.facturas, "fecha", {"tipo": "emitida", "estado": {"$ne": "anulada"}, "eliminada": {"$ne": True}}),
-            (db.compras, "fecha", {"tiene_factura": True}),
+            (db.compras, "fecha", {"tiene_factura": True, "eliminada": {"$ne": True}}),
             (db.pagos_iva, "periodo_iva", {}),
-            (db.notas_credito, "fecha", {"estado": {"$ne": "anulada"}}),
+            (db.notas_credito, "fecha", {"estado": {"$ne": "anulada"}, "eliminada": {"$ne": True}}),
         ]:
             vals = await col.distinct(field, {**logo_q, **extra})
             for v in vals:
@@ -250,6 +250,27 @@ async def get_dashboard_resumen(
             total_neto += r.get("neto", 0)
             total_pagos += r.get("pagos_iva", 0)
         iva_resumen = {"a_pagar": round(max(0, total_neto)), "pagado": round(total_pagos), "saldo": round(total_neto - total_pagos)}
+
+    # Stock (sin período — siempre muestra estado actual)
+    prod_base = {**logo_q, "activo": {"$ne": False}}
+    sin_stock_docs = await _docs(
+        db.productos,
+        {**prod_base, "stock_actual": {"$lte": 0}},
+        {"_id": 0, "nombre": 1, "stock_actual": 1},
+        limit=50,
+    )
+    en_minimo_docs = await _docs(
+        db.productos,
+        {
+            **prod_base,
+            "stock_minimo": {"$gt": 0},
+            "stock_actual": {"$gt": 0},
+            "$expr": {"$lte": ["$stock_actual", "$stock_minimo"]},
+        },
+        {"_id": 0, "nombre": 1, "stock_actual": 1, "stock_minimo": 1},
+        limit=50,
+    )
+    total_activos = await db.productos.count_documents(prod_base)
 
     return {
         "periodo_tipo": periodo_tipo,
@@ -265,6 +286,13 @@ async def get_dashboard_resumen(
         "notas_credito": {"cantidad": len(notas), "total": notas_total, "total_usd": notas_total_usd, "ventas": len(notas_venta), "compras": len(notas_compra)},
         "gastos": {"cantidad": gastos_count, "pagado": gastos_pagados, "pagado_usd": gastos_pagados_usd},
         "iva": {**iva_resumen, "a_pagar_usd": round(max(0, iva_saldo_usd), 2), "saldo_usd": iva_saldo_usd},
+        "stock": {
+            "total_activos": total_activos,
+            "sin_stock": len(sin_stock_docs),
+            "en_minimo": len(en_minimo_docs),
+            "sin_stock_lista": sin_stock_docs,
+            "en_minimo_lista": en_minimo_docs,
+        },
     }
 
 
