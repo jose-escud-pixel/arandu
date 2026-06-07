@@ -327,6 +327,7 @@ class PresupuestoResponse(BaseModel):
     emisor_direccion: Optional[str] = None
     emisor_telefono: Optional[str] = None
     emisor_email: Optional[str] = None
+    emisor_logo_url: Optional[str] = None
     logo_tipo: str
     moneda: str = "PYG"
     forma_pago: str = "contado"
@@ -750,6 +751,7 @@ class FacturaCreate(BaseModel):
     emisor_direccion: Optional[str] = None
     emisor_telefono: Optional[str] = None
     emisor_email: Optional[str] = None
+    emisor_logo_url: Optional[str] = None
     tipo: str = "emitida"                 # emitida | recibida
     sin_factura: bool = False             # True = boleta (venta sin comprobante fiscal)
     numero: Optional[str] = None         # Nro de factura (vacío si sin_factura=True)
@@ -812,6 +814,7 @@ class FacturaResponse(BaseModel):
     emisor_direccion: Optional[str] = None
     emisor_telefono: Optional[str] = None
     emisor_email: Optional[str] = None
+    emisor_logo_url: Optional[str] = None
     tipo: str
     sin_factura: bool = False
     numero: Optional[str] = None

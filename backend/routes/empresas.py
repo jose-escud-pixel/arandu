@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from datetime import datetime, timezone
 import uuid
 import re
@@ -12,32 +12,16 @@ from routes.plan_cuentas import ensure_plan_cuentas_default
 from models.schemas import (
     ContactMessage, ContactMessageResponse,
     EmpresaCreate, EmpresaResponse,
-    EmpresaPropiaCreate, EmpresaPropiaResponse
+    EmpresaPropiaCreate, EmpresaPropiaResponse,
+    EmpresaLogoConfigUpdate, EmpresaLogoItemUpdate,
 )
 
 router = APIRouter()
+MAX_LOGO_BYTES = 2 * 1024 * 1024
+LOGO_ETIQUETAS_VALIDAS = {"oscuro", "claro", "general"}
 
 
-DATOS_FACTURACION_DEFAULT = {
-    "arandu": {
-        "razon_social": "Arandu Informática",
-        "direccion": "De la Conquista 1132 c/ Isabel la Católica, Barrio Sajonia, Asunción, Paraguay",
-        "telefono": "021-421330 / 0981 500 282",
-        "email": "info@aranduinformatica.net",
-    },
-    "jar": {
-        "razon_social": "JAR Informática",
-        "direccion": "De la Conquista 1132 c/ Isabel la Católica, Barrio Sajonia, Asunción, Paraguay",
-        "telefono": "021-421330 / 0981 500 282",
-        "email": "info@aranduinformatica.net",
-    },
-    "arandujar": {
-        "razon_social": "AranduJAR Informática",
-        "direccion": "De la Conquista 1132 c/ Isabel la Católica, Barrio Sajonia, Asunción, Paraguay",
-        "telefono": "021-421330 / 0981 500 282",
-        "email": "info@aranduinformatica.net",
-    },
-}
+DATOS_FACTURACION_DEFAULT = {}
 
 
 def _datos_facturacion_fields(data: EmpresaPropiaCreate) -> dict:
@@ -51,20 +35,8 @@ def _datos_facturacion_fields(data: EmpresaPropiaCreate) -> dict:
 
 
 async def _ensure_datos_facturacion_empresa_propia(empresa: dict) -> dict:
-    slug = (empresa.get("slug") or "").lower()
-    defaults = DATOS_FACTURACION_DEFAULT.get(slug, {})
-    updates = {}
-    if defaults and not empresa.get("datos_facturacion_migrados"):
-        for key, value in defaults.items():
-            if value and not empresa.get(key):
-                updates[key] = value
-                empresa[key] = value
-        updates["datos_facturacion_migrados"] = True
-        empresa["datos_facturacion_migrados"] = True
     for key in ("razon_social", "ruc", "direccion", "telefono", "email"):
         empresa.setdefault(key, None)
-    if updates and empresa.get("id"):
-        await db.empresas_propias.update_one({"id": empresa["id"]}, {"$set": updates})
     return empresa
 
 
@@ -99,6 +71,30 @@ async def _require_manage_empresa_propia(empresa_id: str, user: dict) -> dict:
     if user.get("role") == "gerente" and str(empresa_id) in set(map(str, user.get("logos_asignados", []) or [])):
         return empresa
     raise HTTPException(status_code=403, detail="No tenés permiso para administrar esta empresa")
+
+
+def _migrate_logo_url(doc: dict) -> dict:
+    if doc.get("logo_url") and not doc.get("logos"):
+        doc["logos"] = [{
+            "id": str(uuid.uuid4()),
+            "url": doc["logo_url"],
+            "nombre": "Logo",
+            "etiqueta": "general",
+            "created_at": doc.get("created_at", datetime.now(timezone.utc).isoformat()),
+        }]
+    return doc
+
+
+async def _read_logo_upload(file: UploadFile) -> tuple[bytes, str]:
+    content_type = file.content_type or ""
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="El archivo debe ser una imagen (PNG, JPG, SVG, WebP, etc.)")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="El archivo de logo está vacío")
+    if len(content) > MAX_LOGO_BYTES:
+        raise HTTPException(status_code=413, detail="El logo no puede superar 2 MB")
+    return content, content_type
 
 
 # ================== CONTACT ==================
@@ -155,9 +151,9 @@ async def get_empresas_propias(user: dict = Depends(require_authenticated)):
     # Auto-seed las 3 empresas por defecto si la colección está vacía
     if not propias:
         defaults = [
-            {"id": str(uuid.uuid4()), "nombre": "Arandu",    "slug": "arandu",    "color": DEFAULT_CONFIG["arandu"]["color"],    "tema": DEFAULT_CONFIG["arandu"]["tema"],    "logo_url": None, **DATOS_FACTURACION_DEFAULT.get("arandu", {}), "ruc": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
-            {"id": str(uuid.uuid4()), "nombre": "JAR",       "slug": "jar",       "color": DEFAULT_CONFIG["jar"]["color"],       "tema": DEFAULT_CONFIG["jar"]["tema"],       "logo_url": None, **DATOS_FACTURACION_DEFAULT.get("jar", {}), "ruc": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
-            {"id": str(uuid.uuid4()), "nombre": "AranduJAR", "slug": "arandujar", "color": DEFAULT_CONFIG["arandujar"]["color"], "tema": DEFAULT_CONFIG["arandujar"]["tema"], "logo_url": None, **DATOS_FACTURACION_DEFAULT.get("arandujar", {}), "ruc": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
+            {"id": str(uuid.uuid4()), "nombre": "Arandu",    "slug": "arandu",    "color": DEFAULT_CONFIG["arandu"]["color"],    "tema": DEFAULT_CONFIG["arandu"]["tema"],    "logo_url": None, "razon_social": None, "ruc": None, "direccion": None, "telefono": None, "email": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
+            {"id": str(uuid.uuid4()), "nombre": "JAR",       "slug": "jar",       "color": DEFAULT_CONFIG["jar"]["color"],       "tema": DEFAULT_CONFIG["jar"]["tema"],       "logo_url": None, "razon_social": None, "ruc": None, "direccion": None, "telefono": None, "email": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
+            {"id": str(uuid.uuid4()), "nombre": "AranduJAR", "slug": "arandujar", "color": DEFAULT_CONFIG["arandujar"]["color"], "tema": DEFAULT_CONFIG["arandujar"]["tema"], "logo_url": None, "razon_social": None, "ruc": None, "direccion": None, "telefono": None, "email": None, "modulos_habilitados": list(DEFAULT_EMPRESA_MODULOS), "created_at": datetime.now(timezone.utc).isoformat()},
         ]
         await db.empresas_propias.insert_many(defaults)
         propias = await db.empresas_propias.find({}, {"_id": 0}).sort("nombre", 1).to_list(100)
@@ -195,7 +191,7 @@ async def get_empresas_propias(user: dict = Depends(require_authenticated)):
         asignadas = set(map(str, user.get("logos_asignados", []) or []))
         propias = [p for p in propias if str(p.get("id")) in asignadas]
 
-    return propias
+    return [_migrate_logo_url(p) for p in propias]
 
 @router.post("/admin/empresas-propias", response_model=EmpresaPropiaResponse)
 async def create_empresa_propia(data: EmpresaPropiaCreate, admin: dict = Depends(require_admin)):
@@ -252,14 +248,113 @@ async def update_empresa_propia(empresa_id: str, data: EmpresaPropiaCreate, admi
 @router.post("/admin/empresas-propias/{empresa_id}/logo")
 async def upload_logo_empresa_propia(empresa_id: str, file: UploadFile = File(...), admin: dict = Depends(require_authenticated)):
     await _require_manage_empresa_propia(empresa_id, admin)
-    content = await file.read()
+    content, content_type = await _read_logo_upload(file)
     b64 = base64.b64encode(content).decode()
-    logo_url = f"data:{file.content_type};base64,{b64}"
+    logo_url = f"data:{content_type};base64,{b64}"
     result = await db.empresas_propias.update_one({"id": empresa_id}, {"$set": {"logo_url": logo_url}})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Empresa propia no encontrada")
     await log_auditoria(admin, "empresas_propias", "subir_logo", f"Logo actualizado para empresa propia: {empresa_id}", empresa_id)
     return {"logo_url": logo_url}
+
+
+@router.post("/admin/empresas-propias/{empresa_id}/logos", response_model=EmpresaPropiaResponse)
+async def add_logo_to_library(
+    empresa_id: str,
+    file: UploadFile = File(...),
+    etiqueta: str = Form("general"),
+    nombre: str = Form(""),
+    admin: dict = Depends(require_authenticated),
+):
+    await _require_manage_empresa_propia(empresa_id, admin)
+    content, content_type = await _read_logo_upload(file)
+    b64 = base64.b64encode(content).decode()
+    logo_url = f"data:{content_type};base64,{b64}"
+    logo_item = {
+        "id": str(uuid.uuid4()),
+        "url": logo_url,
+        "nombre": nombre or file.filename or "Logo",
+        "etiqueta": etiqueta if etiqueta in LOGO_ETIQUETAS_VALIDAS else "general",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    result = await db.empresas_propias.update_one(
+        {"id": empresa_id},
+        {"$push": {"logos": logo_item}, "$set": {"logo_url": logo_url}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Empresa propia no encontrada")
+    await log_auditoria(admin, "empresas_propias", "subir_logo", f"Logo agregado a la librería: {empresa_id}", empresa_id)
+    doc = await db.empresas_propias.find_one({"id": empresa_id}, {"_id": 0})
+    return _migrate_logo_url(doc)
+
+
+@router.put("/admin/empresas-propias/{empresa_id}/logos/{logo_id}", response_model=EmpresaPropiaResponse)
+async def update_logo_in_library(
+    empresa_id: str,
+    logo_id: str,
+    data: EmpresaLogoItemUpdate,
+    admin: dict = Depends(require_authenticated),
+):
+    await _require_manage_empresa_propia(empresa_id, admin)
+    set_fields = {}
+    if data.etiqueta is not None:
+        if data.etiqueta not in LOGO_ETIQUETAS_VALIDAS:
+            raise HTTPException(status_code=400, detail="La etiqueta debe ser oscuro, claro o general")
+        set_fields["logos.$[el].etiqueta"] = data.etiqueta
+    if data.nombre is not None:
+        set_fields["logos.$[el].nombre"] = data.nombre
+    if not set_fields:
+        raise HTTPException(status_code=400, detail="No hay cambios para guardar")
+
+    result = await db.empresas_propias.update_one(
+        {"id": empresa_id, "logos.id": logo_id},
+        {"$set": set_fields},
+        array_filters=[{"el.id": logo_id}],
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Empresa o logo no encontrado")
+    doc = await db.empresas_propias.find_one({"id": empresa_id}, {"_id": 0})
+    return _migrate_logo_url(doc)
+
+
+@router.delete("/admin/empresas-propias/{empresa_id}/logos/{logo_id}", response_model=EmpresaPropiaResponse)
+async def delete_logo_from_library(
+    empresa_id: str,
+    logo_id: str,
+    admin: dict = Depends(require_authenticated),
+):
+    await _require_manage_empresa_propia(empresa_id, admin)
+    result = await db.empresas_propias.update_one(
+        {"id": empresa_id},
+        {"$pull": {"logos": {"id": logo_id}}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Empresa propia no encontrada")
+    doc = await db.empresas_propias.find_one({"id": empresa_id}, {"_id": 0})
+    return _migrate_logo_url(doc)
+
+
+@router.put("/admin/empresas-propias/{empresa_id}/logo-config", response_model=EmpresaPropiaResponse)
+async def update_logo_config(
+    empresa_id: str,
+    data: EmpresaLogoConfigUpdate,
+    admin: dict = Depends(require_authenticated),
+):
+    await _require_manage_empresa_propia(empresa_id, admin)
+    update_fields = {
+        "logo_panel_mode": data.logo_panel_mode if data.logo_panel_mode in ("auto", "manual") else "auto",
+        "logo_panel_id": data.logo_panel_id,
+        "logo_panel_size": data.logo_panel_size if data.logo_panel_size in ("xs", "s", "m", "l", "xl") else "m",
+        "logo_docs_mode": data.logo_docs_mode if data.logo_docs_mode in ("auto", "manual") else "auto",
+        "logo_docs_id": data.logo_docs_id,
+        "logo_docs_size": data.logo_docs_size if data.logo_docs_size in ("xs", "s", "m", "l", "xl") else "m",
+    }
+    result = await db.empresas_propias.update_one({"id": empresa_id}, {"$set": update_fields})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Empresa propia no encontrada")
+    doc = await db.empresas_propias.find_one({"id": empresa_id}, {"_id": 0})
+    await log_auditoria(admin, "empresas_propias", "configurar_logos", f"Configuración de logos actualizada: {empresa_id}", empresa_id)
+    return _migrate_logo_url(doc)
 
 @router.delete("/admin/empresas-propias/{empresa_id}")
 async def delete_empresa_propia(empresa_id: str, admin: dict = Depends(require_admin)):
@@ -290,13 +385,14 @@ async def _validar_empresa_sin_duplicados(
     data: EmpresaCreate,
     ignore_id: Optional[str] = None,
 ) -> None:
-    """Evita clientes duplicados por nombre, razón social o RUC/cédula."""
+    """Evita clientes duplicados solo dentro de la misma empresa propia."""
     nombre = _norm_texto(data.nombre)
     if not nombre:
         raise HTTPException(status_code=400, detail="El nombre comercial es obligatorio")
+    logo_tipo = data.logo_tipo or "arandujar"
 
     def _base_query():
-        q = {}
+        q = {"logo_tipo": logo_tipo}
         if ignore_id:
             q["id"] = {"$ne": ignore_id}
         return q
@@ -308,7 +404,7 @@ async def _validar_empresa_sin_duplicados(
     if existente:
         raise HTTPException(
             status_code=409,
-            detail=f"Ya existe un cliente con el nombre comercial «{existente.get('nombre', nombre)}»",
+            detail=f"Ya existe un cliente con el nombre comercial «{existente.get('nombre', nombre)}» en la empresa {logo_tipo}",
         )
 
     razon = _norm_texto(data.razon_social)
@@ -318,7 +414,7 @@ async def _validar_empresa_sin_duplicados(
             if doc.get("razon_social") and doc["razon_social"].strip().lower() == razon.lower():
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Ya existe un cliente con la razón social «{doc['razon_social']}»",
+                    detail=f"Ya existe un cliente con la razón social «{doc['razon_social']}» en la empresa {logo_tipo}",
                 )
 
     ruc_norm = _norm_ruc(data.ruc)
@@ -328,7 +424,7 @@ async def _validar_empresa_sin_duplicados(
             if _norm_ruc(doc.get("ruc")) == ruc_norm:
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Ya existe un cliente con el RUC/cédula «{doc.get('ruc')}»",
+                    detail=f"Ya existe un cliente con el RUC/cédula «{doc.get('ruc')}» en la empresa {logo_tipo}",
                 )
 
 

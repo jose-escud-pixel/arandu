@@ -51,6 +51,21 @@ class MovimientoManualCreate(BaseModel):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _logo_query(logo_tipo: Optional[str]) -> dict:
+    return {"logo_tipo": logo_tipo or "arandujar"}
+
+
+async def _require_producto_access(producto_id: str, user: dict) -> dict:
+    producto = await db.productos.find_one({"id": producto_id}, {"_id": 0})
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    logo_q: dict = {}
+    await apply_logo_filter(logo_q, user, producto.get("logo_tipo"))
+    if is_forbidden(logo_q):
+        raise HTTPException(status_code=403, detail="No tenés acceso a este producto")
+    return producto
+
+
 async def generar_numero_ajuste_stock() -> str:
     periodo = datetime.now(timezone.utc).strftime("%Y%m")
     result = await db.contadores.find_one_and_update(
@@ -141,6 +156,8 @@ async def get_productos(
     activo: Optional[bool] = None,
     user: dict = Depends(require_authenticated),
 ):
+    if not has_permission(user, "inventario_productos.ver"):
+        raise HTTPException(status_code=403, detail="Sin permiso")
     query = {}
     logo_q: dict = {}
     await apply_logo_filter(logo_q, user, logo_tipo)
@@ -171,6 +188,8 @@ async def get_producto_by_barcode(
     logo_tipo: Optional[str] = None,
     user: dict = Depends(require_authenticated),
 ):
+    if not has_permission(user, "inventario_productos.ver"):
+        raise HTTPException(status_code=403, detail="Sin permiso")
     code = (codigo or "").strip()
     if not code:
         raise HTTPException(status_code=400, detail="Código de barras vacío")
@@ -191,12 +210,17 @@ async def get_producto_by_barcode(
 async def create_producto(data: ProductoCreate, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "inventario_productos.crear"):
         raise HTTPException(status_code=403, detail="Sin permiso")
+    access_q: dict = {}
+    await apply_logo_filter(access_q, user, data.logo_tipo)
+    if is_forbidden(access_q):
+        raise HTTPException(status_code=403, detail="No tenés acceso a esta empresa")
 
     # Validar SKU único
     sku_trimmed = (data.sku or "").strip()
     if not sku_trimmed:
         raise HTTPException(status_code=400, detail="El SKU es obligatorio")
-    existe_sku = await db.productos.find_one({"sku": sku_trimmed}, {"_id": 0, "id": 1})
+    logo_scope = _logo_query(data.logo_tipo)
+    existe_sku = await db.productos.find_one({**logo_scope, "sku": sku_trimmed}, {"_id": 0, "id": 1})
     if existe_sku:
         raise HTTPException(status_code=400, detail=f"Ya existe un producto con el SKU '{sku_trimmed}'")
 
@@ -205,14 +229,14 @@ async def create_producto(data: ProductoCreate, user: dict = Depends(require_aut
     if not nombre_trimmed:
         raise HTTPException(status_code=400, detail="El nombre es obligatorio")
     existe_nombre = await db.productos.find_one(
-        {"nombre": {"$regex": f"^{nombre_trimmed}$", "$options": "i"}}, {"_id": 0, "id": 1}
+        {**logo_scope, "nombre": {"$regex": f"^{nombre_trimmed}$", "$options": "i"}}, {"_id": 0, "id": 1}
     )
     if existe_nombre:
         raise HTTPException(status_code=400, detail=f"Ya existe un producto con el nombre '{nombre_trimmed}'")
 
     codigo_barras = (data.codigo_barras or "").strip() or None
     if codigo_barras:
-        dup_bar = await db.productos.find_one({"codigo_barras": codigo_barras}, {"_id": 0, "id": 1})
+        dup_bar = await db.productos.find_one({**logo_scope, "codigo_barras": codigo_barras}, {"_id": 0, "id": 1})
         if dup_bar:
             raise HTTPException(status_code=400, detail=f"Ya existe un producto con el código de barras '{codigo_barras}'")
 
@@ -269,9 +293,16 @@ async def update_producto(
     if not has_permission(user, "inventario_productos.editar"):
         raise HTTPException(status_code=403, detail="Sin permiso")
 
+    producto_actual = await _require_producto_access(producto_id, user)
     update_fields = {k: v for k, v in data.dict().items() if v is not None}
     if not update_fields:
         raise HTTPException(status_code=400, detail="Sin campos para actualizar")
+    logo_scope = _logo_query(update_fields.get("logo_tipo") or producto_actual.get("logo_tipo"))
+    if "logo_tipo" in update_fields:
+        access_q: dict = {}
+        await apply_logo_filter(access_q, user, update_fields.get("logo_tipo"))
+        if is_forbidden(access_q):
+            raise HTTPException(status_code=403, detail="No tenés acceso a la empresa destino")
 
     # Validar SKU único al editar (debe ser distinto al del mismo producto)
     if "sku" in update_fields:
@@ -280,7 +311,7 @@ async def update_producto(
             raise HTTPException(status_code=400, detail="El SKU es obligatorio")
         update_fields["sku"] = sku_trimmed
         existe_sku = await db.productos.find_one(
-            {"sku": sku_trimmed, "id": {"$ne": producto_id}}, {"_id": 0, "id": 1}
+            {**logo_scope, "sku": sku_trimmed, "id": {"$ne": producto_id}}, {"_id": 0, "id": 1}
         )
         if existe_sku:
             raise HTTPException(status_code=400, detail=f"Ya existe otro producto con el SKU '{sku_trimmed}'")
@@ -292,7 +323,7 @@ async def update_producto(
             raise HTTPException(status_code=400, detail="El nombre es obligatorio")
         update_fields["nombre"] = nombre_trimmed
         existe_nombre = await db.productos.find_one(
-            {"nombre": {"$regex": f"^{nombre_trimmed}$", "$options": "i"}, "id": {"$ne": producto_id}},
+            {**logo_scope, "nombre": {"$regex": f"^{nombre_trimmed}$", "$options": "i"}, "id": {"$ne": producto_id}},
             {"_id": 0, "id": 1}
         )
         if existe_nombre:
@@ -303,7 +334,7 @@ async def update_producto(
         update_fields["codigo_barras"] = cb
         if cb:
             dup_bar = await db.productos.find_one(
-                {"codigo_barras": cb, "id": {"$ne": producto_id}}, {"_id": 0, "id": 1}
+                {**logo_scope, "codigo_barras": cb, "id": {"$ne": producto_id}}, {"_id": 0, "id": 1}
             )
             if dup_bar:
                 raise HTTPException(status_code=400, detail=f"Ya existe otro producto con el código de barras '{cb}'")
@@ -330,6 +361,7 @@ async def update_producto(
 async def delete_producto(producto_id: str, user: dict = Depends(require_authenticated)):
     if not has_permission(user, "inventario_productos.eliminar"):
         raise HTTPException(status_code=403, detail="Sin permiso")
+    await _require_producto_access(producto_id, user)
     venta = await db.facturas.find_one(
         {
             "conceptos.producto_id": producto_id,
@@ -361,6 +393,7 @@ async def get_movimientos(
     producto_id: str,
     user: dict = Depends(require_authenticated),
 ):
+    await _require_producto_access(producto_id, user)
     movs = await db.movimientos_stock.find(
         {"producto_id": producto_id}, {"_id": 0}
     ).sort("created_at", -1).to_list(500)
@@ -375,9 +408,7 @@ async def add_movimiento_manual(
 ):
     if not has_permission(user, "inventario_productos.ajustar_stock"):
         raise HTTPException(status_code=403, detail="Sin permiso")
-    producto = await db.productos.find_one({"id": producto_id}, {"_id": 0})
-    if not producto:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    producto = await _require_producto_access(producto_id, user)
 
     mov = await registrar_movimiento(
         producto_id=producto_id,

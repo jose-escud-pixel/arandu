@@ -319,7 +319,7 @@ const FacturaFormModal = ({
   const handleBarcodeSubmit = async () => {
     const code = (barcodeInput || "").trim();
     if (!code) return;
-    let prod = productos.find(p => (p.codigo_barras || "").trim() === code && p.activo !== false);
+    let prod = productos.find(p => (p.codigo_barras || "").trim() === code && p.activo !== false && (!p.logo_tipo || p.logo_tipo === logoTipo));
     if (!prod && API && token) {
       try {
         setBarcodeLoading(true);
@@ -347,7 +347,7 @@ const FacturaFormModal = ({
   };
 
   const selectProductoForConcepto = (idx, productoId) => {
-    const prod = productos.find(p => String(p.id) === String(productoId));
+    const prod = productos.find(p => String(p.id) === String(productoId) && (!p.logo_tipo || p.logo_tipo === logoTipo));
     if (!prod) {
       handleConceptoChange(idx, "producto_id", "");
       return;

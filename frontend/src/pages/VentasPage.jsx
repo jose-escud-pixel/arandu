@@ -487,7 +487,7 @@ export default function VentasPage() {
       const [rEmp, rProv, rProd, rCuentas, rPlan] = await Promise.all([
         fetch(`${API}/admin/empresas${logoQc}`, { headers }),
         hasPermission("proveedores.ver") ? fetch(`${API}/admin/proveedores?activo=true`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
-        hasModule?.("productos_stock") ? fetch(`${API}/admin/productos`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
+        hasModule?.("productos_stock") ? fetch(`${API}/admin/productos${logoQc}`, { headers }) : Promise.resolve({ ok: true, json: async () => [] }),
         fetch(`${API}/admin/cuentas-bancarias${logoQc}`, { headers }),
         fetch(`${API}/admin/plan-cuentas${logoQc}`, { headers }),
       ]);
@@ -2574,11 +2574,12 @@ function PresupuestoDocModal({
   const sym = getCurrencySymbol(p.moneda);
   const accentColor = p.logo_tipo === "jar" ? "#dc2626" : "#2563eb";
   const empresaEmisora = activeEmpresaPropia || {};
-  const emisorNombre = p.emisor_razon_social || empresaEmisora.razon_social || empresaEmisora.nombre || (p.logo_tipo === "jar" ? "JAR Informática" : p.logo_tipo === "arandu" ? "Arandu Informática" : "AranduJAR Informática");
-  const emisorRuc = p.emisor_ruc || empresaEmisora.ruc || "";
-  const emisorDireccion = p.emisor_direccion || empresaEmisora.direccion || "De la Conquista 1132 c/ Isabel la Católica · Sajonia, Asunción · Paraguay";
-  const emisorTelefono = p.emisor_telefono || empresaEmisora.telefono || "021-421330";
-  const emisorEmail = p.emisor_email || empresaEmisora.email || "info@aranduinformatica.net";
+  const emisorNombre = p.emisor_razon_social || (p.logo_tipo === "jar" ? "JAR Informática" : p.logo_tipo === "arandu" ? "Arandu Informática" : "AranduJAR Informática");
+  const emisorRuc = p.emisor_ruc || "";
+  const emisorDireccion = p.emisor_direccion || "";
+  const emisorTelefono = p.emisor_telefono || "";
+  const emisorEmail = p.emisor_email || "";
+  const emisorLogoUrl = p.emisor_logo_url || null;
   const imageItems = (p.items || []).filter(item => item.imagen);
   const buildImageAnnexHTML = (headerBg, headerAccent) => imageItems.length ? `
     <section class="print-annex" style="page-break-before:always;break-before:page;background:white">
@@ -2602,7 +2603,7 @@ function PresupuestoDocModal({
       </div>
     </section>` : "";
 
-  const buildLogoHTML = (logoTipo) => svgLogoMarcaRow(logoTipo, resolveLogoForContext(empresaEmisora, "docs"));
+  const buildLogoHTML = (logoTipo) => svgLogoMarcaRow(logoTipo, emisorLogoUrl);
 
   // ── Imprimir por partes: máx 15 ítems por hoja (diseño colorido) ─────────
   const handlePrintPorPartes = () => {
@@ -2622,7 +2623,7 @@ function PresupuestoDocModal({
     const headerAccent = isJar ? "#ef4444" : "#3b82f6";
     const printUid = Math.random().toString(36).slice(2, 11);
     const marca = normalizeLogoTipo(p.logo_tipo);
-    const _docsUrl1 = resolveLogoForContext(empresaEmisora, "docs");
+    const _docsUrl1 = emisorLogoUrl;
     const iconBox = _docsUrl1
       ? `<div style="flex-shrink:0;margin-right:8px"><img src="${_docsUrl1}" alt="Logo" style="max-height:52px;max-width:140px;object-fit:contain;display:block"/></div>`
       : `<div style="width:44px;height:44px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;margin-right:8px">${svgMarcaIcon(marca, printUid, 44)}</div>`;
@@ -2749,7 +2750,7 @@ function PresupuestoDocModal({
     const headerAccent = isJar ? "#ef4444" : "#3b82f6";
     const printUid2 = Math.random().toString(36).slice(2, 11);
     const marca2 = normalizeLogoTipo(p.logo_tipo);
-    const _docsUrl2 = resolveLogoForContext(empresaEmisora, "docs");
+    const _docsUrl2 = emisorLogoUrl;
     const iconBox = _docsUrl2
       ? `<div style="flex-shrink:0;margin-right:10px"><img src="${_docsUrl2}" alt="Logo" style="max-height:54px;max-width:145px;object-fit:contain;display:block"/></div>`
       : `<div style="width:46px;height:46px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;margin-right:10px">${svgMarcaIcon(marca2, printUid2, 46)}</div>`;
@@ -3396,11 +3397,12 @@ function FacturaDocModal({ factura: f, activeEmpresaPropia = null, presupuestos 
 
   const accentColor = f.logo_tipo === "jar" ? "#dc2626" : "#2563eb";
   const empresaEmisora = activeEmpresaPropia || {};
-  const emisorNombre = f.emisor_razon_social || empresaEmisora.razon_social || empresaEmisora.nombre || (f.logo_tipo === "jar" ? "JAR Informática" : f.logo_tipo === "arandu" ? "Arandu Informática" : "AranduJAR Informática");
-  const emisorRuc = f.emisor_ruc || empresaEmisora.ruc || "";
-  const emisorDireccion = f.emisor_direccion || empresaEmisora.direccion || "De la Conquista 1132 c/ Isabel la Católica · Sajonia, Asunción · Paraguay";
-  const emisorTelefono = f.emisor_telefono || empresaEmisora.telefono || "021-421330";
-  const emisorEmail = f.emisor_email || empresaEmisora.email || "info@aranduinformatica.net";
+  const emisorNombre = f.emisor_razon_social || (f.logo_tipo === "jar" ? "JAR Informática" : f.logo_tipo === "arandu" ? "Arandu Informática" : "AranduJAR Informática");
+  const emisorRuc = f.emisor_ruc || "";
+  const emisorDireccion = f.emisor_direccion || "";
+  const emisorTelefono = f.emisor_telefono || "";
+  const emisorEmail = f.emisor_email || "";
+  const emisorLogoUrl = f.emisor_logo_url || null;
   const monedaSym = f.moneda === "PYG" ? "₲" : f.moneda;
   const fmt = (n) => {
     if (n == null) return "-";
@@ -3445,7 +3447,7 @@ function FacturaDocModal({ factura: f, activeEmpresaPropia = null, presupuestos 
   const handlePrint = () => {
     const w = window.open("", "_blank");
     if (!w) return;
-    const docLogo = svgDocumentHeaderLogoHtml(f.logo_tipo, resolveLogoForContext(empresaEmisora, "docs"));
+    const docLogo = svgDocumentHeaderLogoHtml(f.logo_tipo, emisorLogoUrl);
     const esBoleta = !!f.sin_factura;
     const docRef = esBoleta ? (f.numero_boleta || f.numero || "—") : (f.numero || "—");
     const docTitle = esBoleta ? "COMPROBANTE DE VENTA" : "FACTURA";
@@ -4357,11 +4359,12 @@ function ReciboDocModal({ recibo: r, activeEmpresaPropia = null, onClose, fmtMon
 
   const accentColor = r.logo_tipo === "jar" ? "#dc2626" : r.logo_tipo === "arandu" ? "#2563eb" : "#1d4ed8";
   const empresaEmisora = activeEmpresaPropia || {};
-  const emisorNombre = r.emisor_razon_social || empresaEmisora.razon_social || empresaEmisora.nombre || (r.logo_tipo === "jar" ? "JAR Informática" : r.logo_tipo === "arandu" ? "Arandu Informática" : "AranduJAR Informática");
-  const emisorRuc = r.emisor_ruc || empresaEmisora.ruc || "";
-  const emisorDireccion = r.emisor_direccion || empresaEmisora.direccion || "De la Conquista 1132 c/ Isabel la Católica · Sajonia, Asunción · Paraguay";
-  const emisorTelefono = r.emisor_telefono || empresaEmisora.telefono || "021-421330";
-  const emisorEmail = r.emisor_email || empresaEmisora.email || "info@aranduinformatica.net";
+  const emisorNombre = r.emisor_razon_social || (r.logo_tipo === "jar" ? "JAR Informática" : r.logo_tipo === "arandu" ? "Arandu Informática" : "AranduJAR Informática");
+  const emisorRuc = r.emisor_ruc || "";
+  const emisorDireccion = r.emisor_direccion || "";
+  const emisorTelefono = r.emisor_telefono || "";
+  const emisorEmail = r.emisor_email || "";
+  const emisorLogoUrl = r.emisor_logo_url || null;
   const fmt = (n, moneda) => fmtMonto(n, moneda || r.moneda);
   const lineasFacturas = (r.facturas?.length > 0)
     ? r.facturas
@@ -4377,7 +4380,7 @@ function ReciboDocModal({ recibo: r, activeEmpresaPropia = null, onClose, fmtMon
   const handlePrint = () => {
     const w = window.open("", "_blank");
     if (!w) return;
-    const docLogo = svgDocumentHeaderLogoHtml(r.logo_tipo, resolveLogoForContext(empresaEmisora, "docs"));
+    const docLogo = svgDocumentHeaderLogoHtml(r.logo_tipo, emisorLogoUrl);
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Recibo ${r.numero}</title>
       <style>body{font-family:Arial,sans-serif;color:#111;padding:20px;max-width:600px;margin:0 auto;border:2px solid ${accentColor};border-radius:8px}</style></head><body>
       <div style="display:flex;justify-content:center;margin-bottom:16px">${docLogo}</div>

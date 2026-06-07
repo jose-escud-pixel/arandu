@@ -13,6 +13,21 @@ from routes.plan_cuentas import resolver_plan_cuenta_operacion
 router = APIRouter()
 
 
+def _resolve_docs_logo_url(empresa: dict) -> str | None:
+    logos = empresa.get("logos") if isinstance(empresa.get("logos"), list) else []
+    if empresa.get("logo_docs_mode") == "manual" and empresa.get("logo_docs_id"):
+        for logo in logos:
+            if logo.get("id") == empresa.get("logo_docs_id") and logo.get("url"):
+                return logo.get("url")
+    for etiqueta in ("claro", "general"):
+        for logo in logos:
+            if logo.get("etiqueta") == etiqueta and logo.get("url"):
+                return logo.get("url")
+    if logos and logos[0].get("url"):
+        return logos[0].get("url")
+    return empresa.get("logo_url")
+
+
 
 
 async def _snapshot_emisor(logo_tipo: Optional[str]) -> dict:
@@ -27,6 +42,7 @@ async def _snapshot_emisor(logo_tipo: Optional[str]) -> dict:
         "emisor_direccion": empresa.get("direccion"),
         "emisor_telefono": empresa.get("telefono"),
         "emisor_email": empresa.get("email"),
+        "emisor_logo_url": _resolve_docs_logo_url(empresa),
     }
 
 async def _cuenta_pago_resuelta(logo_tipo: str, moneda: str, cuenta_id: Optional[str] = None) -> tuple:
@@ -516,8 +532,8 @@ async def update_factura(factura_id: str, data: FacturaCreate, user: dict = Depe
     if not fac:
         raise HTTPException(status_code=404, detail="Factura no encontrada")
     update_data = data.dict()
-    emisor_keys = ("emisor_razon_social", "emisor_ruc", "emisor_direccion", "emisor_telefono", "emisor_email")
-    if any(fac.get(k) for k in emisor_keys):
+    emisor_keys = ("emisor_razon_social", "emisor_ruc", "emisor_direccion", "emisor_telefono", "emisor_email", "emisor_logo_url")
+    if any(k in fac for k in emisor_keys):
         for k in emisor_keys:
             update_data[k] = fac.get(k)
     else:
@@ -707,7 +723,7 @@ async def pago_parcial_factura(
             "moneda": fac.get("moneda", "PYG"),
             "fecha_pago": fecha_pago,
             "logo_tipo": fac.get("logo_tipo", "arandujar"),
-            **{k: fac.get(k) for k in ("emisor_razon_social", "emisor_ruc", "emisor_direccion", "emisor_telefono", "emisor_email")},
+            **{k: fac.get(k) for k in ("emisor_razon_social", "emisor_ruc", "emisor_direccion", "emisor_telefono", "emisor_email", "emisor_logo_url")},
             "cuenta_id": cuenta_id,
             "cuenta_nombre": cuenta_nombre,
             "tipo_cambio": tipo_cambio,
@@ -864,7 +880,7 @@ async def pago_bulk_facturas(
                 "moneda":            grupo[0].get("moneda", "PYG"),
                 "fecha_pago":        fecha_pago,
                 "logo_tipo":         logo_tipo,
-                **{k: grupo[0].get(k) for k in ("emisor_razon_social", "emisor_ruc", "emisor_direccion", "emisor_telefono", "emisor_email")},
+                **{k: grupo[0].get(k) for k in ("emisor_razon_social", "emisor_ruc", "emisor_direccion", "emisor_telefono", "emisor_email", "emisor_logo_url")},
                 "cuenta_id":         cuenta_id,
                 "cuenta_nombre":     cuenta_nombre,
                 "tipo_cambio":       tipo_cambio,

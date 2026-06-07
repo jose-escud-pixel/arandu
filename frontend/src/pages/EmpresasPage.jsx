@@ -70,11 +70,38 @@ function matchChips(chips, inputVal, texto) {
 const EmpresasPage = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { token, user, hasPermission, hasModule, activeEmpresaPropia } = useContext(AuthContext);
+  const { token, user, hasPermission, hasModule, activeEmpresaPropia, empresasPropias } = useContext(AuthContext);
   const isAdmin = user?.role === "admin";
   const canCreate = isAdmin || hasPermission("empresas.crear");
   const canEdit   = isAdmin || hasPermission("empresas.editar");
   const canDelete = isAdmin || hasPermission("empresas.eliminar");
+
+  const empresaPropiaBySlug = React.useMemo(
+    () => new Map((empresasPropias || []).map((empresa) => [empresa.slug, empresa])),
+    [empresasPropias]
+  );
+
+  const getEmpresaPropiaLabel = (slug) => {
+    const propia = empresaPropiaBySlug.get(slug);
+    if (propia?.nombre) return propia.nombre;
+    if (slug === "arandu") return "Arandu";
+    if (slug === "jar") return "JAR";
+    if (slug === "arandujar") return "Arandu&JAR";
+    return slug || "-";
+  };
+
+  const getEmpresaPropiaBadgeClass = (slug) => {
+    if (slug === "arandu") return "bg-blue-500/20 text-blue-300";
+    if (slug === "jar") return "bg-red-500/20 text-red-300";
+    if (slug === "arandujar") return "bg-purple-500/20 text-purple-300";
+    return "bg-slate-500/20 text-slate-300";
+  };
+
+  const getEmpresaPropiaBadgeStyle = (slug) => {
+    const propia = empresaPropiaBySlug.get(slug);
+    if (!propia?.color) return undefined;
+    return { backgroundColor: `${propia.color}20`, color: propia.color };
+  };
 
   // ── Tab ────────────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState("clientes");
@@ -203,7 +230,10 @@ const EmpresasPage = () => {
         return;
       }
 
-      const payload = { ...formData };
+      const payload = {
+        ...formData,
+        logo_tipo: activeEmpresaPropia?.slug || formData.logo_tipo || "arandujar",
+      };
       if (formData.aplica_retencion) {
         payload.porcentaje_retencion = Number(formData.porcentaje_retencion);
       } else {
@@ -889,12 +919,11 @@ const EmpresasPage = () => {
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className="font-heading font-semibold text-white truncate">{empresa.nombre}</p>
                                 {empresa.logo_tipo && (
-                                  <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                                    empresa.logo_tipo === "arandu" ? "bg-blue-500/20 text-blue-300" :
-                                    empresa.logo_tipo === "jar" ? "bg-red-500/20 text-red-300" :
-                                    "bg-purple-500/20 text-purple-300"
-                                  }`}>
-                                    {empresa.logo_tipo === "arandu" ? "Arandu" : empresa.logo_tipo === "jar" ? "JAR" : "Arandu&JAR"}
+                                  <span
+                                    className={`text-xs px-2 py-0.5 rounded-full font-semibold ${getEmpresaPropiaBadgeClass(empresa.logo_tipo)}`}
+                                    style={getEmpresaPropiaBadgeStyle(empresa.logo_tipo)}
+                                  >
+                                    {getEmpresaPropiaLabel(empresa.logo_tipo)}
                                   </span>
                                 )}
                               </div>
@@ -992,7 +1021,7 @@ const EmpresasPage = () => {
                       <div className="space-y-3 text-sm">
                         <p className="flex justify-between gap-4"><span className="text-slate-400">RUC</span><span className="text-white text-right">{selectedEmpresa.ruc || "-"}</span></p>
                         <p className="flex justify-between gap-4"><span className="text-slate-400">Personería</span><span className="text-white text-right capitalize">{selectedEmpresa.personeria || "física"}</span></p>
-                        <p className="flex justify-between gap-4"><span className="text-slate-400">Empresa</span><span className="text-white text-right">{selectedEmpresa.logo_tipo || "-"}</span></p>
+                        <p className="flex justify-between gap-4"><span className="text-slate-400">Empresa</span><span className="text-white text-right">{getEmpresaPropiaLabel(selectedEmpresa.logo_tipo)}</span></p>
                         <p className="flex justify-between gap-4"><span className="text-slate-400">Retencion IVA</span><span className="text-white text-right">{selectedEmpresa.aplica_retencion ? `${selectedEmpresa.porcentaje_retencion}%` : "No aplica"}</span></p>
                       </div>
                     </div>

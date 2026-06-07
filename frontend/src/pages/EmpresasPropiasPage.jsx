@@ -15,6 +15,19 @@ import { resolveLogoForContext, logoSizePx } from "../lib/logoUtils";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+const readApiError = async (res, fallback) => {
+  try {
+    const err = await res.json();
+    const detail = err.detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) return detail.map((item) => item.msg || JSON.stringify(item)).join(" · ");
+    if (detail) return String(detail);
+  } catch (_) {
+    // The backend may return an empty or non-JSON error body.
+  }
+  return `${fallback} (${res.status})`;
+};
+
 // ── Catálogo de temas disponibles ─────────────────────────────────────────────
 const TEMAS = [
   {
@@ -245,9 +258,12 @@ const LogoManagerModal = ({ empresa, token, onClose, onSaved }) => {
         headers: { Authorization: `Bearer ${token}` },
         body: fd,
       });
-      if (res.ok) { const data = await res.json(); setLogos(data.logos || []); toast.success("Logo subido"); }
-      else toast.error("Error al subir logo");
-    } catch { toast.error("Error de conexión"); }
+      if (res.ok) { const data = await res.json(); setLogos(data.logos || []); onSaved(); toast.success("Logo subido"); }
+      else toast.error(await readApiError(res, "Error al subir logo"), { duration: 8000 });
+    } catch (error) {
+      console.error("Error al subir logo:", error);
+      toast.error("Error de conexión al subir logo. Revisá que el backend esté activo.");
+    }
     finally { setUploading(false); e.target.value = ""; }
   };
 
@@ -262,9 +278,13 @@ const LogoManagerModal = ({ empresa, token, onClose, onSaved }) => {
         setLogos(data.logos || []);
         if (panelLogoId === logoId) setPanelLogoId(null);
         if (docsLogoId === logoId) setDocsLogoId(null);
+        onSaved();
         toast.success("Logo eliminado");
-      }
-    } catch { toast.error("Error"); }
+      } else toast.error(await readApiError(res, "Error al eliminar logo"), { duration: 8000 });
+    } catch (error) {
+      console.error("Error al eliminar logo:", error);
+      toast.error("Error de conexión al eliminar logo");
+    }
   };
 
   const handleSaveLogoEdit = async () => {
@@ -275,8 +295,12 @@ const LogoManagerModal = ({ empresa, token, onClose, onSaved }) => {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ nombre: editingLogo.nombre, etiqueta: editingLogo.etiqueta }),
       });
-      if (res.ok) { const data = await res.json(); setLogos(data.logos || []); setEditingLogo(null); toast.success("Actualizado"); }
-    } catch { toast.error("Error"); }
+      if (res.ok) { const data = await res.json(); setLogos(data.logos || []); setEditingLogo(null); onSaved(); toast.success("Actualizado"); }
+      else toast.error(await readApiError(res, "Error al actualizar logo"), { duration: 8000 });
+    } catch (error) {
+      console.error("Error al actualizar logo:", error);
+      toast.error("Error de conexión al actualizar logo");
+    }
   };
 
   const handleDownload = (logo) => {
@@ -302,8 +326,11 @@ const LogoManagerModal = ({ empresa, token, onClose, onSaved }) => {
         }),
       });
       if (res.ok) { toast.success("Configuración guardada"); onSaved(); onClose(); }
-      else toast.error("Error al guardar");
-    } catch { toast.error("Error de conexión"); }
+      else toast.error(await readApiError(res, "Error al guardar configuración"), { duration: 8000 });
+    } catch (error) {
+      console.error("Error al guardar configuración de logos:", error);
+      toast.error("Error de conexión al guardar configuración");
+    }
     finally { setSaving(false); }
   };
 

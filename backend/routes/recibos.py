@@ -15,6 +15,21 @@ from auth import require_authenticated, has_permission, log_auditoria, get_logos
 router = APIRouter()
 
 
+def _resolve_docs_logo_url(empresa: dict) -> str | None:
+    logos = empresa.get("logos") if isinstance(empresa.get("logos"), list) else []
+    if empresa.get("logo_docs_mode") == "manual" and empresa.get("logo_docs_id"):
+        for logo in logos:
+            if logo.get("id") == empresa.get("logo_docs_id") and logo.get("url"):
+                return logo.get("url")
+    for etiqueta in ("claro", "general"):
+        for logo in logos:
+            if logo.get("etiqueta") == etiqueta and logo.get("url"):
+                return logo.get("url")
+    if logos and logos[0].get("url"):
+        return logos[0].get("url")
+    return empresa.get("logo_url")
+
+
 
 
 async def _snapshot_emisor(logo_tipo: Optional[str]) -> dict:
@@ -29,6 +44,7 @@ async def _snapshot_emisor(logo_tipo: Optional[str]) -> dict:
         "emisor_direccion": empresa.get("direccion"),
         "emisor_telefono": empresa.get("telefono"),
         "emisor_email": empresa.get("email"),
+        "emisor_logo_url": _resolve_docs_logo_url(empresa),
     }
 
 # ─────────────────────────────────────────────
@@ -74,6 +90,7 @@ class ReciboResponse(BaseModel):
     emisor_direccion: Optional[str] = None
     emisor_telefono: Optional[str] = None
     emisor_email: Optional[str] = None
+    emisor_logo_url: Optional[str] = None
     cuenta_id: Optional[str] = None
     cuenta_nombre: Optional[str] = None
     notas: Optional[str] = None

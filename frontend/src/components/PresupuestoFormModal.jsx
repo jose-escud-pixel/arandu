@@ -202,7 +202,7 @@ const PresupuestoFormModal = ({
   };
 
   const selectProductoForItem = (index, productoId) => {
-    const prod = productos.find(p => p.id === productoId);
+    const prod = productos.find(p => p.id === productoId && (!p.logo_tipo || p.logo_tipo === formData.logo_tipo));
     if (!prod) {
       updateItem(index, "producto_id", "");
       return;
