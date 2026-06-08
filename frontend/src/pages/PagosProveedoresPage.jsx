@@ -33,7 +33,7 @@ const emptyForm = {
   tipo_cambio: "",
   monto_gs: "",          // equivalente en guaraníes (auto-calculado o manual)
   cuenta_pago: "guaranies", // "guaranies" | "dolares" (solo aplica si moneda=USD)
-  fecha_vencimiento: new Date().toISOString().slice(0, 10),
+  fecha_vencimiento: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
   fecha_pago: "",
   notas: "",
   logo_tipo: "arandujar",
@@ -53,7 +53,7 @@ export default function PagosProveedoresPage() {
   const [formData, setFormData] = useState(emptyForm);
 
   const [showPagarModal, setShowPagarModal] = useState(null);
-  const [fechaPagoInput, setFechaPagoInput] = useState(new Date().toISOString().slice(0, 10));
+  const [fechaPagoInput, setFechaPagoInput] = useState(new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -323,7 +323,7 @@ export default function PagosProveedoresPage() {
                         {p.estado === "pagado" ? (
                           <button onClick={() => handleDesmarcar(p)} title="Desmarcar pago" className="text-slate-400 hover:text-yellow-400 transition-colors text-xs font-body"><X className="w-4 h-4" /></button>
                         ) : (
-                          <button onClick={() => { setShowPagarModal(p); setFechaPagoInput(new Date().toISOString().slice(0, 10)); }} className="flex items-center gap-1 px-2 py-1 bg-green-600/30 text-green-300 rounded-lg hover:bg-green-600/50 transition-colors text-xs font-body">
+                          <button onClick={() => { setShowPagarModal(p); setFechaPagoInput(new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10)); }} className="flex items-center gap-1 px-2 py-1 bg-green-600/30 text-green-300 rounded-lg hover:bg-green-600/50 transition-colors text-xs font-body">
                             <CheckCircle className="w-3 h-3" /> Pagar
                           </button>
                         )}

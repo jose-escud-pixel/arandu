@@ -115,13 +115,13 @@ export default function BalancePage() {
   const [ivaResumen, setIvaResumen] = useState(null);
   const [loadingIvaAnual, setLoadingIvaAnual] = useState(false);
   const [showPagoIvaModal, setShowPagoIvaModal] = useState(false);
-  const [pagoIvaForm, setPagoIvaForm] = useState({ descripcion: "", monto: "", fecha_pago: new Date().toISOString().slice(0, 10), periodo_iva: getMesActual(), cuenta_id: "", notas: "" });
+  const [pagoIvaForm, setPagoIvaForm] = useState({ descripcion: "", monto: "", fecha_pago: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10), periodo_iva: getMesActual(), cuenta_id: "", notas: "" });
   const [savingPagoIva, setSavingPagoIva] = useState(false);
 
   // Conversiones de divisas
   const [conversiones, setConversiones] = useState([]);
   const [showConvModal, setShowConvModal] = useState(false);
-  const emptyConvForm = { fecha: new Date().toISOString().slice(0, 10), moneda_origen: "USD", monto_origen: "", tipo_cambio: "", notas: "", logo_tipo: activeEmpresaPropia?.slug || "todas" };
+  const emptyConvForm = { fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10), moneda_origen: "USD", monto_origen: "", tipo_cambio: "", notas: "", logo_tipo: activeEmpresaPropia?.slug || "todas" };
   const [convForm, setConvForm] = useState(emptyConvForm);
   const [savingConv, setSavingConv] = useState(false);
 
@@ -228,7 +228,7 @@ export default function BalancePage() {
   // ── Conversiones ──────────────────────────────────────────
   const openConvModal = () => {
     setConvForm({
-      fecha: new Date().toISOString().slice(0, 10),
+      fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
       moneda_origen: "USD",
       monto_origen: "",
       tipo_cambio: "",
@@ -278,7 +278,7 @@ export default function BalancePage() {
     setPagoIvaForm({
       descripcion: `Pago IVA ${mesLabel(periodo)}`,
       monto: sugerido ? String(Math.round(sugerido)) : "",
-      fecha_pago: new Date().toISOString().slice(0, 10),
+      fecha_pago: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
       periodo_iva: periodo,
       cuenta_id: cuentaDefault?.id || "",
       notas: "",

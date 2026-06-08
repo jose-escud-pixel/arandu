@@ -55,7 +55,7 @@ const emptyForm = {
   moneda: "PYG",
   tipo_cambio: "",
   frecuencia: "mensual",
-  fecha_inicio: new Date().toISOString().slice(0, 10),
+  fecha_inicio: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
   fecha_fin: "",
   activo: true,
   notas: "",

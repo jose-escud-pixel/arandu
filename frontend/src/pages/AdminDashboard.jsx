@@ -323,16 +323,7 @@ const AdminDashboard = () => {
                 <span className="font-body">Catálogo Productos</span>
               </Link>
             )}
-            {hasPermission("historial_stock.ver") && (
-              <Link
-                to="/sistema/historial-stock"
-                className="w-full px-4 py-3 text-slate-400 hover:text-white hover:bg-white/5 rounded-lg flex items-center gap-3 transition-all"
-                data-testid="nav-historial-stock"
-              >
-                <BarChart3 className="w-5 h-5 text-cyan-500" />
-                <span className="font-body">Historial Stock</span>
-              </Link>
-            )}
+
             {hasPermission("reportes.ver") && (
               <Link 
                 to="/sistema/reportes"

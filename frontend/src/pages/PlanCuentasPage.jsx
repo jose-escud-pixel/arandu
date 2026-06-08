@@ -10,10 +10,12 @@ import { AuthContext } from "../App";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const USOS = [
-  { value: "venta_contado",  label: "Venta contado",  tipo: "cobrar" },
-  { value: "venta_credito",  label: "Venta crédito",  tipo: "cobrar" },
-  { value: "compra_contado", label: "Compra contado", tipo: "pagar"  },
-  { value: "compra_credito", label: "Compra crédito", tipo: "pagar"  },
+  { value: "venta_contado",       label: "Venta contado",          tipo: "cobrar" },
+  { value: "venta_credito",       label: "Venta crédito",          tipo: "cobrar" },
+  { value: "compra_contado",      label: "Compra contado",         tipo: "pagar"  },
+  { value: "compra_credito",      label: "Compra crédito",         tipo: "pagar"  },
+  { value: "saldo_favor_cliente",   label: "Saldo a favor clientes",   tipo: "cobrar", soloInfo: true },
+  { value: "saldo_favor_proveedor", label: "Saldo a favor proveedores", tipo: "pagar",  soloInfo: true },
 ];
 
 const emptyForm = (logo) => ({
@@ -238,9 +240,18 @@ export default function PlanCuentasPage() {
             <div key={group.value} className="rounded-xl border border-white/10 bg-arandu-dark-light overflow-hidden">
               <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
                 <div>
-                  <h2 className="font-semibold">{group.label}</h2>
+                  <h2 className="font-semibold flex items-center gap-2">
+                    {group.label}
+                    {group.soloInfo && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/25">
+                        Solo registro — no usable en facturas
+                      </span>
+                    )}
+                  </h2>
                   <p className="text-xs text-slate-500">
-                    {group.tipo === "cobrar" ? "Cuenta por cobrar" : "Cuenta por pagar"}
+                    {group.soloInfo
+                      ? "Créditos acumulados de clientes por notas de crédito. Se aplican al cobrar."
+                      : group.tipo === "cobrar" ? "Cuenta por cobrar" : "Cuenta por pagar"}
                   </p>
                 </div>
                 <span className="text-xs text-slate-500">{group.cuentas.length} cuenta(s)</span>
@@ -279,12 +290,14 @@ export default function PlanCuentasPage() {
                         )}
                       </div>
                       <p className="text-xs text-slate-500">
-                        Vencimiento: {Number(c.dias_vencimiento || 0)} día(s)
+                        {group.soloInfo
+                          ? "Gestionado automáticamente por notas de crédito"
+                          : `Vencimiento: ${Number(c.dias_vencimiento || 0)} día(s)`}
                       </p>
                     </div>
 
                     <div className="flex items-center gap-1">
-                      {canAsignarAcceso && !c.sistema && (
+                      {canAsignarAcceso && !c.sistema && !group.soloInfo && (
                         <button
                           onClick={() => openAcceso(c)}
                           className="p-2 rounded-lg text-slate-400 hover:text-amber-300 hover:bg-amber-500/10"
@@ -293,7 +306,7 @@ export default function PlanCuentasPage() {
                           <Users className="w-4 h-4" />
                         </button>
                       )}
-                      {canEdit && (
+                      {canEdit && !group.soloInfo && (
                         <button
                           onClick={() => openEdit(c)}
                           className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/10"
@@ -360,7 +373,7 @@ export default function PlanCuentasPage() {
                     disabled={!!editing?.sistema}
                     className="w-full bg-arandu-dark border border-white/10 rounded-lg px-3 py-2 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {USOS.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
+                    {USOS.filter(u => !u.soloInfo).map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
                   </select>
                 </div>
                 <div>

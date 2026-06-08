@@ -395,6 +395,8 @@ async def create_adelanto(
         "tipo_cambio": data.tipo_cambio,
         "fecha": data.fecha,
         "notas": data.notas,
+        "cuenta_id": data.cuenta_id,
+        "cuenta_nombre": data.cuenta_nombre,
         "created_at": now,
     }
     await db.adelantos_sueldos.insert_one(doc)

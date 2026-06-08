@@ -327,7 +327,7 @@ export default function VentasPage() {
   const [timbradoForm, setTimbradoForm] = useState({
     modo_numeracion: "manual",
     nro_timbrado: "", establecimiento: "001",
-    fecha_inicio: new Date().toISOString().slice(0,10),
+    fecha_inicio: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
     fecha_vigencia: "",
     puntos_expedicion: [{ codigo: "001", descripcion: "", numero_desde: "", numero_hasta: "" }],
   });
@@ -336,12 +336,16 @@ export default function VentasPage() {
   // Pago modals
   const [pagoFac, setPagoFac] = useState(null);
   const [showPagoModal, setShowPagoModal] = useState(false);
-  const [fechaPago, setFechaPago] = useState(new Date().toISOString().slice(0, 10));
+  const [fechaPago, setFechaPago] = useState(new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
   const [showPagoParcialModal, setShowPagoParcialModal] = useState(false);
   const [pagoParcialFac, setPagoParcialFac] = useState(null);
   const [montoParcial, setMontoParcial] = useState("");
-  const [fechaPagoParcial, setFechaPagoParcial] = useState(new Date().toISOString().slice(0, 10));
+  const [fechaPagoParcial, setFechaPagoParcial] = useState(new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
   const [numeroReciboManual, setNumeroReciboManual] = useState("");
+  // Saldo a favor del cliente al momento del pago
+  const [saldoFavorFac, setSaldoFavorFac] = useState(null);
+  const [aplicarSaldoFavor, setAplicarSaldoFavor] = useState(false);
+  const [montoSaldoAplicar, setMontoSaldoAplicar] = useState("");
   // Cuentas bancarias multi-moneda
   const [cuentasDisp, setCuentasDisp] = useState([]);
   const [cuentasPYG, setCuentasPYG] = useState([]);   // seleccionadas PYG
@@ -353,7 +357,7 @@ export default function VentasPage() {
   // Pagos múltiples (bulk)
   const [selectedFacIds, setSelectedFacIds] = useState(new Set());
   const [showBulkPagoModal, setShowBulkPagoModal] = useState(false);
-  const [bulkFechaPago, setBulkFechaPago] = useState(new Date().toISOString().slice(0, 10));
+  const [bulkFechaPago, setBulkFechaPago] = useState(new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
   const [bulkCuentaId, setBulkCuentaId] = useState("");
   const [bulkLoading, setBulkLoading] = useState(false);
   // Recibos
@@ -391,7 +395,7 @@ export default function VentasPage() {
       if (!res.ok) { toast.error("Error al cargar datos para duplicar"); return; }
       const full = await res.json();
       const { id, numero, ...rest } = full; // eslint-disable-line
-      const payload = { ...rest, numero: null, fecha: new Date().toISOString().split("T")[0] };
+      const payload = { ...rest, numero: null, fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10) };
       const createRes = await fetch(`${API}/admin/presupuestos`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -421,6 +425,7 @@ export default function VentasPage() {
 	  const [ingFormItem, setIngFormItem] = useState(null);   // ingreso a editar
 	  const [showNotaForm, setShowNotaForm] = useState(false);
 	  const [notaFormItem, setNotaFormItem] = useState(null);
+  const [notaDoc, setNotaDoc] = useState(null); // modal documento nota de crédito
 
   // Presupuesto form/costos modals
   const [presFormItem, setPresFormItem] = useState(null); // { presupuesto, mode }
@@ -451,7 +456,7 @@ export default function VentasPage() {
     setSearchParams(next, { replace: true });
   }, [searchParams]); // eslint-disable-line
   // Facturar modal state
-  const [facturaForm, setFacturaForm] = useState({ numero: "", fecha: new Date().toISOString().split('T')[0], forma_pago: "contado", notas: "" });
+  const [facturaForm, setFacturaForm] = useState({ numero: "", fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10), forma_pago: "contado", notas: "" });
   const [facturaMode, setFacturaMode] = useState("nueva");
   const [facturaSearch, setFacturaSearch] = useState("");
   const [facturasDisponibles, setFacturasDisponibles] = useState([]);
@@ -586,7 +591,7 @@ export default function VentasPage() {
     else if (tab === "facturas") fetchFacturas();
     else if (tab === "ingresos") fetchIngresos();
     else if (tab === "recibos") fetchRecibos();
-    else if (tab === "notas") fetchNotas();
+    else if (tab === "notas") { fetchNotas(); fetchFacturas(); }
   }, [tab, mes, filtroTipo, anio, mostrarEliminadas, activeEmpresaPropia?.slug, logoFilter]); // eslint-disable-line
 
   const visibleTabs = TABS.filter(t => hasPermission(TAB_PERMISOS[t.id]));
@@ -671,7 +676,7 @@ export default function VentasPage() {
       setFacturaMode("nueva");
       setFacturaSearch("");
       setFacturaSeleccionada(null);
-      setFacturaForm({ numero: "", fecha: new Date().toISOString().split('T')[0], forma_pago: "contado", notas: "" });
+      setFacturaForm({ numero: "", fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10), forma_pago: "contado", notas: "" });
       fetch(`${API}/admin/facturas?tipo=emitida`, { headers: { Authorization: `Bearer ${token}` } })
         .then(r => r.ok ? r.json() : [])
         .then(data => setFacturasDisponibles(data))
@@ -811,10 +816,35 @@ export default function VentasPage() {
     } catch { toast.error("Error al anular"); }
   };
 
+  // ── Fetch saldo a favor del cliente para el modal de pago ────
+  const fetchSaldoFavor = async (fac) => {
+    setSaldoFavorFac(null);
+    setAplicarSaldoFavor(false);
+    setMontoSaldoAplicar("");
+    if (!fac?.empresa_id) return;
+    try {
+      const params = new URLSearchParams({ logo_tipo: fac.logo_tipo || activeEmpresaPropia?.slug || "", moneda: fac.moneda || "PYG" });
+      const res = await fetch(`${API}/admin/saldos-favor/empresa/${fac.empresa_id}?${params}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        const hayDisponible = (data.saldos || []).some(s => s.monto_disponible > 0);
+        if (hayDisponible) {
+          setSaldoFavorFac(data);
+          // Pre-llenar con el monto menor entre saldo disponible y saldo pendiente de la factura
+          const saldoMoneda = (data.saldos || []).find(s => s.moneda === (fac.moneda || "PYG"));
+          if (saldoMoneda) {
+            const pendiente = (fac.monto || 0) - (fac.monto_pagado || 0);
+            setMontoSaldoAplicar(String(Math.min(saldoMoneda.monto_disponible, pendiente)));
+          }
+        }
+      }
+    } catch {}
+  };
+
   // ── Pago contado: abre modal ─────────────────────────────────
   const openPagoContado = (fac) => {
     setPagoFac(fac);
-    setFechaPago(fac.fecha || new Date().toISOString().slice(0, 10));
+    setFechaPago(fac.fecha || new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
     setNumeroReciboManual("");
     // Pre-seleccionar cuenta predeterminada
     const def = cuentasDisp.find(c => c.logo_tipo === fac.logo_tipo && c.moneda === fac.moneda && c.es_predeterminada)
@@ -824,6 +854,7 @@ export default function VentasPage() {
     setTcPago("");
     setMontoUSD("");
     setShowPagoModal(true);
+    fetchSaldoFavor(fac);
   };
 
   // ── Pago parcial crédito ─────────────────────────────────────
@@ -831,7 +862,7 @@ export default function VentasPage() {
     setPagoParcialFac(fac);
     const pendiente = (fac.monto || 0) - (fac.monto_pagado || 0);
     setMontoParcial(String(pendiente > 0 ? pendiente : fac.monto));
-    setFechaPagoParcial(new Date().toISOString().slice(0, 10));
+    setFechaPagoParcial(new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
     setNumeroReciboManual("");
     const def = cuentasDisp.find(c => c.logo_tipo === fac.logo_tipo && c.moneda === fac.moneda && c.es_predeterminada)
       || cuentasDisp.find(c => c.logo_tipo === fac.logo_tipo && c.moneda === fac.moneda);
@@ -840,6 +871,7 @@ export default function VentasPage() {
     setTcPago("");
     setMontoUSD("");
     setShowPagoParcialModal(true);
+    fetchSaldoFavor(fac);
   };
 
   // Construir cuenta_id para pago (simplificado: primera cuenta PYG, si hay USD la consideramos)
@@ -869,8 +901,20 @@ export default function VentasPage() {
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || "Error"); }
       const data = await res.json();
+      // Aplicar saldo a favor si el operador lo seleccionó
+      if (aplicarSaldoFavor && parseFloat(montoSaldoAplicar) > 0 && saldoFavorFac?.detalle?.length) {
+        const sfId = saldoFavorFac.detalle[0]?.id;
+        if (sfId) {
+          await fetch(`${API}/admin/saldos-favor/${sfId}/aplicar`, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ factura_id: pagoFac.id, factura_numero: pagoFac.numero, monto: parseFloat(montoSaldoAplicar) }),
+          }).catch(() => {});
+        }
+      }
       toast.success(`Pagada · Recibo ${data.recibo?.numero || ""}`);
       setShowPagoModal(false);
+      setSaldoFavorFac(null); setAplicarSaldoFavor(false); setMontoSaldoAplicar("");
       fetchFacturas();
     } catch (e) { toast.error(e.message || "Error al registrar pago"); }
   };
@@ -894,12 +938,24 @@ export default function VentasPage() {
       });
       if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || "Error"); }
       const data = await res.json();
+      // Aplicar saldo a favor si el operador lo seleccionó
+      if (aplicarSaldoFavor && parseFloat(montoSaldoAplicar) > 0 && saldoFavorFac?.detalle?.length) {
+        const sfId = saldoFavorFac.detalle[0]?.id;
+        if (sfId) {
+          await fetch(`${API}/admin/saldos-favor/${sfId}/aplicar`, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ factura_id: pagoParcialFac.id, factura_numero: pagoParcialFac.numero, monto: parseFloat(montoSaldoAplicar) }),
+          }).catch(() => {});
+        }
+      }
       const pendiente = (pagoParcialFac.monto || 0) - (pagoParcialFac.monto_pagado || 0);
       const msg = monto >= pendiente
         ? `Pagada completamente · Recibo ${data.recibo?.numero || ""}`
         : `Pago parcial registrado · Recibo ${data.recibo?.numero || ""}`;
       toast.success(msg);
       setShowPagoParcialModal(false);
+      setSaldoFavorFac(null); setAplicarSaldoFavor(false); setMontoSaldoAplicar("");
       fetchFacturas();
     } catch (e) { toast.error(e.message || "Error al registrar pago"); }
   };
@@ -1051,7 +1107,7 @@ export default function VentasPage() {
             modo_numeracion: cfg.modo_numeracion || "manual",
             nro_timbrado: t.nro_timbrado || "",
             establecimiento: t.establecimiento || "001",
-            fecha_inicio: t.fecha_inicio || new Date().toISOString().slice(0,10),
+            fecha_inicio: t.fecha_inicio || new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
             fecha_vigencia: t.fecha_vigencia || "",
             puntos_expedicion: t.puntos_expedicion?.length
               ? t.puntos_expedicion.map(p => ({
@@ -1137,7 +1193,7 @@ export default function VentasPage() {
 	      const total = countMonto(filteredRecibos);
 	      const pyg = countMonto(filteredRecibos.filter(r => (r.moneda || "PYG") === "PYG"));
 	      const usd = filteredRecibos.filter(r => r.moneda === "USD");
-	      const hoy = filteredRecibos.filter(r => r.fecha_pago === new Date().toISOString().slice(0, 10));
+	      const hoy = filteredRecibos.filter(r => r.fecha_pago === new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
 	      return [
 	        { label: "Recibos", ...total, color: "text-amber-300" },
 	        { label: "En guaraníes", ...pyg, color: "text-emerald-300" },
@@ -1593,7 +1649,7 @@ export default function VentasPage() {
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-slate-400">{selectedFacIds.size} seleccionada{selectedFacIds.size !== 1 ? "s" : ""}</span>
                   <button
-                    onClick={() => { setBulkFechaPago(new Date().toISOString().slice(0, 10)); setBulkCuentaId(cuentasDisp[0]?.id || ""); setShowBulkPagoModal(true); }}
+                    onClick={() => { setBulkFechaPago(new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10)); setBulkCuentaId(cuentasDisp[0]?.id || ""); setShowBulkPagoModal(true); }}
                     className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-600/30 rounded-lg transition-all font-body"
                   >
                     <CheckCircle className="w-3.5 h-3.5" /> Pagar seleccionadas ({selectedFacIds.size})
@@ -1943,6 +1999,9 @@ export default function VentasPage() {
 	                        <td className="px-4 py-3 text-right text-rose-300 font-medium">{fmtMonto(n.monto, n.moneda)}</td>
 	                        <td className="px-4 py-3 text-right">
 	                          <div className="flex items-center justify-end gap-2">
+	                            <button onClick={() => setNotaDoc(n)} className="text-slate-400 hover:text-rose-300 transition-colors" title="Ver / Imprimir">
+	                              <Printer className="w-4 h-4" />
+	                            </button>
 	                            {/* editar nota crédito deshabilitado — para corregir eliminar y recrear */}
 	                            {!mostrarEliminadas.notas && hasPermission("notas_credito.eliminar") && (
 	                              <button onClick={async () => {
@@ -2011,6 +2070,7 @@ export default function VentasPage() {
 	        <NotaCreditoFormModal
 	          nota={notaFormItem}
 	          facturas={facturas.filter(f => f.tipo === "emitida" && f.estado !== "anulada")}
+	          cuentasDisp={cuentasDisp}
 	          activeLogoTipo={activeEmpresaPropia?.slug || "arandujar"}
 	          token={token}
 	          API={API}
@@ -2492,6 +2552,11 @@ export default function VentasPage() {
           setTcPago={setTcPago}
           montoUSD={montoUSD}
           setMontoUSD={setMontoUSD}
+          saldoFavor={saldoFavorFac}
+          aplicarSaldoFavor={aplicarSaldoFavor}
+          setAplicarSaldoFavor={setAplicarSaldoFavor}
+          montoSaldoAplicar={montoSaldoAplicar}
+          setMontoSaldoAplicar={setMontoSaldoAplicar}
           onClose={() => setShowPagoModal(false)}
           onConfirm={handlePagarContado}
           fmtMonto={fmtMonto}
@@ -2517,6 +2582,11 @@ export default function VentasPage() {
           setTcPago={setTcPago}
           montoUSD={montoUSD}
           setMontoUSD={setMontoUSD}
+          saldoFavor={saldoFavorFac}
+          aplicarSaldoFavor={aplicarSaldoFavor}
+          setAplicarSaldoFavor={setAplicarSaldoFavor}
+          montoSaldoAplicar={montoSaldoAplicar}
+          setMontoSaldoAplicar={setMontoSaldoAplicar}
           onClose={() => setShowPagoParcialModal(false)}
           onConfirm={handlePagoParcial}
           fmtMonto={fmtMonto}
@@ -2543,6 +2613,15 @@ export default function VentasPage() {
           onClose={() => setReciboDoc(null)}
           fmtMonto={fmtMonto}
           cuentasDisp={cuentasDisp}
+        />
+      )}
+
+      {notaDoc && (
+        <NotaCreditoDocModal
+          nota={notaDoc}
+          activeEmpresaPropia={empresasPropias.find(ep => ep.slug === notaDoc.logo_tipo) || activeEmpresaPropia}
+          onClose={() => setNotaDoc(null)}
+          fmtMonto={fmtMonto}
         />
       )}
     </div>
@@ -3976,6 +4055,7 @@ function FacturaDocModal({ factura: f, activeEmpresaPropia = null, presupuestos 
 function PagoModal({ fac, fechaPago, setFechaPago, numeroReciboManual, setNumeroReciboManual,
   cuentasDisp, cuentasPYG, setCuentasPYG, cuentasUSD, setCuentasUSD,
   tcPago, setTcPago, montoUSD, setMontoUSD,
+  saldoFavor, aplicarSaldoFavor, setAplicarSaldoFavor, montoSaldoAplicar, setMontoSaldoAplicar,
   onClose, onConfirm, fmtMonto }) {
 
   React.useEffect(() => {
@@ -4132,6 +4212,39 @@ function PagoModal({ fac, fechaPago, setFechaPago, numeroReciboManual, setNumero
               )}
             </div>
           )}
+          {/* Banner saldo a favor */}
+          {saldoFavor && (saldoFavor.saldos || []).some(s => s.monto_disponible > 0) && (() => {
+            const sf = (saldoFavor.saldos || []).find(s => s.moneda === (fac.moneda || "PYG"));
+            if (!sf || sf.monto_disponible <= 0) return null;
+            return (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-amber-300 text-xs font-semibold">⭐ Saldo a favor del cliente</p>
+                  <span className="text-amber-200 text-xs font-bold">{fmtMonto(sf.monto_disponible, sf.moneda)}</span>
+                </div>
+                <p className="text-slate-400 text-[11px]">{fac.empresa_nombre || fac.razon_social} tiene un crédito disponible. ¿Desea aplicarlo?</p>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={aplicarSaldoFavor} onChange={e => setAplicarSaldoFavor(e.target.checked)} className="accent-amber-500 w-3.5 h-3.5" />
+                  <span className="text-amber-200 text-xs">Aplicar saldo a favor al pago</span>
+                </label>
+                {aplicarSaldoFavor && (
+                  <div>
+                    <label className="text-slate-400 text-[10px] block mb-1">Monto a aplicar</label>
+                    <input type="number" min="0" max={Math.min(sf.monto_disponible, total)} step="any"
+                      value={montoSaldoAplicar}
+                      onChange={e => setMontoSaldoAplicar(e.target.value)}
+                      className="w-full bg-arandu-dark border border-amber-500/30 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-amber-400"
+                    />
+                    {parseFloat(montoSaldoAplicar) > 0 && (
+                      <p className="text-amber-300 text-[11px] mt-1">
+                        Saldo restante después: {fmtMonto(sf.monto_disponible - Math.min(parseFloat(montoSaldoAplicar) || 0, sf.monto_disponible), sf.moneda)}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <div className="flex gap-3 pt-1">
             <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm transition-all">
               Cancelar
@@ -4153,6 +4266,7 @@ function PagoModal({ fac, fechaPago, setFechaPago, numeroReciboManual, setNumero
 function PagoParcialModal({ fac, montoParcial, setMontoParcial, fechaPagoParcial, setFechaPagoParcial,
   numeroReciboManual, setNumeroReciboManual, cuentasDisp, cuentasPYG, setCuentasPYG,
   cuentasUSD, setCuentasUSD, tcPago, setTcPago, montoUSD, setMontoUSD,
+  saldoFavor, aplicarSaldoFavor, setAplicarSaldoFavor, montoSaldoAplicar, setMontoSaldoAplicar,
   onClose, onConfirm, fmtMonto }) {
 
   React.useEffect(() => {
@@ -4333,6 +4447,39 @@ function PagoParcialModal({ fac, montoParcial, setMontoParcial, fechaPagoParcial
               )}
             </div>
           )}
+          {/* Banner saldo a favor */}
+          {saldoFavor && (saldoFavor.saldos || []).some(s => s.monto_disponible > 0) && (() => {
+            const sf = (saldoFavor.saldos || []).find(s => s.moneda === monedaFac);
+            if (!sf || sf.monto_disponible <= 0) return null;
+            return (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-amber-300 text-xs font-semibold">⭐ Saldo a favor del cliente</p>
+                  <span className="text-amber-200 text-xs font-bold">{fmtMonto(sf.monto_disponible, sf.moneda)}</span>
+                </div>
+                <p className="text-slate-400 text-[11px]">{fac.empresa_nombre || fac.razon_social} tiene un crédito disponible. ¿Desea aplicarlo?</p>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={aplicarSaldoFavor} onChange={e => setAplicarSaldoFavor(e.target.checked)} className="accent-amber-500 w-3.5 h-3.5" />
+                  <span className="text-amber-200 text-xs">Aplicar saldo a favor al pago</span>
+                </label>
+                {aplicarSaldoFavor && (
+                  <div>
+                    <label className="text-slate-400 text-[10px] block mb-1">Monto a aplicar</label>
+                    <input type="number" min="0" max={Math.min(sf.monto_disponible, pendiente)} step="any"
+                      value={montoSaldoAplicar}
+                      onChange={e => setMontoSaldoAplicar(e.target.value)}
+                      className="w-full bg-arandu-dark border border-amber-500/30 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-amber-400"
+                    />
+                    {parseFloat(montoSaldoAplicar) > 0 && (
+                      <p className="text-amber-300 text-[11px] mt-1">
+                        Saldo restante después: {fmtMonto(sf.monto_disponible - Math.min(parseFloat(montoSaldoAplicar) || 0, sf.monto_disponible), sf.moneda)}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <div className="flex gap-3 pt-1">
             <button onMouseDown={(e) => e.target === e.currentTarget && onClose()} className="flex-1 px-4 py-2.5 bg-white/5 hover:bg-white/10 text-slate-300 rounded-lg text-sm transition-all">
               Cancelar
@@ -4634,7 +4781,7 @@ function IngresosFormModal({ ingreso, cuentasDisp, activeLogoTipo, token, API, o
   const [form, setForm] = React.useState({
     descripcion: ingreso?.descripcion || "",
     categoria:   ingreso?.categoria || "Transferencia",
-    fecha:       ingreso?.fecha || new Date().toISOString().slice(0, 10),
+    fecha:       ingreso?.fecha || new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
     monto:       ingreso?.monto ? String(ingreso.monto) : "",
     moneda:      ingreso?.moneda || "PYG",
     tipo_cambio: ingreso?.tipo_cambio ? String(ingreso.tipo_cambio) : "",
@@ -4815,22 +4962,34 @@ function IngresosFormModal({ ingreso, cuentasDisp, activeLogoTipo, token, API, o
   );
 }
 
-function NotaCreditoFormModal({ nota, facturas, activeLogoTipo, token, API, onClose, onSaved }) {
+function NotaCreditoFormModal({ nota, facturas, cuentasDisp = [], activeLogoTipo, token, API, onClose, onSaved }) {
   const isEdit = !!nota;
   const [saving, setSaving] = React.useState(false);
   const [form, setForm] = React.useState({
     numero: nota?.numero || "",
-    fecha: nota?.fecha || new Date().toISOString().slice(0, 10),
+    fecha: nota?.fecha || new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
     factura_id: nota?.factura_id || "",
-    motivo: nota?.motivo || "",
+    tipo_motivo: nota?.tipo_motivo || "descuento",
+    motivo_detalle: nota?.motivo_detalle || "",
     monto: nota?.monto || "",
     moneda: nota?.moneda || "PYG",
     tipo_cambio: nota?.tipo_cambio || "",
     notas: nota?.notas || "",
     estado: nota?.estado || "emitida",
+    cuenta_id: nota?.cuenta_id || "",
+    cuenta_nombre: nota?.cuenta_nombre || "",
+    items_devueltos: nota?.items_devueltos || [],
+    tipo_cobro: nota?.tipo_cobro || "saldo_favor",
   });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const factura = facturas.find(f => f.id === form.factura_id);
+  const facturaEsPendiente = factura && ["pendiente", "parcial"].includes(factura.estado);
+  const facturaEsPagada = factura && factura.estado === "pagada";
+
+  // Saldo disponible de la factura para esta nota (descuenta notas ya aplicadas)
+  const notasYaAplicadas = (factura?.notas_credito || []).filter(n => n.id !== nota?.id);
+  const yaAcreditadoFac = notasYaAplicadas.reduce((s, n) => s + (n.monto || 0), 0);
+  const saldoDisponibleFac = factura ? Math.max((factura.monto || 0) - yaAcreditadoFac, 0) : null;
 
   React.useEffect(() => {
     if (!factura || isEdit) return;
@@ -4845,10 +5004,12 @@ function NotaCreditoFormModal({ nota, facturas, activeLogoTipo, token, API, onCl
 
   const handleSave = async () => {
     if (!form.numero.trim()) { alert("El número es requerido"); return; }
-    if (!form.motivo.trim()) { alert("El motivo es requerido"); return; }
+    if (!form.factura_id) { alert("Debés vincular una factura de venta"); return; }
     if (!form.monto || Number(form.monto) <= 0) { alert("El monto debe ser mayor a cero"); return; }
     setSaving(true);
     try {
+      const motivoLabel = form.tipo_motivo === "devolucion" ? "Devolución" : "Descuento";
+      const motivoTexto = form.motivo_detalle ? `${motivoLabel} — ${form.motivo_detalle}` : motivoLabel;
       const body = {
         numero: form.numero.trim(),
         fecha: form.fecha,
@@ -4857,13 +5018,20 @@ function NotaCreditoFormModal({ nota, facturas, activeLogoTipo, token, API, onCl
         empresa_id: factura?.empresa_id || nota?.empresa_id || null,
         razon_social: factura?.razon_social || factura?.empresa_nombre || nota?.razon_social || null,
         ruc: factura?.ruc || nota?.ruc || null,
-        motivo: form.motivo.trim(),
+        motivo: motivoTexto,
+        tipo_motivo: form.tipo_motivo,
+        motivo_detalle: form.motivo_detalle || null,
+        items_devueltos: form.tipo_motivo === "devolucion" ? form.items_devueltos : [],
         monto: Number(form.monto),
         moneda: form.moneda,
         tipo_cambio: form.tipo_cambio ? Number(form.tipo_cambio) : null,
         logo_tipo: nota?.logo_tipo || factura?.logo_tipo || activeLogoTipo,
         estado: form.estado,
         notas: form.notas || null,
+        cuenta_id: form.cuenta_id || null,
+        cuenta_nombre: form.cuenta_nombre || null,
+        // tipo_cobro: solo relevante cuando la factura ya estaba pagada
+        tipo_cobro: facturaEsPagada ? (form.tipo_cobro || "saldo_favor") : null,
       };
       const url = isEdit ? `${API}/admin/notas-credito/${nota.id}` : `${API}/admin/notas-credito`;
       const res = await fetch(url, {
@@ -4902,18 +5070,128 @@ function NotaCreditoFormModal({ nota, facturas, activeLogoTipo, token, API, onCl
             </div>
           </div>
           <div>
-            <label className={lbl}>Factura vinculada</label>
-            <select className={inp} value={form.factura_id} onChange={e => set("factura_id", e.target.value)}>
-              <option value="">Sin vincular</option>
+            <label className={lbl}>Factura vinculada *</label>
+            <select
+              className={inp + (!form.factura_id ? " border-red-400" : "")}
+              value={form.factura_id}
+              onChange={e => {
+                const fac = facturas.find(x => x.id === e.target.value);
+                const notasExist = (fac?.notas_credito || []);
+                const acreditado = notasExist.reduce((s, n) => s + (n.monto || 0), 0);
+                const disponible = fac ? Math.max((fac.monto || 0) - acreditado, 0) : null;
+                setForm(f => ({
+                  ...f,
+                  factura_id: e.target.value,
+                  moneda: fac?.moneda || f.moneda,
+                  tipo_cambio: fac?.tipo_cambio || f.tipo_cambio,
+                  monto: disponible != null ? String(disponible) : f.monto,
+                  items_devueltos: [],
+                  tipo_cobro: "saldo_favor",
+                }));
+              }}
+            >
+              <option value="">— Seleccioná una factura —</option>
               {facturas.map(f => (
                 <option key={f.id} value={f.id}>{f.numero} · {f.razon_social || f.empresa_nombre || "Cliente"} · {fmtMonto(f.monto, f.moneda)}</option>
               ))}
             </select>
+            {facturas.length === 0 && <p className="text-xs text-amber-600 mt-1">No hay facturas cargadas.</p>}
+            {form.factura_id && (() => { const fac = facturas.find(x => x.id === form.factura_id); return fac ? <p className="text-xs text-gray-500 mt-1">Cliente: {fac.razon_social || fac.empresa_nombre} · Factura N° {fac.numero}</p> : null; })()}
           </div>
+
+          {/* Saldo disponible: alerta si ya hay notas aplicadas */}
+          {factura && yaAcreditadoFac > 0 && (
+            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              <span className="text-amber-500 text-base mt-0.5">⚠</span>
+              <div className="text-xs text-amber-700 space-y-0.5">
+                <p><strong>Esta factura ya tiene notas de crédito aplicadas.</strong></p>
+                <p>Ya acreditado: <strong>{parseFloat(yaAcreditadoFac).toLocaleString("es-PY")} {factura.moneda || "PYG"}</strong> · Disponible para esta nota: <strong>{parseFloat(saldoDisponibleFac).toLocaleString("es-PY")} {factura.moneda || "PYG"}</strong></p>
+              </div>
+            </div>
+          )}
+
+          {/* Banner: factura pendiente → ajuste automático en plan de cuentas (cobrar) */}
+          {facturaEsPendiente && (
+            <div className="flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+              <span className="text-blue-500 text-base mt-0.5">ℹ</span>
+              <p className="text-xs text-blue-700">
+                Esta factura está <strong>pendiente de cobro</strong>. La nota de crédito reducirá el saldo a cobrar en el plan de cuentas (Cobrar). No se genera movimiento de caja.
+              </p>
+            </div>
+          )}
+
+          {/* Selector tipo_cobro: solo cuando la factura ya fue pagada */}
+          {facturaEsPagada && (
+            <div>
+              <label className={lbl}>¿Cómo se gestiona el crédito? *</label>
+              <select className={inp} value={form.tipo_cobro} onChange={e => {
+                set("tipo_cobro", e.target.value);
+                if (e.target.value === "saldo_favor") { set("cuenta_id", ""); set("cuenta_nombre", ""); }
+              }}>
+                <option value="saldo_favor">Saldo a favor del cliente</option>
+                <option value="reembolso">Reembolso al cliente</option>
+              </select>
+              {form.tipo_cobro === "saldo_favor" && (
+                <p className="text-xs text-emerald-600 mt-1">El monto quedará disponible como crédito para aplicar en futuras facturas del cliente.</p>
+              )}
+              {form.tipo_cobro === "reembolso" && (
+                <p className="text-xs text-amber-600 mt-1">Se registra el reembolso. Acordate de registrar el egreso de caja o transferencia correspondiente.</p>
+              )}
+            </div>
+          )}
+
           <div>
             <label className={lbl}>Motivo *</label>
-            <input className={inp} value={form.motivo} onChange={e => set("motivo", e.target.value)} placeholder="Devolución, descuento, anulación parcial..." />
+            <select className={inp} value={form.tipo_motivo} onChange={e => { set("tipo_motivo", e.target.value); set("items_devueltos", []); }}>
+              <option value="descuento">Descuento</option>
+              <option value="devolucion">Devolución</option>
+            </select>
           </div>
+          <div>
+            <label className={lbl}>Detalle (opcional)</label>
+            <input className={inp} value={form.motivo_detalle} onChange={e => set("motivo_detalle", e.target.value)} placeholder="Descripción adicional..." />
+          </div>
+          {form.tipo_motivo === "devolucion" && form.factura_id && (() => {
+            const fac = facturas.find(x => x.id === form.factura_id);
+            const items = fac?.conceptos || [];
+            if (items.length === 0) return (
+              <p className="text-xs text-amber-600">Esta factura no tiene ítems detallados. Ingresá el monto manualmente.</p>
+            );
+            return (
+              <div className="border border-gray-200 rounded-lg p-3 space-y-2 bg-gray-50">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Ítems a devolver</p>
+                {items.map((item, idx) => {
+                  const devItem = form.items_devueltos.find(d => d._idx === idx) || { _idx: idx, cantidad: 0 };
+                  const cantDev = Number(devItem.cantidad) || 0;
+                  return (
+                    <div key={idx} className="flex items-center gap-2 text-sm">
+                      <div className="flex-1 text-gray-700 truncate">{item.descripcion}</div>
+                      <div className="text-gray-400 text-xs whitespace-nowrap">Máx: {item.cantidad}</div>
+                      <input
+                        type="number" min="0" max={item.cantidad} step="any"
+                        value={cantDev || ""}
+                        placeholder="0"
+                        onChange={e => {
+                          const val = Math.min(parseFloat(e.target.value) || 0, item.cantidad);
+                          const pu = item.precio_unitario || (item.subtotal / item.cantidad) || 0;
+                          const newItems = form.items_devueltos.filter(d => d._idx !== idx);
+                          if (val > 0) newItems.push({ _idx: idx, producto_id: item.producto_id || null, descripcion: item.descripcion, cantidad: val, precio_unitario: pu, subtotal: val * pu });
+                          const total = newItems.reduce((s, d) => s + (d.subtotal || 0), 0);
+                          setForm(f => ({ ...f, items_devueltos: newItems, monto: total > 0 ? String(total) : f.monto }));
+                        }}
+                        className="w-20 px-2 py-1 border border-gray-300 rounded text-xs text-right focus:outline-none focus:ring-1 focus:ring-rose-500"
+                      />
+                    </div>
+                  );
+                })}
+                {form.items_devueltos.length > 0 && (
+                  <p className="text-xs text-emerald-600 text-right pt-1 font-medium">
+                    Total calculado: {parseFloat(form.monto || 0).toLocaleString("es-PY")} {form.moneda}
+                  </p>
+                )}
+              </div>
+            );
+          })()}
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className={lbl}>Moneda</label>
@@ -4924,8 +5202,8 @@ function NotaCreditoFormModal({ nota, facturas, activeLogoTipo, token, API, onCl
               </select>
             </div>
             <div className="col-span-2">
-              <label className={lbl}>Monto *</label>
-              <input type="number" min="0" step="any" className={inp} value={form.monto} onChange={e => set("monto", e.target.value)} />
+              <label className={lbl}>Monto *{saldoDisponibleFac != null ? <span className="text-gray-400 font-normal ml-1">(máx: {parseFloat(saldoDisponibleFac).toLocaleString("es-PY")})</span> : ""}</label>
+              <input type="number" min="0" max={saldoDisponibleFac != null ? saldoDisponibleFac : undefined} step="any" className={inp} value={form.monto} onChange={e => set("monto", e.target.value)} />
             </div>
           </div>
           {form.moneda !== "PYG" && (
@@ -4941,6 +5219,20 @@ function NotaCreditoFormModal({ nota, facturas, activeLogoTipo, token, API, onCl
               <option value="anulada">Anulada</option>
             </select>
           </div>
+          {/* Cuenta bancaria: solo visible cuando hay movimiento real de plata */}
+          {form.tipo_cobro !== "saldo_favor" && (
+            <div>
+              <label className={lbl}>Cuenta bancaria</label>
+              <select className={inp} value={form.cuenta_id} onChange={e => {
+                const c = cuentasDisp.find(x => x.id === e.target.value);
+                set("cuenta_id", e.target.value);
+                set("cuenta_nombre", c?.nombre || "");
+              }}>
+                <option value="">— Sin especificar —</option>
+                {cuentasDisp.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label className={lbl}>Notas</label>
             <textarea className={inp + " resize-none min-h-[70px]"} value={form.notas} onChange={e => set("notas", e.target.value)} />
@@ -4951,6 +5243,214 @@ function NotaCreditoFormModal({ nota, facturas, activeLogoTipo, token, API, onCl
           <button onClick={handleSave} disabled={saving} className="flex items-center gap-2 px-5 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg shadow">
             <Save className="w-4 h-4" /> {saving ? "Guardando..." : "Guardar"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NotaCreditoDocModal — vista visual + impresión de nota de crédito
+// ═══════════════════════════════════════════════════════════════
+function NotaCreditoDocModal({ nota: n, activeEmpresaPropia = null, onClose, fmtMonto }) {
+  React.useEffect(() => {
+    const esc = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [onClose]);
+
+  const accentColor = n.logo_tipo === "jar" ? "#dc2626" : n.logo_tipo === "arandu" ? "#2563eb" : "#1d4ed8";
+  const emisorNombre = n.emisor_razon_social || (n.logo_tipo === "jar" ? "JAR Informática" : n.logo_tipo === "arandu" ? "Arandu Informática" : "AranduJAR Informática");
+  const emisorRuc = n.emisor_ruc || activeEmpresaPropia?.ruc || "";
+  const emisorDireccion = n.emisor_direccion || activeEmpresaPropia?.direccion || "";
+  const emisorTelefono = n.emisor_telefono || activeEmpresaPropia?.telefono || "";
+  const emisorEmail = n.emisor_email || activeEmpresaPropia?.email || "";
+  const emisorLogoUrl = n.emisor_logo_url || activeEmpresaPropia?.logo_url || null;
+  const fmt = (v, moneda) => fmtMonto(v, moneda || n.moneda);
+
+  const tipoCobroLabel = n.tipo_cobro === "saldo_favor"
+    ? "Saldo a favor del cliente"
+    : n.tipo_cobro === "reembolso"
+    ? "Reembolso al cliente"
+    : "Ajuste en plan de cuentas";
+
+  const motivoLabel = n.tipo_motivo === "devolucion" ? "Devolución" : "Descuento";
+
+  const handlePrint = () => {
+    const w = window.open("", "_blank");
+    if (!w) { alert("Permita ventanas emergentes para imprimir."); return; }
+    const docLogo = svgDocumentHeaderLogoHtml(n.logo_tipo, emisorLogoUrl);
+    const itemsRows = n.items_devueltos && n.items_devueltos.length > 0
+      ? n.items_devueltos.map(item => `
+          <tr>
+            <td style="padding:7px 10px;border-bottom:1px solid #f1f5f9">${item.descripcion || "Ítem"}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid #f1f5f9;text-align:center">${item.cantidad || 1}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid #f1f5f9;text-align:right">${fmt(item.precio_unitario, n.moneda)}</td>
+            <td style="padding:7px 10px;border-bottom:1px solid #f1f5f9;text-align:right">${fmt((item.precio_unitario || 0) * (item.cantidad || 1), n.moneda)}</td>
+          </tr>`).join("")
+      : `<tr><td colspan="4" style="padding:10px;text-align:center;color:#94a3b8;font-size:13px">Nota de ${motivoLabel.toLowerCase()} sin ítems detallados</td></tr>`;
+
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Nota de Crédito ${n.numero}</title>
+      <style>
+        html,body{height:auto;overflow:visible;font-family:Arial,Helvetica,sans-serif;background:white;color:#111;-webkit-print-color-adjust:exact;print-color-adjust:exact;margin:0;padding:0}
+        .wrap{width:100%;max-width:174mm;margin:0 auto;padding:20px}
+        @media print{@page{size:A4;margin:14mm 16mm}html,body{height:auto}}
+      </style></head><body>
+      <div class="wrap">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid ${accentColor};padding-bottom:14px;margin-bottom:16px">
+          <div>${docLogo}</div>
+          <div style="text-align:right">
+            <div style="font-size:22px;font-weight:900;color:${accentColor};letter-spacing:1px">NOTA DE CRÉDITO</div>
+            <div style="font-size:18px;font-weight:700;color:#1f2937;margin-top:2px">N° ${n.numero}</div>
+            ${emisorRuc ? `<div style="font-size:11px;color:#6b7280;margin-top:2px">RUC: ${emisorRuc}</div>` : ""}
+            <div style="font-size:11px;color:#6b7280;margin-top:2px">Fecha: ${n.fecha || "—"}</div>
+          </div>
+        </div>
+
+        <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:13px">
+          <tr style="background:#f8fafc">
+            <td style="padding:8px 10px;color:#6b7280;width:35%">Empresa emisora:</td>
+            <td style="padding:8px 10px;font-weight:600">${emisorNombre}${emisorRuc ? ` · RUC: ${emisorRuc}` : ""}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;color:#6b7280">Cliente:</td>
+            <td style="padding:8px 10px;font-weight:600">${n.razon_social || "—"}</td>
+          </tr>
+          ${n.ruc ? `<tr style="background:#f8fafc"><td style="padding:8px 10px;color:#6b7280">RUC cliente:</td><td style="padding:8px 10px">${n.ruc}</td></tr>` : ""}
+          <tr style="background:#f8fafc">
+            <td style="padding:8px 10px;color:#6b7280">Factura vinculada:</td>
+            <td style="padding:8px 10px;font-family:monospace;font-weight:600">${n.factura_numero || "—"}</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;color:#6b7280">Tipo:</td>
+            <td style="padding:8px 10px">${motivoLabel}${n.motivo_detalle ? ` — ${n.motivo_detalle}` : ""}</td>
+          </tr>
+          <tr style="background:#f8fafc">
+            <td style="padding:8px 10px;color:#6b7280">Gestión del crédito:</td>
+            <td style="padding:8px 10px">${tipoCobroLabel}</td>
+          </tr>
+          ${n.cuenta_nombre ? `<tr><td style="padding:8px 10px;color:#6b7280">Cuenta:</td><td style="padding:8px 10px">🏦 ${n.cuenta_nombre}</td></tr>` : ""}
+        </table>
+
+        ${n.items_devueltos && n.items_devueltos.length > 0 ? `
+        <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:13px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
+          <thead>
+            <tr style="background:${accentColor}15">
+              <th style="padding:8px 10px;text-align:left;color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Descripción</th>
+              <th style="padding:8px 10px;text-align:center;color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Cant.</th>
+              <th style="padding:8px 10px;text-align:right;color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.5px">P. Unitario</th>
+              <th style="padding:8px 10px;text-align:right;color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Subtotal</th>
+            </tr>
+          </thead>
+          <tbody>${itemsRows}</tbody>
+        </table>` : ""}
+
+        <div style="background:${accentColor}10;border:2px solid ${accentColor}40;border-radius:8px;padding:14px;text-align:center;margin:16px 0">
+          <div style="color:#6b7280;font-size:11px;letter-spacing:.8px;text-transform:uppercase;margin-bottom:4px">MONTO DE LA NOTA DE CRÉDITO</div>
+          <div style="font-size:30px;font-weight:900;color:${accentColor}">${fmt(n.monto)}</div>
+          ${n.moneda === "USD" && n.tipo_cambio ? `<div style="font-size:12px;color:#94a3b8;margin-top:4px">Tipo de cambio: ₲ ${Number(n.tipo_cambio).toLocaleString("es-PY")} / USD</div>` : ""}
+        </div>
+
+        ${n.notas ? `<div style="border:1px solid #e2e8f0;border-radius:6px;padding:10px;margin-bottom:12px"><span style="color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:.5px">Observaciones: </span><span style="font-size:13px">${n.notas}</span></div>` : ""}
+
+        <div style="font-size:11px;color:#9ca3af;text-align:center;margin-top:16px;border-top:1px solid #f1f5f9;padding-top:10px">
+          ${emisorDireccion}${emisorTelefono ? ` · Tel: ${emisorTelefono}` : ""}${emisorEmail ? ` · ${emisorEmail}` : ""}
+        </div>
+      </div>
+    </body></html>`);
+    w.document.close();
+    setTimeout(() => w.print(), 500);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl relative" onClick={e => e.stopPropagation()}>
+        {/* Toolbar */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
+          <span className="text-gray-600 font-medium text-sm">Nota de crédito</span>
+          <div className="flex gap-2">
+            <button onClick={handlePrint}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs rounded-lg transition-all">
+              <Printer className="w-3.5 h-3.5" /> Imprimir
+            </button>
+            <button onClick={onClose}
+              className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs rounded-lg transition-all">
+              Cerrar
+            </button>
+          </div>
+        </div>
+
+        {/* Header del documento */}
+        <div className="p-6 text-center border-b-4" style={{ borderColor: accentColor }}>
+          <div className="mb-3 flex justify-center">
+            {n.logo_tipo === "arandu" && <LogoArandu />}
+            {n.logo_tipo === "jar" && <LogoJar />}
+            {(!n.logo_tipo || n.logo_tipo === "arandujar") && <LogoAranduJarDoc />}
+          </div>
+          <h2 className="text-xl font-black text-gray-800 tracking-wider">NOTA DE CRÉDITO</h2>
+          <p className="text-3xl font-black mt-1" style={{ color: accentColor }}>N° {n.numero}</p>
+          {emisorRuc && <p className="text-gray-600 text-sm font-semibold mt-1">RUC: {emisorRuc}</p>}
+          <p className="text-gray-400 text-xs mt-1">{n.fecha || ""}</p>
+        </div>
+
+        {/* Datos */}
+        <div className="p-6 space-y-3">
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="bg-gray-50 rounded-lg p-3 col-span-2">
+              <p className="text-gray-400 text-xs uppercase tracking-wide mb-1">Cliente</p>
+              <p className="text-gray-800 font-semibold">{n.razon_social || "—"}</p>
+              {n.ruc && <p className="text-gray-500 text-xs mt-0.5">RUC: {n.ruc}</p>}
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <p className="text-gray-400 text-xs uppercase tracking-wide mb-1">Factura vinculada</p>
+              <p className="text-gray-800 font-mono font-semibold">{n.factura_numero || "—"}</p>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <p className="text-gray-400 text-xs uppercase tracking-wide mb-1">Tipo</p>
+              <p className="text-gray-800 font-medium">{n.tipo_motivo === "devolucion" ? "Devolución" : "Descuento"}</p>
+              {n.motivo_detalle && <p className="text-gray-500 text-xs mt-0.5">{n.motivo_detalle}</p>}
+            </div>
+          </div>
+
+          {/* Tipo cobro */}
+          <div className="rounded-lg px-3 py-2 text-sm flex items-center justify-between"
+            style={{ background: `${accentColor}10`, border: `1px solid ${accentColor}30` }}>
+            <span className="text-gray-500 text-xs uppercase tracking-wide">Gestión del crédito</span>
+            <span className="font-medium text-gray-700">{tipoCobroLabel}</span>
+          </div>
+
+          {/* Ítems devueltos */}
+          {n.items_devueltos && n.items_devueltos.length > 0 && (
+            <div className="border border-gray-200 rounded-lg overflow-hidden">
+              <div className="px-3 py-2 bg-gray-50 border-b border-gray-200">
+                <p className="text-gray-500 text-xs uppercase tracking-wide font-semibold">Ítems devueltos</p>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {n.items_devueltos.map((item, idx) => (
+                  <div key={idx} className="px-3 py-2 flex justify-between text-sm">
+                    <span className="text-gray-700">{item.descripcion} × {item.cantidad}</span>
+                    <span className="text-gray-600 font-medium">{fmt((item.precio_unitario || 0) * (item.cantidad || 1))}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Monto destacado */}
+          <div className="rounded-xl p-5 text-center" style={{ background: `${accentColor}15`, border: `2px solid ${accentColor}40` }}>
+            <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">Monto del crédito</p>
+            <p className="text-4xl font-black" style={{ color: accentColor }}>{fmt(n.monto)}</p>
+            {n.moneda === "USD" && n.tipo_cambio && (
+              <p className="text-gray-400 text-xs mt-1">₲ {Number(n.tipo_cambio).toLocaleString("es-PY")} / USD</p>
+            )}
+          </div>
+
+          {n.notas && (
+            <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm">
+              <p className="text-gray-400 text-xs uppercase tracking-wide mb-1">Observaciones</p>
+              <p className="text-gray-700">{n.notas}</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

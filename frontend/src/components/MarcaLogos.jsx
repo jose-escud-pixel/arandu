@@ -35,7 +35,7 @@ function TriColorLetters({ text, viewBoxWidth, fontSize, letterSpacing, yText = 
 }
 
 function Sublabel({ className }) {
-  return <span className={className}>INFORMÁTICA</span>;
+  return null;
 }
 
 /** Arandu: letras tricolor + cuadrado azul moderno */

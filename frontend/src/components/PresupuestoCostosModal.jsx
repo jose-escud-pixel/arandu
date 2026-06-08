@@ -199,7 +199,7 @@ const PresupuestoCostosModal = ({
         return {
           ...p,
           pagado: !p.pagado,
-          fecha_pago: !p.pagado ? new Date().toISOString().split('T')[0] : null
+          fecha_pago: !p.pagado ? new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10) : null
         };
       }
       return p;

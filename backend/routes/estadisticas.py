@@ -169,7 +169,7 @@ async def get_dashboard_resumen(
         if (c.get("moneda") or "PYG") == "USD":
             compras_pendiente_usd += saldo
 
-    pagos_prov = await _docs(db.pagos_proveedores, {**logo_q, **_period_or_query(["fecha_pago", "fecha_vencimiento"], periodo_tipo, mes, anio)}, {"_id": 0, "monto": 1, "monto_gs": 1, "moneda": 1, "tipo_cambio": 1, "estado": 1, "fecha_pago": 1})
+    pagos_prov = await _docs(db.pagos_proveedores, {**logo_q, **_period_or_query(["fecha_pago", "fecha_vencimiento"], periodo_tipo, mes, anio), "eliminada": {"$ne": True}}, {"_id": 0, "monto": 1, "monto_gs": 1, "moneda": 1, "tipo_cambio": 1, "estado": 1, "fecha_pago": 1})
     prov_pagado = round(sum((p.get("monto_gs") if p.get("monto_gs") is not None else _to_pyg(p.get("monto"), p.get("moneda", "PYG"), p.get("tipo_cambio"))) for p in pagos_prov if p.get("fecha_pago") or p.get("estado") == "pagado"))
     prov_pendiente = round(sum((p.get("monto_gs") if p.get("monto_gs") is not None else _to_pyg(p.get("monto"), p.get("moneda", "PYG"), p.get("tipo_cambio"))) for p in pagos_prov if not p.get("fecha_pago") and p.get("estado") != "pagado"))
     prov_pagado_usd = round(sum(float(p.get("monto") or 0) for p in pagos_prov if (p.get("moneda") or "PYG") == "USD" and (p.get("fecha_pago") or p.get("estado") == "pagado")), 2)
@@ -202,9 +202,9 @@ async def get_dashboard_resumen(
     iva_credito_usd -= sum(_iva_incluido(n.get("monto")) for n in notas_compra if (n.get("moneda") or "PYG") == "USD")
     iva_saldo_usd = round(iva_debito_usd - iva_credito_usd, 2)
 
-    costos_query = dict(logo_q)
+    costos_query = {**logo_q, "eliminada": {"$ne": True}}
     costos_ids = [c["id"] for c in await db.costos_fijos.find(costos_query, {"_id": 0, "id": 1}).to_list(5000)]
-    pagos_costos_q = dict(per_periodo)
+    pagos_costos_q = {**per_periodo, "eliminada": {"$ne": True}}
     if costos_ids:
         pagos_costos_q["costo_fijo_id"] = {"$in": costos_ids}
     elif logo_q:

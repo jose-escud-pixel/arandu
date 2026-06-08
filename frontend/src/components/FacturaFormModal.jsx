@@ -32,7 +32,7 @@ const FacturaFormModal = ({
 
   const getDefaultForm = () => ({
     numero: "",
-    fecha: new Date().toISOString().slice(0, 10),
+    fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
     forma_pago: "contado",
     razon_social: "",
     ruc: "",
@@ -62,6 +62,10 @@ const FacturaFormModal = ({
   const [barcodeInput, setBarcodeInput] = useState("");
   const [barcodeLoading, setBarcodeLoading] = useState(false);
   const [tcInfo, setTcInfo] = useState(null);
+  const [presSearch, setPresSearch] = useState("");
+  // Presupuestos cargados directamente (sin filtro de período) para que el form
+  // siempre tenga acceso a todos, independiente de lo que muestre el tab de ventas
+  const [presupuestosAll, setPresupuestosAll] = useState([]);
 
   // ── Timbrado config ────────────────────────────────────────────
   const [timbradoConfig, setTimbradoConfig] = useState(null);   // null = cargando
@@ -70,7 +74,7 @@ const FacturaFormModal = ({
 
   const timbradoVigente = useMemo(() => {
     if (!timbradoConfig?.fecha_vigencia) return false;
-    return timbradoConfig.fecha_vigencia >= new Date().toISOString().slice(0, 10);
+    return timbradoConfig.fecha_vigencia >= new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
   }, [timbradoConfig]);
 
   const esAutoNumerico = timbradoConfig?.modo_numeracion === "automatico";
@@ -97,6 +101,27 @@ const FacturaFormModal = ({
   }, [API, token, logoTipo, isEdit]);
 
   useEffect(() => { fetchTimbrado(); }, [fetchTimbrado]);
+
+  // Carga TODOS los presupuestos al abrir el form (sin filtro de período)
+  // para que el selector siempre muestre la lista completa.
+  useEffect(() => {
+    if (!token || !API) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const qs = logoTipo ? `?logo_tipo=${logoTipo}` : "";
+        const r = await fetch(`${API}/admin/presupuestos${qs}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (r.ok && !cancelled) {
+          const data = await r.json();
+          setPresupuestosAll(data.filter(p => !p.eliminada));
+        }
+      } catch {}
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [token, API, logoTipo]);
 
   const fetchSiguienteNumero = async (punto) => {
     if (!logoTipo || !punto) return;
@@ -210,7 +235,7 @@ const FacturaFormModal = ({
 
   const addDays = (fecha, dias) => {
     const base = fecha ? new Date(`${fecha}T00:00:00`) : new Date();
-    if (Number.isNaN(base.getTime())) return fecha || new Date().toISOString().slice(0, 10);
+    if (Number.isNaN(base.getTime())) return fecha || new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
     base.setDate(base.getDate() + Math.max(Number(dias || 0), 0));
     return base.toISOString().slice(0, 10);
   };
@@ -418,15 +443,21 @@ const FacturaFormModal = ({
     }));
   };
 
+  // Fuente de presupuestos: preferimos presupuestosAll (cargados sin filtro de período).
+  // Fallback a presupuestosDisp si aún no cargaron.
+  const presupuestosFuente = useMemo(
+    () => presupuestosAll.length > 0 ? presupuestosAll : (presupuestosDisp || []),
+    [presupuestosAll, presupuestosDisp],
+  );
+
   // Presupuestos vinculables (filtrados por empresa si hay)
   const presupuestosFiltrados = useMemo(() => {
-    if (!presupuestosDisp) return [];
-    let list = presupuestosDisp.filter(p => p.estado !== "anulado");
+    let list = presupuestosFuente.filter(p => p.estado !== "anulado");
     if (form._empresa_id) {
       list = list.filter(p => String(p.empresa_id) === String(form._empresa_id));
     }
     return list;
-  }, [presupuestosDisp, form._empresa_id]);
+  }, [presupuestosFuente, form._empresa_id]);
 
   const conceptosVacios = (conceptos = []) => {
     const validos = conceptos.filter(c =>
@@ -473,7 +504,7 @@ const FacturaFormModal = ({
   };
 
   const togglePresupuesto = (id) => {
-    const presupuesto = presupuestosDisp.find(p => String(p.id) === String(id));
+    const presupuesto = presupuestosFuente.find(p => String(p.id) === String(id));
     setForm(prev => {
       const yaEsta = prev.presupuesto_ids.includes(id);
       const next = {
@@ -490,7 +521,7 @@ const FacturaFormModal = ({
   };
 
   const cargarItemsPresupuestos = () => {
-    const seleccionados = presupuestosDisp.filter(p => form.presupuesto_ids.includes(p.id));
+    const seleccionados = presupuestosFuente.filter(p => form.presupuesto_ids.includes(p.id));
     if (seleccionados.length === 0) {
       toast.error("Primero vinculá al menos un presupuesto");
       return;
@@ -1107,36 +1138,113 @@ const FacturaFormModal = ({
           {/* Vincular Presupuestos */}
           {presupuestosFiltrados.length > 0 && (
             <div className="border-t border-dashed border-gray-200 pt-4">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-                Vincular Presupuestos
-                {form._empresa_id && <span className="ml-1 text-blue-400 normal-case font-normal">(filtrado por empresa)</span>}
-              </p>
-              <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto pr-1">
-                {presupuestosFiltrados.slice(0, 60).map((p) => {
-                  const selected = form.presupuesto_ids.includes(p.id);
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  Vincular Presupuestos
+                  {form._empresa_id && <span className="ml-1 text-blue-400 normal-case font-normal">(filtrado por empresa)</span>}
+                </p>
+                <span className="text-[11px] text-gray-400">{presupuestosFiltrados.length} total</span>
+              </div>
+
+              {/* Buscador */}
+              <div className="relative mb-2">
+                <input
+                  type="text"
+                  value={presSearch}
+                  onChange={e => setPresSearch(e.target.value)}
+                  placeholder="Buscar por número, nombre, monto…"
+                  className="w-full pl-7 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:border-blue-400"
+                />
+                <svg className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                {presSearch && (
+                  <button onClick={() => setPresSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs leading-none">✕</button>
+                )}
+              </div>
+
+              {(() => {
+                const selIds = form.presupuesto_ids;
+                const q = presSearch.trim().toLowerCase();
+                const matchSearch = (p) => {
+                  if (!q) return true;
+                  return (
+                    String(p.numero || "").toLowerCase().includes(q) ||
+                    (p.nombre_archivo || "").toLowerCase().includes(q) ||
+                    String(Math.round(p.total) || "").includes(q) ||
+                    (p.empresa_nombre || "").toLowerCase().includes(q)
+                  );
+                };
+                // Seleccionados siempre arriba aunque no coincidan con la búsqueda
+                const libres = presupuestosFiltrados.filter(p =>
+                  (selIds.includes(p.id) || (p.estado !== "facturado" && p.estado !== "cobrado")) && matchSearch(p)
+                );
+                const yaFacturados = presupuestosFiltrados.filter(p =>
+                  !selIds.includes(p.id) && (p.estado === "facturado" || p.estado === "cobrado") && matchSearch(p)
+                );
+                const renderBtn = (p) => {
+                  const selected = selIds.includes(p.id);
                   const monFmt = p.moneda === "USD"
                     ? `USD ${Number(p.total).toLocaleString("es-PY", { minimumFractionDigits: 2 })}`
                     : `₲ ${Math.round(p.total).toLocaleString("es-PY")}`;
                   return (
                     <button
                       key={p.id}
+                      type="button"
                       onClick={() => togglePresupuesto(p.id)}
-                      className={`px-3 py-1.5 rounded-lg text-xs border transition-all text-left ${
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs border transition-all flex items-center justify-between gap-2 ${
                         selected
                           ? "bg-blue-600 text-white border-blue-600"
                           : "bg-white text-gray-600 border-gray-200 hover:border-blue-300"
                       }`}
                     >
-                      <span className="font-mono font-semibold">#{p.numero}</span>
-                      {p.nombre_archivo && (
-                        <span className={selected ? "text-blue-200" : "text-gray-400"}> · {p.nombre_archivo.slice(0, 18)}</span>
-                      )}
-                      <br />
-                      <span className={selected ? "text-blue-200 text-[11px]" : "text-gray-400 text-[11px]"}>{monFmt}</span>
+                      <span>
+                        <span className="font-mono font-semibold">#{p.numero}</span>
+                        {p.nombre_archivo && (
+                          <span className={selected ? " text-blue-200" : " text-gray-400"}> · {p.nombre_archivo.slice(0, 30)}</span>
+                        )}
+                      </span>
+                      <span className={`whitespace-nowrap text-[11px] ${selected ? "text-blue-200" : "text-gray-400"}`}>{monFmt}</span>
                     </button>
                   );
-                })}
-              </div>
+                };
+                return (
+                  <div className="max-h-56 overflow-y-auto pr-0.5 border border-gray-100 rounded-lg bg-gray-50">
+                    {libres.length === 0 && yaFacturados.length === 0 && (
+                      <p className="text-xs text-gray-400 py-3 text-center">
+                        {q ? "Sin resultados para esa búsqueda" : "No hay presupuestos disponibles"}
+                      </p>
+                    )}
+                    {libres.length > 0 && (
+                      <>
+                        <div className="px-2 pt-2 pb-1">
+                          <span className="text-[10px] text-emerald-600 font-semibold uppercase tracking-wide">
+                            Pendientes / Disponibles ({libres.length})
+                          </span>
+                        </div>
+                        <div className="px-2 pb-1 space-y-1">
+                          {libres.map(renderBtn)}
+                        </div>
+                      </>
+                    )}
+                    {yaFacturados.length > 0 && (
+                      <>
+                        <div className="flex items-center gap-2 px-2 pt-2 pb-1">
+                          <div className="flex-1 border-t border-gray-200" />
+                          <span className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide whitespace-nowrap">
+                            Ya vinculados a una factura ({yaFacturados.length})
+                          </span>
+                          <div className="flex-1 border-t border-gray-200" />
+                        </div>
+                        <div className="px-2 pb-2 space-y-1">
+                          {yaFacturados.map(renderBtn)}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
+
               {form.presupuesto_ids.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 mt-2">
                   <p className="text-xs text-blue-500">

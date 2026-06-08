@@ -197,7 +197,6 @@ export function svgLogoMarcaRow(logoTipo, logoUrl) {
     ${icon}
     <div style="line-height:1">
       <div style="margin:0;padding:0">${nombre}</div>
-      <div style="font-size:9px;color:#94a3b8;letter-spacing:3px;text-transform:uppercase;margin-top:1px">INFORMÁTICA</div>
     </div>
   </div>`;
 }
@@ -220,7 +219,6 @@ export function svgDocumentHeaderLogoHtml(logoTipo, logoUrl) {
     ${svgMarcaIcon(marca, uid, 52)}
     <div>
       ${svgPrintLogoName(logoTipo, uid, { darkHeader: false })}
-      <span style="font-size:11px;color:#6b7280;display:block;margin-top:4px;letter-spacing:2px;text-transform:uppercase">INFORMÁTICA</span>
     </div>
   </div>`;
 }

@@ -53,7 +53,7 @@ const emptyForm = {
   monto: "",
   moneda: "PYG",
   tipo_cambio: "",
-  fecha: new Date().toISOString().slice(0, 10),
+  fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
   cuenta_id: "",
   notas: "",
 };
@@ -121,7 +121,7 @@ export default function IngresoVarioPage() {
 
   const openNew = () => {
     setEditingId(null);
-    setFormData({ ...emptyForm, fecha: new Date().toISOString().slice(0, 10) });
+    setFormData({ ...emptyForm, fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10) });
     setShowForm(true);
   };
 

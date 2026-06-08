@@ -343,6 +343,7 @@ async def _ensure_numero_factura_compra_unico(
     query: dict = {
         "logo_tipo": logo_tipo or "arandujar",
         "tiene_factura": True,
+        "eliminada": {"$ne": True},
         "$or": [
             {"numero_factura": (numero or "").strip()},
             {"numero_factura_normalizado": normalizado},
@@ -596,21 +597,20 @@ async def delete_compra(compra_id: str, user: dict = Depends(require_authenticat
     compra = await db.compras.find_one({"id": compra_id}, {"_id": 0})
     if not compra:
         raise HTTPException(status_code=404, detail="Compra no encontrada")
-    # Revertir movimientos de stock originados por esta compra
-    from routes.productos import registrar_movimiento
+    # Revertir stock: borrar movimientos físicamente y restaurar stock directamente
     for item in (compra.get("items") or []):
         pid = item.get("producto_id")
-        if pid:
-            await registrar_movimiento(
-                producto_id=pid,
-                tipo="salida",
-                cantidad=item.get("cantidad", 0),
-                motivo="devolucion",
-                referencia_id=compra_id,
-                referencia_tipo="compra_eliminada",
-                notas=f"Reversión por eliminación de compra",
-                usuario_id=user.get("id"),
-                usuario_nombre=user.get("name"),
+        cantidad = float(item.get("cantidad") or 0)
+        if pid and cantidad > 0:
+            await db.movimientos_stock.delete_many({
+                "producto_id": pid,
+                "referencia_id": compra_id,
+                "referencia_tipo": "compra",
+            })
+            await db.productos.update_one(
+                {"id": pid},
+                {"$inc": {"stock_actual": -cantidad},
+                 "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}}
             )
     # Soft-delete (igual que facturas)
     now = datetime.now(timezone.utc).isoformat()
@@ -694,7 +694,7 @@ async def resumen_compras_por_proveedor(
     if not has_permission(user, "compras.ver"):
         raise HTTPException(status_code=403, detail="Sin permiso")
 
-    query = {}
+    query: dict = {"eliminada": {"$ne": True}}
     logo_q: dict = {}
     await apply_logo_filter(logo_q, user, logo_tipo)
     if is_forbidden(logo_q):

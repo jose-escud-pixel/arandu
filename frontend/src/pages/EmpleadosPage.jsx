@@ -91,7 +91,7 @@ const emptySueldo = {
   periodo: getPeriodoActual(),
   moneda: "PYG",
   tipo_cambio: "",
-  fecha_pago: new Date().toISOString().slice(0, 10),
+  fecha_pago: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
   descuento_ips: "",
   notas: "",
   descuentos_adicionales: [],  // lista de { descripcion, monto }
@@ -155,7 +155,7 @@ export default function EmpleadosPage() {
   // Adelantos
   const [showAdelantoModal, setShowAdelantoModal] = useState(false);
   const [adelantoEmp, setAdelantoEmp] = useState(null);
-  const [formAdelanto, setFormAdelanto] = useState({ monto: "", fecha: new Date().toISOString().slice(0, 10), notas: "" });
+  const [formAdelanto, setFormAdelanto] = useState({ monto: "", fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10), notas: "" });
   const [savingAdelanto, setSavingAdelanto] = useState(false);
   const [adelantosPeriodo, setAdelantosPeriodo] = useState([]);
   const [adelantosMap, setAdelantosMap] = useState({});
@@ -163,7 +163,7 @@ export default function EmpleadosPage() {
   // Extras
   const [showExtraModal, setShowExtraModal] = useState(false);
   const [extraEmp, setExtraEmp] = useState(null);
-  const [formExtra, setFormExtra] = useState({ monto: "", descripcion: "Extra", fecha: new Date().toISOString().slice(0, 10), notas: "" });
+  const [formExtra, setFormExtra] = useState({ monto: "", descripcion: "Extra", fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10), notas: "" });
   const [savingExtra, setSavingExtra] = useState(false);
   const [extrasPeriodo, setExtrasPeriodo] = useState([]);  // extras cargados al abrir modal sueldo
   const [extrasMap, setExtrasMap] = useState({});           // { empleado_id: [extras] } para mostrar en tabla
@@ -350,7 +350,7 @@ export default function EmpleadosPage() {
   // ── Adelanto handlers ──────────────────────────────────────
   const openAdelanto = (emp) => {
     setAdelantoEmp(emp);
-    setFormAdelanto({ monto: "", fecha: new Date().toISOString().slice(0, 10), notas: "" });
+    setFormAdelanto({ monto: "", fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10), notas: "" });
     setShowAdelantoModal(true);
   };
 
@@ -399,7 +399,7 @@ export default function EmpleadosPage() {
   // ── Extra handlers ─────────────────────────────────────────
   const openExtra = (emp) => {
     setExtraEmp(emp);
-    setFormExtra({ monto: "", descripcion: "Extra", fecha: new Date().toISOString().slice(0, 10), notas: "" });
+    setFormExtra({ monto: "", descripcion: "Extra", fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10), notas: "" });
     setShowExtraModal(true);
   };
 

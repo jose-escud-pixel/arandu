@@ -443,6 +443,7 @@ async def get_stock_movimientos(
     desde: Optional[str] = None,
     hasta: Optional[str] = None,
     search: Optional[str] = None,
+    producto_id: Optional[str] = None,
     user: dict = Depends(require_authenticated),
 ):
     if not has_permission(user, "historial_stock.ver") and not has_permission(user, "inventario_productos.ver"):
@@ -454,9 +455,13 @@ async def get_stock_movimientos(
         return []
 
     prod_query = dict(logo_q)
-    productos = await db.productos.find(prod_query, {"_id": 0, "id": 1, "logo_tipo": 1, "sku": 1, "categoria": 1}).to_list(2000)
+    productos = await db.productos.find(prod_query, {"_id": 0, "id": 1, "nombre": 1, "logo_tipo": 1, "sku": 1, "categoria": 1}).to_list(2000)
     prod_map = {p["id"]: p for p in productos}
-    query = {"producto_id": {"$in": list(prod_map.keys())}}
+    allowed_ids = list(prod_map.keys())
+    if producto_id:
+        query = {"producto_id": producto_id if producto_id in allowed_ids else "__none__"}
+    else:
+        query = {"producto_id": {"$in": allowed_ids}}
     if tipo:
         query["tipo"] = tipo
     if motivo:
@@ -476,11 +481,52 @@ async def get_stock_movimientos(
         ]
 
     movs = await db.movimientos_stock.find(query, {"_id": 0}).sort("created_at", -1).to_list(3000)
+
+    # ── Cross-check: filtrar movimientos huérfanos de docs eliminados ──────────
+    # Recolectar referencia_ids por tipo para hacer batch lookup
+    factura_ids = {m["referencia_id"] for m in movs if m.get("referencia_tipo") == "factura" and m.get("referencia_id")}
+    compra_ids  = {m["referencia_id"] for m in movs if m.get("referencia_tipo") == "compra"  and m.get("referencia_id")}
+
+    eliminadas_facturas: set = set()
+    eliminadas_compras: set = set()
+
+    if factura_ids:
+        docs = await db.facturas.find(
+            {"id": {"$in": list(factura_ids)}, "eliminada": True},
+            {"_id": 0, "id": 1}
+        ).to_list(len(factura_ids))
+        eliminadas_facturas = {d["id"] for d in docs}
+
+    if compra_ids:
+        docs = await db.compras.find(
+            {"id": {"$in": list(compra_ids)}, "eliminada": True},
+            {"_id": 0, "id": 1}
+        ).to_list(len(compra_ids))
+        eliminadas_compras = {d["id"] for d in docs}
+
+    def _es_valido(m: dict) -> bool:
+        rt = m.get("referencia_tipo")
+        rid = m.get("referencia_id")
+        if rt == "factura" and rid in eliminadas_facturas:
+            return False
+        if rt == "compra" and rid in eliminadas_compras:
+            return False
+        # compra_eliminada son reversales del sistema antiguo — ya no deberían
+        # generarse nuevos, pero si hay en BD los ocultamos también
+        if rt == "compra_eliminada":
+            return False
+        return True
+
+    movs = [m for m in movs if _es_valido(m)]
+    # ──────────────────────────────────────────────────────────────────────────
+
     for m in movs:
         p = prod_map.get(m.get("producto_id"), {})
         m["logo_tipo"] = p.get("logo_tipo")
         m["sku"] = p.get("sku")
         m["categoria"] = p.get("categoria")
+        if p.get("nombre"):
+            m["producto_nombre"] = p.get("nombre")
     return movs
 
 

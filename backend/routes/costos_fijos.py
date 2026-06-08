@@ -55,6 +55,15 @@ def _periodo_anterior(periodo: str) -> str:
 
 
 def _monto_vigente(costo: dict, periodo: str) -> dict:
+    # Prioridad 1: ajuste explícito para este periodo exacto
+    for aj in (costo.get("ajustes_periodo") or []):
+        if aj.get("periodo") == periodo:
+            return {
+                "monto": aj.get("monto", costo.get("monto", 0)),
+                "moneda": aj.get("moneda", costo.get("moneda", "PYG")),
+                "tipo_cambio": aj.get("tipo_cambio", costo.get("tipo_cambio")),
+            }
+    # Prioridad 2: historial_montos (cambio de monto base con fecha_inicio)
     vigente = {
         "monto": costo.get("monto", 0),
         "moneda": costo.get("moneda", "PYG"),
@@ -280,6 +289,10 @@ async def get_vencimientos_periodo(periodo: str, logo_tipo: Optional[str] = None
             estado = "vencido"
         else:
             estado = "pendiente"
+        ajuste_periodo = next(
+            (aj for aj in (c.get("ajustes_periodo") or []) if aj.get("periodo") == periodo),
+            None,
+        )
         result.append({
             "costo_id": c["id"],
             "logo_tipo": c.get("logo_tipo", "arandujar"),
@@ -293,6 +306,13 @@ async def get_vencimientos_periodo(periodo: str, logo_tipo: Optional[str] = None
             "dia_vencimiento": c.get("dia_vencimiento", 1),
             "estado": estado,
             "pago": pago,
+            "periodo": periodo,
+            "ajuste_periodo": ajuste_periodo,
+            "historial_ajustes": sorted(
+                c.get("ajustes_periodo") or [],
+                key=lambda a: a.get("periodo", ""),
+                reverse=True,
+            ),
         })
     # Ordenar: vencidos primero, luego pendientes, luego pagados
     orden = {"vencido": 0, "pendiente": 1, "pagado": 2}
@@ -371,6 +391,65 @@ async def editar_pago_costo(pago_id: str, data: dict, user: dict = Depends(requi
     await log_auditoria(user, "costos_fijos", "editar_pago", f"Pago {pago_id} editado", pago_id)
     updated = await db.pagos_costos_fijos.find_one({"id": pago_id}, {"_id": 0})
     return {k: v for k, v in updated.items() if k != "_id"}
+
+
+@router.patch("/admin/costos-fijos/{costo_id}/ajustar-monto")
+async def ajustar_monto_periodo(costo_id: str, data: dict, user: dict = Depends(require_authenticated)):
+    """Ajusta el monto de un gasto para un período específico no pagado.
+    Guarda el ajuste en ajustes_periodo[] con historial completo.
+    """
+    if not has_permission(user, "costos_fijos.editar"):
+        raise HTTPException(status_code=403, detail="Sin permiso para editar costos fijos")
+
+    periodo = (data.get("periodo") or "").strip()
+    if not periodo or len(periodo) != 7:
+        raise HTTPException(status_code=400, detail="Período inválido (formato: YYYY-MM)")
+
+    costo = await db.costos_fijos.find_one({"id": costo_id}, {"_id": 0})
+    if not costo:
+        raise HTTPException(status_code=404, detail="Costo fijo no encontrado")
+
+    # No permitir si ya existe un pago registrado para ese período
+    existing_pago = await db.pagos_costos_fijos.find_one({"costo_fijo_id": costo_id, "periodo": periodo})
+    if existing_pago:
+        raise HTTPException(status_code=400, detail="No se puede ajustar el monto de un período ya pagado")
+
+    try:
+        monto = float(data.get("monto") or 0)
+    except (TypeError, ValueError):
+        monto = 0.0
+    if monto <= 0:
+        raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+
+    moneda = data.get("moneda") or costo.get("moneda", "PYG")
+    tipo_cambio = data.get("tipo_cambio")
+    motivo = (data.get("motivo") or "").strip()
+
+    # Monto base para este período (antes del ajuste)
+    monto_base = _monto_vigente(costo, periodo)
+
+    ajuste = {
+        "periodo": periodo,
+        "monto": monto,
+        "moneda": moneda,
+        "tipo_cambio": tipo_cambio,
+        "monto_original": monto_base["monto"],
+        "moneda_original": monto_base["moneda"],
+        "modificado_at": datetime.now(timezone.utc).isoformat(),
+        "modificado_por": user.get("name", user.get("id", "sistema")),
+        "motivo": motivo,
+    }
+
+    # Eliminar ajuste previo para este período y agregar el nuevo
+    await db.costos_fijos.update_one({"id": costo_id}, {"$pull": {"ajustes_periodo": {"periodo": periodo}}})
+    await db.costos_fijos.update_one({"id": costo_id}, {"$push": {"ajustes_periodo": ajuste}})
+
+    await log_auditoria(
+        user, "costos_fijos", "ajustar_monto",
+        f"Monto ajustado período {periodo}: {monto_base['monto']} → {monto} {moneda}",
+        costo_id,
+    )
+    return {"success": True, "ajuste": ajuste}
 
 
 @router.delete("/admin/pagos-costos/{pago_id}")

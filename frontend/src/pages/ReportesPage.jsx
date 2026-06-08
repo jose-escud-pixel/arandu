@@ -193,10 +193,14 @@ const ReportesPage = () => {
   const [reportClienteId, setReportClienteId] = useState("");
   const [genericReport, setGenericReport] = useState(null);
   const [genericReportLoading, setGenericReportLoading] = useState(false);
+  const [stockHistorialProductoId, setStockHistorialProductoId] = useState("");
+  const [stockProductos, setStockProductos] = useState([]);
+  const [stockHistorialDesde, setStockHistorialDesde] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-01`; });
+  const [stockHistorialHasta, setStockHistorialHasta] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
   const [cumpleanosConfig, setCumpleanosConfig] = useState({ notificar_dias_amarillo: 10, notificar_dias_urgente: 0 });
   const [showCajaPicker, setShowCajaPicker] = useState(false);
   const [cajaCuentasPicker, setCajaCuentasPicker] = useState([]);
-  const hoyIso = new Date().toISOString().slice(0, 10);
+  const hoyIso = new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
   const [reportCajaDesde, setReportCajaDesde] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
@@ -904,7 +908,11 @@ const ReportesPage = () => {
           ],
         };
       } else if (tipo === "stock_historial") {
-        const data = await fetchJson("/admin/stock-movimientos");
+        const stockParams = {};
+        if (stockHistorialProductoId) stockParams.producto_id = stockHistorialProductoId;
+        if (stockHistorialDesde) stockParams.desde = stockHistorialDesde;
+        if (stockHistorialHasta) stockParams.hasta = stockHistorialHasta;
+        const data = await fetchJson("/admin/stock-movimientos", stockParams);
         report = { title: "Historial de stock", subtitle: periodoSub, summary: [["Movimientos", data.length], ["Entradas", data.filter(x => x.tipo === "entrada").length], ["Salidas", data.filter(x => x.tipo === "salida").length], ["Ajustes", data.filter(x => x.tipo === "ajuste").length]], sections: [{ title: "Movimientos", columns: ["Fecha", "Producto", "SKU", "Tipo", "Cantidad", "Stock", "Motivo", "Usuario"], rows: rowsOf(data, [{value:"fecha"}, {value:"producto_nombre"}, {value:"sku"}, {value:"tipo"}, {value:"cantidad"}, {value: r => `${r.stock_anterior ?? "-"} -> ${r.stock_nuevo ?? "-"}`}, {value:"motivo"}, {value:"usuario_nombre"}]) }] };
       } else if (tipo === "productos_stock") {
         const data = await fetchJson("/admin/productos");
@@ -1199,20 +1207,70 @@ const ReportesPage = () => {
       const data = await res.json();
       const cuenta = data.cuenta || {};
       const movs = data.movimientos || [];
+      const movsSF = data.movimientos_saldo_favor || [];
+      const totalSF = data.total_saldo_favor_aplicado || 0;
+
+      // ── Calcular saldo corriente fila por fila ───────────────
+      // Solo ingresos/egresos reales afectan el saldo bancario
+      let saldoAcum = data.saldo_inicial || 0;
+      const rowsConSaldo = movs.map(m => {
+        const esIngreso = m.tipo === "ingreso";
+        saldoAcum = esIngreso ? saldoAcum + m.monto : saldoAcum - m.monto;
+        return {
+          fecha: m.fecha || "-",
+          concepto: `${m.categoria ? `[${m.categoria}] ` : ""}${m.concepto || "-"}`,
+          ingreso: esIngreso ? m.monto : null,
+          egreso: !esIngreso ? m.monto : null,
+          saldo: saldoAcum,
+        };
+      });
+
+      // ── Resumen saldo a favor ─────────────────────────────────
+      const summaryExtra = totalSF > 0
+        ? [["Cobrado via saldo a favor ⓘ", `${fmtPYG(totalSF)} (sin mov. bancario)`]]
+        : [];
+
+      // ── Sección saldo a favor (informativa) ──────────────────
+      const seccionesSF = movsSF.length > 0 ? [{
+        title: `Saldos a Favor aplicados — ${movsSF.length} aplicación(es) · SIN movimiento bancario`,
+        columns: ["Fecha", "Concepto", "Monto aplicado"],
+        rows: movsSF.map(m => [
+          m.fecha || "-",
+          m.concepto || "-",
+          <span style={{ color: "#d97706", fontWeight: 700 }}>{fmtPYG(m.monto)}</span>,
+        ]),
+      }] : [];
+
       setGenericReport({
         title: `Caja / Banco — ${cuenta.nombre || cuentaId}`,
         subtitle: `${data.desde} → ${data.hasta} · ${activeEmpresaPropia?.nombre || "Todas"}`,
         summary: [
           ["Saldo inicial", fmtPYG(data.saldo_inicial)],
-          ["Total ingresos", fmtPYG(data.total_ingresos)],
-          ["Total egresos", fmtPYG(data.total_egresos)],
-          ["Saldo final", fmtPYG(data.saldo_final)],
+          ["Total ingresos (banco)", fmtPYG(data.total_ingresos)],
+          ["Total egresos (banco)", fmtPYG(data.total_egresos)],
+          ["Saldo final (banco)", fmtPYG(data.saldo_final)],
+          ...summaryExtra,
         ],
-        sections: [{
-          title: "Movimientos del periodo",
-          columns: ["Fecha", "Tipo", "Concepto", "Monto"],
-          rows: movs.map(m => [m.fecha || "-", m.tipo || "-", m.concepto || "-", fmtPYG(m.monto)]),
-        }],
+        sections: [
+          {
+            title: `Movimientos del periodo (${movs.length} registros)`,
+            columns: ["Fecha", "Concepto", "Ingresos", "Egresos", "Saldo"],
+            rows: rowsConSaldo.map(r => [
+              r.fecha,
+              r.concepto,
+              r.ingreso != null
+                ? <span style={{ color: "#16a34a", fontWeight: 700 }}>{fmtPYG(r.ingreso)}</span>
+                : <span style={{ color: "#cbd5e1" }}>—</span>,
+              r.egreso != null
+                ? <span style={{ color: "#dc2626", fontWeight: 700 }}>{fmtPYG(r.egreso)}</span>
+                : <span style={{ color: "#cbd5e1" }}>—</span>,
+              <span style={{ fontWeight: 700, color: r.saldo >= 0 ? "#0f172a" : "#dc2626" }}>
+                {fmtPYG(r.saldo)}
+              </span>,
+            ]),
+          },
+          ...seccionesSF,
+        ],
         periodLabel: `${desde} → ${hasta}`,
       });
     } catch (e) {
@@ -1283,6 +1341,17 @@ const ReportesPage = () => {
     }
   }, [reporteCategoria, activeEmpresaPropia?.id, user?.permisos]); // eslint-disable-line
 
+  useEffect(() => {
+    if (reporteCategoria === "inventario" && stockProductos.length === 0) {
+      const q = new URLSearchParams();
+      if (activeEmpresaPropia?.slug) q.set("logo_tipo", activeEmpresaPropia.slug);
+      fetch(`${API}/admin/productos?${q}`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.ok ? r.json() : [])
+        .then(data => setStockProductos((data || []).filter(p => p.activo !== false).sort((a, b) => (a.nombre || "").localeCompare(b.nombre || ""))))
+        .catch(() => {});
+    }
+  }, [reporteCategoria, activeEmpresaPropia?.slug]); // eslint-disable-line
+
   if (loading) return <div className="flex items-center justify-center h-screen"><div className="text-arandu-blue animate-pulse">Cargando...</div></div>;
 
   const selectedEmpresasNombres = selectedEmpresas.map(id => empresas.find(e => e.id === id)?.nombre).filter(Boolean).join(", ");
@@ -1323,7 +1392,7 @@ const ReportesPage = () => {
   });
   const reportLogoAlt = String(activeEmpresaPropia?.nombre || "Logo").replace(/"/g, "&quot;");
   const reportLogoHtml = activeEmpresaPropia?.logo_url
-    ? `<div style="display:flex;align-items:center;gap:12px"><img src="${activeEmpresaPropia.logo_url}" alt="${reportLogoAlt}" style="height:54px;width:auto;max-width:190px;object-fit:contain"/><div style="font-size:11px;color:#64748b;letter-spacing:2px;text-transform:uppercase">INFORMÁTICA</div></div>`
+    ? `<div style="display:flex;align-items:center;gap:12px"><img src="${activeEmpresaPropia.logo_url}" alt="${reportLogoAlt}" style="height:54px;width:auto;max-width:190px;object-fit:contain"/></div>`
     : svgDocumentHeaderLogoHtml(activeEmpresaPropia?.slug || "arandujar");
 
   return (
@@ -1463,7 +1532,7 @@ const ReportesPage = () => {
                 );
               })}
               <div style={{ marginTop: 22, paddingTop: 10, borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", color: "#64748b", fontSize: 9 }}>
-                <span>{activeEmpresaPropia?.nombre || "Arandu&JAR Informática"}</span>
+                <span>{activeEmpresaPropia?.nombre || "Arandu&JAR"}</span>
                 <span>Documento generado desde el sistema administrativo</span>
               </div>
             </div>
@@ -1966,32 +2035,70 @@ const ReportesPage = () => {
 
           {/* ── Panel inventario ───────────────────────────────────────────── */}
           {reporteCategoria === "inventario" && (
-            <div className="bg-arandu-dark-light border border-blue-500/20 rounded-xl p-5">
-              <h3 className="text-blue-400 font-semibold text-sm mb-4 flex items-center gap-2">
+            <div className="bg-arandu-dark-light border border-blue-500/20 rounded-xl p-5 space-y-4">
+              <h3 className="text-blue-400 font-semibold text-sm flex items-center gap-2">
                 <Package className="w-4 h-4" /> Reportes de inventario de productos
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {[
-                  { visible: hasPermission?.("reportes.productos_stock"), title: "Productos y stock", desc: "Estado actual del inventario, niveles de stock y valorización", tipo: "productos_stock", icon: Package, color: "text-blue-400" },
-                  { visible: hasPermission?.("reportes.stock_historial"), title: "Historial de stock", desc: "Entradas, salidas, ajustes, stock anterior/nuevo y usuario", tipo: "stock_historial", icon: Table, color: "text-cyan-400" },
-                ].filter(r => r.visible).map(r => {
-                  const RIcon = r.icon;
-                  return (
-                    <button key={r.title} onClick={() => generarReporte(r.tipo)} disabled={genericReportLoading}
-                      className="flex items-start gap-3 p-4 bg-arandu-dark rounded-xl border border-white/5 hover:border-blue-500/30 transition-all group"
-                    >
-                      <div className="w-9 h-9 rounded-lg bg-white/5 flex items-center justify-center flex-shrink-0 group-hover:bg-blue-500/10 transition-colors">
-                        <RIcon className={`w-5 h-5 ${r.color}`} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-white font-medium text-sm">{r.title}</p>
-                        <p className="text-slate-500 text-xs mt-0.5">{r.desc}</p>
-                      </div>
-                      <Printer className="w-4 h-4 text-slate-600 group-hover:text-blue-400 transition-colors mt-0.5 flex-shrink-0" />
-                    </button>
-                  );
-                })}
-              </div>
+
+              {/* Productos y stock */}
+              {hasPermission?.("reportes.productos_stock") && (
+                <button onClick={() => generarReporte("productos_stock")} disabled={genericReportLoading}
+                  className="w-full flex items-start gap-3 p-4 bg-arandu-dark rounded-xl border border-white/5 hover:border-blue-500/30 transition-all group"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-white/5 flex items-center justify-center flex-shrink-0 group-hover:bg-blue-500/10 transition-colors">
+                    <Package className="w-5 h-5 text-blue-400" />
+                  </div>
+                  <div className="flex-1 min-w-0 text-left">
+                    <p className="text-white font-medium text-sm">Productos y stock</p>
+                    <p className="text-slate-500 text-xs mt-0.5">Estado actual del inventario, niveles de stock y valorización</p>
+                  </div>
+                  <Printer className="w-4 h-4 text-slate-600 group-hover:text-blue-400 transition-colors mt-0.5 flex-shrink-0" />
+                </button>
+              )}
+
+              {/* Historial de stock con filtro de producto */}
+              {hasPermission?.("reportes.stock_historial") && (
+                <div className="p-4 bg-arandu-dark rounded-xl border border-white/5">
+                  <div className="flex items-start gap-3 mb-3">
+                    <div className="w-9 h-9 rounded-lg bg-white/5 flex items-center justify-center flex-shrink-0">
+                      <Table className="w-5 h-5 text-cyan-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white font-medium text-sm">Historial de stock</p>
+                      <p className="text-slate-500 text-xs mt-0.5">Entradas, salidas, ajustes, stock anterior/nuevo y usuario</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-slate-500 text-xs">Desde</label>
+                      <input type="date" value={stockHistorialDesde} onChange={e => setStockHistorialDesde(e.target.value)}
+                        className="bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm" />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-slate-500 text-xs">Hasta</label>
+                      <input type="date" value={stockHistorialHasta} onChange={e => setStockHistorialHasta(e.target.value)}
+                        className="bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm" />
+                    </div>
+                    <div className="flex flex-col gap-1 col-span-2 sm:col-span-1">
+                      <label className="text-slate-500 text-xs">Producto</label>
+                      <select value={stockHistorialProductoId} onChange={e => setStockHistorialProductoId(e.target.value)}
+                        className="bg-arandu-dark border border-white/10 text-white rounded-lg px-3 py-2 text-sm">
+                        <option value="">Todos</option>
+                        {stockProductos.map(p => (
+                          <option key={p.id} value={p.id}>{p.nombre}{p.sku ? ` (${p.sku})` : ""}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex flex-col justify-end">
+                      <button onClick={() => generarReporte("stock_historial")} disabled={genericReportLoading || !stockHistorialDesde || !stockHistorialHasta}
+                        className="flex items-center justify-center gap-2 px-4 py-2 bg-cyan-500/15 hover:bg-cyan-500/25 disabled:opacity-50 border border-cyan-500/30 text-cyan-300 rounded-lg text-sm font-medium transition-colors whitespace-nowrap"
+                      >
+                        <Printer className="w-4 h-4" /> Generar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

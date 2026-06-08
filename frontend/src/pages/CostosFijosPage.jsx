@@ -70,7 +70,7 @@ const emptyForm = {
   tipo_cambio: "",
   frecuencia: "mensual",
   dia_vencimiento: 1,
-  fecha_inicio: new Date().toISOString().slice(0, 10),
+  fecha_inicio: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
   fecha_fin: "",
   activo: true,
   notas: "",
@@ -91,7 +91,7 @@ export default function CostosFijosPage() {
   const [formData, setFormData] = useState(emptyForm);
 
   const [showPagoModal, setShowPagoModal] = useState(null);
-  const [pagoForm, setPagoForm] = useState({ monto_pagado: "", fecha_pago: new Date().toISOString().slice(0, 10), notas: "" });
+  const [pagoForm, setPagoForm] = useState({ monto_pagado: "", fecha_pago: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10), notas: "" });
 
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 
@@ -139,7 +139,7 @@ export default function CostosFijosPage() {
   const openNew = () => {
     setEditingId(null);
     // Si estamos en la pestaña de vencimientos, pre-llenar fecha_inicio con el 1° del período visible
-    const defaultFechaInicio = activeTab === "vencimientos" ? `${periodo}-01` : new Date().toISOString().slice(0, 10);
+    const defaultFechaInicio = activeTab === "vencimientos" ? `${periodo}-01` : new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
     setFormData({ ...emptyForm, logo_tipo: logoFilter !== "todas" ? logoFilter : "arandujar", fecha_inicio: defaultFechaInicio });
     setShowForm(true);
   };
@@ -178,7 +178,7 @@ export default function CostosFijosPage() {
   };
 
   // ── Pago ─────────────────────────────────────────────────────────────────
-  const openPago = (v) => { setPagoForm({ monto_pagado: v.monto, fecha_pago: new Date().toISOString().slice(0, 10), notas: "" }); setShowPagoModal(v); };
+  const openPago = (v) => { setPagoForm({ monto_pagado: v.monto, fecha_pago: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10), notas: "" }); setShowPagoModal(v); };
 
   const handleRegistrarPago = async (e) => {
     e.preventDefault();

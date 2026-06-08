@@ -9,14 +9,16 @@ from auth import require_authenticated, has_permission, log_auditoria, apply_log
 
 router = APIRouter()
 
-USOS_PLAN_CUENTA = {"venta_contado", "venta_credito", "compra_contado", "compra_credito"}
+USOS_PLAN_CUENTA = {"venta_contado", "venta_credito", "compra_contado", "compra_credito", "saldo_favor_cliente", "saldo_favor_proveedor"}
 TIPOS_PLAN_CUENTA = {"cobrar", "pagar"}
 
 DEFAULT_PLAN_CUENTAS = [
-    {"nombre": "Venta contado",  "tipo": "cobrar", "uso": "venta_contado",  "dias_vencimiento": 0,  "predeterminada": True},
-    {"nombre": "Venta 30 dias",  "tipo": "cobrar", "uso": "venta_credito",  "dias_vencimiento": 30, "predeterminada": True},
-    {"nombre": "Compra contado", "tipo": "pagar",  "uso": "compra_contado", "dias_vencimiento": 0,  "predeterminada": True},
-    {"nombre": "Compra 30 dias", "tipo": "pagar",  "uso": "compra_credito", "dias_vencimiento": 30, "predeterminada": True},
+    {"nombre": "Venta contado",            "tipo": "cobrar", "uso": "venta_contado",         "dias_vencimiento": 0,  "predeterminada": True},
+    {"nombre": "Venta 30 dias",            "tipo": "cobrar", "uso": "venta_credito",         "dias_vencimiento": 30, "predeterminada": True},
+    {"nombre": "Compra contado",           "tipo": "pagar",  "uso": "compra_contado",        "dias_vencimiento": 0,  "predeterminada": True},
+    {"nombre": "Compra 30 dias",           "tipo": "pagar",  "uso": "compra_credito",        "dias_vencimiento": 30, "predeterminada": True},
+    {"nombre": "Saldo a favor clientes",   "tipo": "cobrar", "uso": "saldo_favor_cliente",   "dias_vencimiento": 0,  "predeterminada": True},
+    {"nombre": "Saldo a favor proveedores","tipo": "pagar",  "uso": "saldo_favor_proveedor", "dias_vencimiento": 0,  "predeterminada": True},
 ]
 
 
@@ -69,9 +71,14 @@ def _validar_payload(data: PlanCuentaCreate):
         raise HTTPException(status_code=400, detail="Tipo de cuenta inválido")
     if data.uso not in USOS_PLAN_CUENTA:
         raise HTTPException(status_code=400, detail="Uso de cuenta inválido")
-    if (data.uso.startswith("venta") and data.tipo != "cobrar") or \
-       (data.uso.startswith("compra") and data.tipo != "pagar"):
-        raise HTTPException(status_code=400, detail="El tipo no coincide con el uso de la cuenta")
+    if data.uso == "saldo_favor_cliente" and data.tipo != "cobrar":
+        raise HTTPException(status_code=400, detail="Saldo a favor clientes debe ser de tipo cobrar")
+    if data.uso == "saldo_favor_proveedor" and data.tipo != "pagar":
+        raise HTTPException(status_code=400, detail="Saldo a favor proveedores debe ser de tipo pagar")
+    if data.uso not in ("saldo_favor_cliente", "saldo_favor_proveedor"):
+        if (data.uso.startswith("venta") and data.tipo != "cobrar") or \
+           (data.uso.startswith("compra") and data.tipo != "pagar"):
+            raise HTTPException(status_code=400, detail="El tipo no coincide con el uso de la cuenta")
     if int(data.dias_vencimiento or 0) < 0:
         raise HTTPException(status_code=400, detail="Los días de vencimiento no pueden ser negativos")
 

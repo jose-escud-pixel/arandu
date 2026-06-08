@@ -670,6 +670,8 @@ class SueldoCreate(BaseModel):
     descuento_ips: Optional[float] = None
     descuentos_adicionales: Optional[float] = None  # suma total de descuentos extra
     notas: Optional[str] = None
+    cuenta_id: Optional[str] = None
+    cuenta_nombre: Optional[str] = None
 
 class SueldoResponse(BaseModel):
     id: str
@@ -687,6 +689,8 @@ class SueldoResponse(BaseModel):
     descuento_ips: Optional[float] = None
     descuentos_adicionales: Optional[float] = None
     notas: Optional[str] = None
+    cuenta_id: Optional[str] = None
+    cuenta_nombre: Optional[str] = None
     created_at: str
 
 class AdelantoCreate(BaseModel):
@@ -696,6 +700,8 @@ class AdelantoCreate(BaseModel):
     tipo_cambio: Optional[float] = None
     fecha: str                # YYYY-MM-DD
     notas: Optional[str] = None
+    cuenta_id: Optional[str] = None
+    cuenta_nombre: Optional[str] = None
 
 class AdelantoResponse(BaseModel):
     id: str
@@ -707,6 +713,8 @@ class AdelantoResponse(BaseModel):
     tipo_cambio: Optional[float] = None
     fecha: str
     notas: Optional[str] = None
+    cuenta_id: Optional[str] = None
+    cuenta_nombre: Optional[str] = None
     created_at: str
 
 

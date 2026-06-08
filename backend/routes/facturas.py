@@ -89,6 +89,7 @@ async def _ensure_factura_numero_unico(doc_data: dict, ignore_id: Optional[str] 
     query: dict = {
         "logo_tipo": logo_tipo,
         "tipo": tipo,
+        "eliminada": {"$ne": True},
         "$or": [
             {"numero": (doc_data.get("numero") or "").strip()},
             {"numero_normalizado": normalizado},

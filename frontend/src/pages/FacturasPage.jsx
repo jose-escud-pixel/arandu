@@ -71,7 +71,7 @@ const emptyForm = {
   tipo: "emitida",
   forma_pago: "contado",
   numero: "",
-  fecha: new Date().toISOString().slice(0, 10),
+  fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
   razon_social: "",
   ruc: "",
   concepto: "",
@@ -117,12 +117,12 @@ export default function FacturasPage() {
   // Modal pago rápido
   const [showPagoModal, setShowPagoModal] = useState(false);
   const [pagoFac, setPagoFac] = useState(null);
-  const [fechaPago, setFechaPago] = useState(new Date().toISOString().slice(0, 10));
+  const [fechaPago, setFechaPago] = useState(new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
   // Pago parcial
   const [showPagoParcialModal, setShowPagoParcialModal] = useState(false);
   const [pagoParcialFac, setPagoParcialFac] = useState(null);
   const [montoParcial, setMontoParcial] = useState("");
-  const [fechaPagoParcial, setFechaPagoParcial] = useState(new Date().toISOString().slice(0, 10));
+  const [fechaPagoParcial, setFechaPagoParcial] = useState(new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
   const [numeroReciboManual, setNumeroReciboManual] = useState("");
   const [cuentaPago, setCuentaPago] = useState("");   // cuenta bancaria destino
   const [cuentasDisp, setCuentasDisp] = useState([]); // cuentas disponibles
@@ -183,7 +183,7 @@ export default function FacturasPage() {
     setEditingFac(null);
     setForm({
       ...emptyForm,
-      fecha: new Date().toISOString().slice(0, 10),
+      fecha: new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
       logo_tipo: activeEmpresaPropia?.slug || "arandujar",
       tipo: "emitida",
     });
@@ -197,7 +197,7 @@ export default function FacturasPage() {
       tipo: fac.tipo || "emitida",
       forma_pago: fac.forma_pago || "contado",
       numero: fac.numero || "",
-      fecha: toDateOnly(fac.fecha) || new Date().toISOString().slice(0, 10),
+      fecha: toDateOnly(fac.fecha) || new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10),
       razon_social: fac.razon_social || "",
       ruc: fac.ruc || "",
       concepto: fac.concepto || "",
@@ -220,7 +220,7 @@ export default function FacturasPage() {
 
   const openPago = (fac) => {
     setPagoFac(fac);
-    setFechaPago(new Date().toISOString().slice(0, 10));
+    setFechaPago(new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
     setNumeroReciboManual("");
     const def = cuentasDisp.find(c =>
       c.logo_tipo === fac.logo_tipo && c.moneda === fac.moneda && c.es_predeterminada
@@ -331,7 +331,7 @@ export default function FacturasPage() {
     setPagoParcialFac(fac);
     const yaAbonado = fac.monto_pagado || 0;
     setMontoParcial(String(fac.monto - yaAbonado));
-    setFechaPagoParcial(new Date().toISOString().slice(0, 10));
+    setFechaPagoParcial(new Date(Date.now() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,10));
     setNumeroReciboManual("");
     // Cuenta default: predeterminada del logo_tipo de la factura + moneda
     const def = cuentasDisp.find(c =>
