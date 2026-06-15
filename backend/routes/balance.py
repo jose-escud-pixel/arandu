@@ -375,11 +375,13 @@ async def _calc_balance(periodo: str, logo_tipo: Optional[str]):
     if pagos_cf:
         cf_ids = list({p["costo_fijo_id"] for p in pagos_cf})
         costos = await db.costos_fijos.find(
-            {"id": {"$in": cf_ids}}, {"_id": 0, "id": 1, "logo_tipo": 1, "moneda": 1, "tipo_cambio": 1, "nombre": 1}
+            {"id": {"$in": cf_ids}, "eliminada": {"$ne": True}}, {"_id": 0, "id": 1, "logo_tipo": 1, "moneda": 1, "tipo_cambio": 1, "nombre": 1}
         ).to_list(500)
         cf_map = {c["id"]: c for c in costos}
         for pago in pagos_cf:
-            cf = cf_map.get(pago["costo_fijo_id"], {})
+            cf = cf_map.get(pago["costo_fijo_id"])
+            if cf is None:  # costo fijo eliminado → no cuenta en el balance
+                continue
             if logo_tipo and logo_tipo != "todas" and cf.get("logo_tipo") != logo_tipo:
                 continue
             moneda_cf = cf.get("moneda", "PYG")
